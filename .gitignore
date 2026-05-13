@@ -1,0 +1,17 @@
+# Dependencies
+node_modules
+
+# Build
+dist
+*.local
+
+# Env (do not commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+*.tsbuildinfo

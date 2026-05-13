@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: 'Roboto', sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Form controls and buttons use system font by default; force Roboto */
+button,
+input,
+select,
+textarea,
+optgroup,
+[role="button"] {
+  font-family: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* TopBar dropdown item hover (profile menu + notification list) */
+.topbar-dropdown-item {
+  transition: background-color 0.15s ease;
+}
+.topbar-dropdown-item:hover {
+  background-color: #F3F4F6 !important;
+}
+.topbar-dropdown-item.topbar-dropdown-item--signout:hover {
+  background-color: #DC2626 !important;
+  color: #fff !important;
+}
+.topbar-dropdown-item.topbar-dropdown-item--signout:hover svg,
+.sidebar-signout-btn:hover svg {
+  stroke: #fff !important;
+  color: #fff !important;
+}
+
+/* Sidebar sign out: red fill on hover (same as profile dropdown) */
+.sidebar-signout-btn {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.sidebar-signout-btn:hover {
+  background-color: #DC2626 !important;
+  color: #fff !important;
+}
