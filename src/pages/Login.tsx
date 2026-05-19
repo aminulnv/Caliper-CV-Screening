@@ -1,151 +1,80 @@
-import { useState, useCallback } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Eye, EyeOff } from 'lucide-react'
-import { useAuth } from '@/contexts/AuthContext'
+import { useState, useCallback, type CSSProperties } from 'react'
+import { signInWithGoogle } from '@/lib/auth'
 import { assets, getBackgroundStyle } from '@/config/assets'
 
 const AUTH_PANEL_CSS = `.auth-card input::placeholder { color: #9ca3af; }
 .auth-right-panel { overflow: auto; scrollbar-width: none; -ms-overflow-style: none; }
 .auth-right-panel::-webkit-scrollbar { display: none; }`
 
+function GoogleIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.98 13.72 18.05 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.56 2.95-2.24 5.45-4.78 7.14l7.73 6c4.51-4.16 7.12-10.27 7.12-17.61z" />
+      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C2.38 16.49 0 20.02 0 24c0 3.98.92 7.74 2.56 11.22l7.97-6.63z" />
+      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.17 2.3-5.95 0-10.99-4.02-12.8-9.42l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+    </svg>
+  )
+}
+
 export default function Login() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const { signInWithPassword, isDummyAuth, enterDevDummySession } = useAuth()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/'
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleGoogleSignIn = useCallback(async () => {
     setError(null)
     setSubmitting(true)
-    const { error: err } = await signInWithPassword({ email, password })
-    setSubmitting(false)
-    if (err) {
-      setError(err.message)
-      return
+    try {
+      await signInWithGoogle()
+    } catch (err) {
+      setSubmitting(false)
+      setError(err instanceof Error ? err.message : 'Could not start sign-in. Please try again.')
     }
-    navigate(from, { replace: true })
-  }, [signInWithPassword, navigate, from, email, password])
+  }, [])
 
   return (
     <div className="auth-card" style={styles.wrapper}>
       <style>{AUTH_PANEL_CSS}</style>
-      {/* Left panel */}
       <div style={styles.leftPanel}>
-          <h1 style={styles.leftTitle}>Welcome back</h1>
-          <p style={styles.leftSubtitle}>
-            Sign in to continue to your account.
-          </p>
-        </div>
+        <h1 style={styles.leftTitle}>Caliper</h1>
+        <p style={styles.leftSubtitle}>
+          AI-powered CV screening for your hiring team. Sign in with your company Google account to continue.
+        </p>
+      </div>
 
-        {/* Right panel */}
-        <div className="auth-right-panel" style={styles.rightPanel}>
-          <div style={styles.rightPanelInner}>
-          <h2 style={styles.formTitle}>Login</h2>
+      <div className="auth-right-panel" style={styles.rightPanel}>
+        <div style={styles.rightPanelInner}>
+          <h2 style={styles.formTitle}>Welcome</h2>
+          <p style={styles.formSubtitle}>Sign in to access your workspace</p>
 
-          {isDummyAuth && (
-            <div style={styles.dummyBanner} role="note">
-              <strong>Dummy auth</strong> — Supabase is skipped. Use the button below or sign in with any email and
-              password.
+          {error && (
+            <div style={styles.error} role="alert">
+              {error}
             </div>
           )}
 
-          {isDummyAuth && (
-            <button
-              type="button"
-              onClick={() => {
-                enterDevDummySession()
-                navigate(from, { replace: true })
-              }}
-              style={styles.dummyButton}
-            >
-              Open app without Supabase
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={submitting}
+            style={{
+              ...styles.googleButton,
+              opacity: submitting ? 0.7 : 1,
+              cursor: submitting ? 'wait' : 'pointer',
+            }}
+          >
+            <GoogleIcon />
+            {submitting ? 'Redirecting to Google…' : 'Sign in with Google'}
+          </button>
 
-          <form onSubmit={handleSubmit} style={styles.form}>
-            {error && (
-              <div style={styles.error} role="alert">
-                {error}
-              </div>
-            )}
-            <label style={styles.field}>
-              <span style={styles.fieldLabel}>Email</span>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="johnfrans@gmail.com"
-                required
-                autoComplete="email"
-                style={styles.input}
-              />
-            </label>
-            <label style={styles.field}>
-              <span style={styles.fieldLabel}>Password</span>
-              <div style={styles.passwordWrap}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  required
-                  autoComplete="current-password"
-                  style={styles.inputPassword}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((s) => !s)}
-                  style={styles.eyeButton}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? (
-                    <EyeOff size={18} color="#6b7280" strokeWidth={1.75} />
-                  ) : (
-                    <Eye size={18} color="#6b7280" strokeWidth={1.75} />
-                  )}
-                </button>
-              </div>
-            </label>
-            <div style={styles.forgotRow}>
-              <Link to="/forgot-password" style={styles.forgotLink}>
-                Forgot password?
-              </Link>
-            </div>
-            <button type="submit" disabled={submitting} style={styles.submitButton}>
-              {submitting ? 'Signing in…' : 'Login'}
-            </button>
-          </form>
-
-          <p style={styles.footer}>
-            Don&apos;t have an account?{' '}
-            <Link to="/signup" style={styles.footerLink}>
-              Sign Up
-            </Link>
-          </p>
-          </div>
+          <p style={styles.hint}>Use your @nextventures.io or other approved company email.</p>
         </div>
+      </div>
     </div>
   )
 }
 
-const inputBase: React.CSSProperties = {
-  width: '100%',
-  padding: '0.625rem 0.75rem',
-  background: '#f9fafb',
-  border: '0.0625rem solid #e5e7eb',
-  borderRadius: '0.5rem',
-  fontSize: '0.875rem',
-  color: '#111827',
-  boxSizing: 'border-box',
-}
-
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, CSSProperties> = {
   wrapper: {
     position: 'fixed',
     inset: 0,
@@ -182,10 +111,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   leftSubtitle: {
     margin: 0,
+    maxWidth: '28rem',
     fontSize: '1.05rem',
     fontWeight: 400,
     color: 'rgba(255,255,255,0.9)',
-    lineHeight: 1.25,
+    lineHeight: 1.4,
   },
   rightPanel: {
     flex: 3,
@@ -206,105 +136,52 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
+    alignItems: 'stretch',
+    maxWidth: '20rem',
+    margin: '0 auto',
+    width: '100%',
   },
   formTitle: {
-    margin: '0 0 1rem',
+    margin: '0 0 0.25rem',
     fontSize: '1.75rem',
     fontWeight: 800,
     color: '#111827',
     textAlign: 'center',
   },
-  dummyBanner: {
-    marginBottom: '1rem',
-    padding: '0.75rem 0.875rem',
-    fontSize: '0.8125rem',
-    lineHeight: 1.45,
-    color: '#1e3a2f',
-    background: '#ecfdf5',
-    border: '1px solid #a7f3d0',
-    borderRadius: '0.5rem',
-  },
-  dummyButton: {
-    width: '100%',
-    marginBottom: '1rem',
-    padding: '0.65rem 1rem',
+  formSubtitle: {
+    margin: '0 0 1.5rem',
     fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#065f46',
-    background: '#d1fae5',
-    border: '1px solid #6ee7b7',
-    borderRadius: '0.5rem',
-    cursor: 'pointer',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1rem',
+    color: '#6b7280',
+    textAlign: 'center',
   },
   error: {
+    marginBottom: '1rem',
     padding: '0.5rem 0.75rem',
     background: '#fef2f2',
     color: '#b91c1c',
     borderRadius: '0.5rem',
     fontSize: '0.8125rem',
   },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.375rem',
-  },
-  fieldLabel: {
-    fontSize: '0.875rem',
-    fontWeight: 500,
-    color: '#374151',
-  },
-  input: inputBase,
-  inputPassword: { ...inputBase, paddingRight: '2.5rem' },
-  passwordWrap: {
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: '0.5rem',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    padding: '0.25rem',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
+  googleButton: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  forgotRow: {
-    marginTop: '-0.25rem',
-  },
-  forgotLink: {
-    fontSize: '0.8125rem',
-    color: '#171717',
-    textDecoration: 'underline',
-  },
-  submitButton: {
-    marginTop: '0.5rem',
+    gap: '0.625rem',
+    width: '100%',
     padding: '0.75rem 1rem',
-    background: '#171717',
-    color: '#fff',
-    border: 'none',
+    background: '#fff',
+    color: '#111827',
+    border: '0.0625rem solid #e5e7eb',
     borderRadius: '0.5rem',
     fontSize: '0.9375rem',
     fontWeight: 600,
-    cursor: 'pointer',
+    boxShadow: '0 0.0625rem 0.125rem rgba(0,0,0,0.05)',
   },
-  footer: {
-    margin: '1.5rem 0 0',
-    fontSize: '0.8125rem',
-    color: '#6b7280',
-  },
-  footerLink: {
-    color: '#171717',
-    fontWeight: 700,
-    textDecoration: 'underline',
+  hint: {
+    margin: '1.25rem 0 0',
+    fontSize: '0.75rem',
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 1.4,
   },
 }

@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import '@/lib/auth'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { SettingsProvider } from '@/contexts/SettingsContext'
 import { NotificationsProvider } from '@/contexts/NotificationsContext'

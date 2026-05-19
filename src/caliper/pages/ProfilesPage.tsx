@@ -7,15 +7,43 @@ import {
   RUNS,
   HERO_PROFILE,
   RECRUITEE_JOBS,
-  RECRUITEE_APPLICANT_ROWS,
-  DEFAULT_RECRUITEE_ROW_SELECTED,
   JOB_DESC_PREVIEW,
   getCandidateRowsForJob,
   getCompletedRunsForProfile,
-  AUDIT,
-  formatRunIdFromDate,
-  DEMO_RUN_SESSION_KEY,
 } from '@/caliper/data'
+import { api } from '@/services/api'
+import {
+  PROVIDER_LABELS,
+  SCREENING_MODELS,
+  firstConfiguredModel,
+  isProviderConfigured,
+  labelForModel,
+  modelsForProvider,
+  providerForModel,
+  resolveRunnableModel,
+} from '@/lib/screening-models'
+import {
+  getCachedApplicants,
+  loadRecruiteeApplicants,
+  prefetchRecruiteeApplicants,
+} from '@/lib/applicants-cache'
+import {
+  clearJobsCache,
+  formatSyncNote,
+  readJobsCache,
+  shouldRunRecruiteeSync,
+  writeJobsCache,
+} from '@/lib/jobs-cache'
+import { runsForDisplay, shapeJobRow } from '@/lib/job-profile'
+import {
+  getBiasWarning,
+  getProtectedAttributeError,
+} from '@/lib/criteria-validation'
+import { ChecklistRow } from '@/caliper/components/CriteriaChecklist'
+
+function shapeJobsList(jobs: unknown[]) {
+  return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
+}
 import {
   Icon,
   Btn,
@@ -46,125 +74,107 @@ function formatFileSizeJob(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getRecruiteeAppsForProfile(profile) {
-  if (profile.source === 'recruitee' && profile.sourceRef) {
-    return RECRUITEE_JOBS.find((j) => j.id === profile.sourceRef)?.apps ?? 38;
-  }
-  return 38;
-}
 
-function getJobSheetCvSummary(cvMode, uploadedFiles, rowSel) {
-  const rows = RECRUITEE_APPLICANT_ROWS;
-  const def = DEFAULT_RECRUITEE_ROW_SELECTED;
-  if (cvMode === 'manual') {
-    const files = uploadedFiles || [];
-    return {
-      selected: files.length,
-      warnings: 0,
-      noteLines: files.length
-        ? files.map((f) => `${f.name} · ${formatFileSizeJob(f.size)}`)
-        : ['No files added yet — go back to CVs.'],
-    };
-  }
-  const sel = (rowSel && rowSel.length === rows.length) ? rowSel : def;
-  const nSel = sel.filter(Boolean).length;
-  const warnLines = rows.filter((c, i) => sel[i] && c.status === 'warn')
-    .map((c) => `${c.name} — ${c.reason}`);
-  return {
-    selected: nSel,
-    warnings: warnLines.length,
-    noteLines: warnLines.length ? warnLines : ['No parse warnings in your current selection.'],
-  };
-}
-
-const JOB_SHEET_DEMO_PIPELINE = [
-  { id: 'enqueue', label: 'Queued screening workflow', sub: 'Structured payload validated; automation webhook acknowledged' },
-  { id: 'fetch',   label: 'Fetching CV payloads',     sub: 'Source: Recruitee · batch download (simulated)' },
-  { id: 'parse',   label: 'Parsing & text extraction', sub: 'Plain text normalized; parse warnings attached to 2 CVs' },
-  { id: 'score',   label: 'Scoring against rubric',     sub: 'Must-have, nice-to-have, and red-flag criteria (simulated)' },
-  { id: 'rank',    label: 'Ranking & finalizing',     sub: 'Ranked list, confidence bands, audit trail row (simulated)' },
-];
 
 function delayJob(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function JobSheetDemoOverlay({ pipeline, stepIndex, progressPct, onCancel }) {
-  const allComplete = stepIndex >= pipeline.length;
-  return (
-    <div className="demo-run-overlay" role="dialog" aria-modal="true" aria-labelledby="job-sheet-demo-title">
-      <div className="demo-run-overlay__card">
-        <div className="demo-run-overlay__head">
-          <div>
-            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Demo · no backend</div>
-            <h2 id="job-sheet-demo-title" className="demo-run-overlay__title">Running screening…</h2>
-            <p className="demo-run-overlay__sub">
-              Simulated pipeline. Rankings on the next screen are sample data until a backend returns real scores.
-            </p>
-          </div>
-          <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
-        </div>
-        <div className="demo-run-overlay__progress">
-          <div className="demo-run-overlay__progress-track">
-            <div className="demo-run-overlay__progress-fill" style={{ width: `${progressPct}%` }}/>
-          </div>
-          <span className="mono muted" style={{ fontSize: 11 }}>{progressPct}%</span>
-        </div>
-        <ul className="demo-run-overlay__steps" aria-live="polite">
-          {pipeline.map((s, i) => {
-            const done = allComplete || i < stepIndex;
-            const active = !allComplete && i === stepIndex;
-            return (
-              <li key={s.id} className={`demo-run-overlay__step${done ? ' is-done' : ''}${active ? ' is-active' : ''}`}>
-                <span className="demo-run-overlay__step-icon" aria-hidden>
-                  {done ? <Icon name="check" size={12} stroke={2.6}/> : active ? <span className="demo-run-overlay__dot"/> : <span className="demo-run-overlay__dot demo-run-overlay__dot--pending"/>}
-                </span>
-                <div>
-                  <div className="demo-run-overlay__step-label">{s.label}</div>
-                  <div className="demo-run-overlay__step-sub">{s.sub}</div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    </div>
-  );
-}
+function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteria }) {
+  const [profile, setProfile] = React.useState(initialProfile);
+  const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
 
-function RunScreeningSheet({ profile, onClose, go }) {
+  React.useEffect(() => {
+    setProfile(initialProfile);
+  }, [initialProfile]);
+
+  React.useEffect(() => {
+    api.settings.get().then(setWorkspaceSettings).catch(() => setWorkspaceSettings(null));
+  }, []);
+
+  React.useEffect(() => {
+    if (!initialProfile.id || initialProfile.id === HERO_PROFILE.id) return;
+    api.jobs
+      .get(initialProfile.id)
+      .then((job) => setProfile(shapeJobRow(job as unknown as Record<string, unknown>)))
+      .catch(() => {});
+  }, [initialProfile.id]);
+
+  const preferredModel = profile.screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6';
+  const runnable = React.useMemo(
+    () => resolveRunnableModel(preferredModel, workspaceSettings?.allowed_models, workspaceSettings),
+    [preferredModel, workspaceSettings],
+  );
+
   const criteria = React.useMemo(() => getCriteriaListsForProfile(profile), [profile]);
   const criteriaCount = criteria.must.length + criteria.nice.length + criteria.flag.length;
   const hasCriteria = criteriaCount > 0;
 
   const [step, setStep] = React.useState(1);
-  const [cvMode, setCvMode] = React.useState('recruitee');
-  const [recruiteeRowSelected, setRecruiteeRowSelected] = React.useState(() => [...DEFAULT_RECRUITEE_ROW_SELECTED]);
+  const [cvMode, setCvMode] = React.useState(profile.source === 'recruitee' ? 'recruitee' : 'manual');
+  const [recruiteeRowSelected, setRecruiteeRowSelected] = React.useState([]);
   const [uploadedFiles, setUploadedFiles] = React.useState([]);
-  const [demoProcessing, setDemoProcessing] = React.useState(null);
-  const demoCancelRef = React.useRef(false);
+  const [recruiteeApplicants, setRecruiteeApplicants] = React.useState([]);
+  const [recruiteeLoading, setRecruiteeLoading] = React.useState(false);
+  const [runProcessing, setRunProcessing] = React.useState(null);
+  const [runError, setRunError] = React.useState(null);
+  const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
 
   React.useEffect(() => {
     setStep(1);
-    setCvMode('recruitee');
-    setRecruiteeRowSelected([...DEFAULT_RECRUITEE_ROW_SELECTED]);
+    setCvMode(profile.source === 'recruitee' ? 'recruitee' : 'manual');
+    setRecruiteeRowSelected([]);
     setUploadedFiles([]);
-    setDemoProcessing(null);
-    demoCancelRef.current = false;
+    setRunProcessing(null);
+    setRunError(null);
+    runCancelRef.current = false;
   }, [profile.id]);
 
-  React.useEffect(() => () => {
-    demoCancelRef.current = true;
-  }, []);
+  React.useEffect(() => () => { runCancelRef.current = true; }, []);
 
-  const rows = RECRUITEE_APPLICANT_ROWS;
-  const rowSel = (recruiteeRowSelected && recruiteeRowSelected.length === rows.length)
-    ? recruiteeRowSelected
-    : DEFAULT_RECRUITEE_ROW_SELECTED;
+  React.useEffect(() => {
+    if (!profile.sourceRef || profile.source !== 'recruitee') {
+      setRecruiteeApplicants([]);
+      setRecruiteeLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const cached = getCachedApplicants(profile.sourceRef);
+    if (cached?.length) {
+      setRecruiteeApplicants(cached);
+      setRecruiteeRowSelected(cached.map(() => true));
+      setRecruiteeLoading(false);
+    } else {
+      setRecruiteeLoading(true);
+    }
+    loadRecruiteeApplicants(profile.sourceRef)
+      .then((apps) => {
+        if (cancelled) return;
+        setRecruiteeApplicants(apps);
+        setRecruiteeRowSelected(apps.map(() => true));
+      })
+      .catch(() => {
+        if (!cancelled) setRecruiteeApplicants([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRecruiteeLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [profile.id, profile.sourceRef, profile.source]);
+
+  const rows = recruiteeApplicants.map((a) => ({
+    id: a.id,
+    name: a.name || 'Unknown',
+    loc: a.location || '—',
+    cv_url: a.cv_url,
+    status: a.cv_url ? 'ok' : 'warn',
+    reason: a.cv_url ? '' : 'No CV attached in Recruitee',
+  }));
+
+  const rowSel = recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true);
   const nSelectedRec = rowSel.filter(Boolean).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
-  const apps = getRecruiteeAppsForProfile(profile);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
@@ -178,6 +188,7 @@ function RunScreeningSheet({ profile, onClose, go }) {
       if (next.some((x) => x.name === f.name && x.size === f.size)) continue;
       next.push({
         id: `up-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+        file: f,
         name: f.name,
         size: f.size,
       });
@@ -187,95 +198,74 @@ function RunScreeningSheet({ profile, onClose, go }) {
 
   const canRun =
     hasCriteria
+    && !runnable.error
     && !(cvMode === 'manual' && uploadedFiles.length === 0)
     && !(cvMode === 'recruitee' && !rowSel.some(Boolean));
 
-  const startDemoRun = React.useCallback(async () => {
+  const continueBlockedReason = !hasCriteria
+    ? 'Add and save at least one criterion on the Criteria tab first'
+    : runnable.error
+      ? runnable.error
+      : cvMode === 'recruitee' && !rowSel.some(Boolean)
+        ? 'Select at least one applicant'
+        : cvMode === 'manual' && !uploadedFiles.length
+          ? 'Upload at least one CV'
+          : null;
+
+  const startRealRun = React.useCallback(async () => {
     if (!canRun) return;
-    demoCancelRef.current = false;
-    const sel = (recruiteeRowSelected && recruiteeRowSelected.length === rows.length)
-      ? recruiteeRowSelected
-      : DEFAULT_RECRUITEE_ROW_SELECTED;
-    const cvs = cvMode === 'manual' ? uploadedFiles.length : sel.filter(Boolean).length;
-    const nParseWarn = cvMode === 'recruitee'
-      ? rows.filter((c, i) => sel[i] && c.status === 'warn').length
-      : 0;
-
-    const runId = formatRunIdFromDate(new Date());
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const run = {
-      id: runId,
-      job: profile.name,
-      profile: profile.name,
-      profileId: profile.id,
-      dept: profile.dept,
-      date: today,
-      cvs: Math.max(cvs, 1),
-      scoreRange: [44, 89],
-      duration: '~5s (simulated)',
-      status: 'completed',
-      owner: 'You',
-      isDemoSynthetic: true,
-    };
-
-    const pipeline = JOB_SHEET_DEMO_PIPELINE.map((row) => {
-      if (row.id === 'fetch') {
-        const sub = cvMode === 'manual'
-          ? `Local files only — ${uploadedFiles.length} file(s) (simulated scoring)`
-          : 'Source: Recruitee · applicant documents (simulated)';
-        return { ...row, sub };
-      }
-      if (row.id === 'parse') {
-        const sub = nParseWarn > 0
-          ? `Plain text normalized; ${nParseWarn} parse warning(s) in your selection`
-          : 'Plain text normalized; no parse warnings in selection';
-        return { ...row, sub };
-      }
-      return row;
-    });
-
-    setDemoProcessing({ stepIndex: 0, progressPct: 4, pipeline });
-    const perStepMs = 720;
-    for (let i = 0; i < pipeline.length; i++) {
-      if (demoCancelRef.current) {
-        setDemoProcessing(null);
-        return;
-      }
-      setDemoProcessing({
-        stepIndex: i,
-        progressPct: Math.min(96, Math.round(((i + 0.35) / pipeline.length) * 100)),
-        pipeline,
-      });
-      await delayJob(perStepMs + (i === pipeline.length - 1 ? 400 : 0));
-    }
-    if (demoCancelRef.current) {
-      setDemoProcessing(null);
-      return;
-    }
-    setDemoProcessing({ stepIndex: pipeline.length, progressPct: 100, pipeline });
-    await delayJob(450);
-    if (demoCancelRef.current) {
-      setDemoProcessing(null);
-      return;
-    }
+    runCancelRef.current = false;
+    setRunError(null);
     try {
-      const ssKey = DEMO_RUN_SESSION_KEY;
-      sessionStorage.setItem(ssKey, JSON.stringify({
-        runId,
-        completedAt: Date.now(),
-        profileName: profile.name,
-        profileId: profile.id,
-        cvMode,
-        criteriaCount,
-        run,
-      }));
-    } catch (_) {}
-    setDemoProcessing(null);
-    onClose();
-    go('results', runId);
-  }, [canRun, profile, cvMode, uploadedFiles, recruiteeRowSelected, criteriaCount, go, onClose, rows]);
+      let cvSources = [];
+      if (cvMode === 'manual') {
+        const total = uploadedFiles.length;
+        setRunProcessing({ label: 'Uploading CVs…', progress: 5 });
+        for (let i = 0; i < uploadedFiles.length; i++) {
+          if (runCancelRef.current) { setRunProcessing(null); return; }
+          const { path, filename } = await api.cv.upload(uploadedFiles[i].file);
+          cvSources.push({ type: 'storage', path, name: filename });
+          setRunProcessing({ label: `Uploading CVs… (${i + 1}/${total})`, progress: Math.round(((i + 1) / total) * 75) });
+        }
+      } else {
+        const sel = rowSel;
+        cvSources = rows
+          .filter((r, i) => sel[i] && r.cv_url)
+          .map((r) => ({ type: 'recruitee', applicant_id: r.id, cv_url: r.cv_url, name: r.name }));
+      }
+      if (runCancelRef.current) { setRunProcessing(null); return; }
+      setRunProcessing({ label: 'Starting screening run…', progress: 85 });
+      const modelId = profile.screeningModel || undefined;
+      const created = await api.runs.create({
+        job_id: profile.id,
+        cv_sources: cvSources,
+        ...(modelId ? { model_id: modelId } : {}),
+      });
+      const { run_id } = created;
+      if (created.model_notice) {
+        setRunError(created.model_notice);
+        await delayJob(2500);
+        setRunError(null);
+      }
+      setRunProcessing({ label: 'Run created — opening results…', progress: 100 });
+      await delayJob(300);
+      if (runCancelRef.current) { setRunProcessing(null); return; }
+      setRunProcessing(null);
+      onClose();
+      go('results', run_id);
+    } catch (err) {
+      setRunProcessing(null);
+      setRunError(err?.message ?? 'Failed to start run. Please try again.');
+    }
+  }, [canRun, cvMode, uploadedFiles, rowSel, rows, profile.id, go, onClose]);
 
-  const cvSum = getJobSheetCvSummary(cvMode, uploadedFiles, recruiteeRowSelected);
+  const cvSum = {
+    selected: cvMode === 'manual' ? uploadedFiles.length : rowSel.filter(Boolean).length,
+    warnings: cvMode === 'recruitee' ? nWarnSelected : 0,
+    noteLines: cvMode === 'manual'
+      ? (uploadedFiles.length ? uploadedFiles.map((f) => `${f.name} · ${formatFileSizeJob(f.size)}`) : ['No files added yet.'])
+      : (nWarnSelected > 0 ? rows.filter((c, i) => rowSel[i] && c.status === 'warn').map((c) => `${c.name} — ${c.reason}`) : ['No parse warnings.']),
+  };
 
   return (
     <div className="detail" onClick={onClose}>
@@ -299,7 +289,13 @@ function RunScreeningSheet({ profile, onClose, go }) {
             <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Run screening</div>
             <h2 style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 500 }}>{profile.name}</h2>
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              {profile.dept} · {criteriaCount} saved criteria · Rubric is read from this job (edit under Jobs → Criteria).
+              {profile.dept} · {criteriaCount} saved criteria
+              {' · '}
+              {labelForModel(runnable.modelId)}
+              {runnable.substituted && profile.screeningModel && runnable.modelId !== profile.screeningModel
+                ? ` (OpenAI used — add Anthropic key for ${labelForModel(profile.screeningModel)})`
+                : ''}
+              {' · '}Rubric is read from this job (edit under Jobs → Criteria).
             </div>
           </div>
           <IconBtn name="x" size={16} onClick={onClose}/>
@@ -308,7 +304,15 @@ function RunScreeningSheet({ profile, onClose, go }) {
         <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
           {!hasCriteria && (
             <div className="callout" style={{ marginBottom: 16 }}>
-              Add at least one criterion on this job&apos;s <strong>Criteria</strong> tab before running. This keeps every screening tied to an explicit rubric.
+              Add at least one criterion on this job&apos;s <strong>Criteria</strong> tab and click{' '}
+              <strong>Save criteria &amp; model</strong> before continuing. Screening always uses a saved rubric.
+              {onEditCriteria && (
+                <div style={{ marginTop: 10 }}>
+                  <Btn size="sm" variant="default" icon="edit" onClick={onEditCriteria}>
+                    Set up criteria
+                  </Btn>
+                </div>
+              )}
             </div>
           )}
 
@@ -346,10 +350,15 @@ function RunScreeningSheet({ profile, onClose, go }) {
                 Pull applicants from Recruitee when this job is linked, or upload PDF / DOCX (prototype — files stay in the browser).
               </div>
               <Segmented value={cvMode} onChange={setCvMode} options={[
-                { value: 'recruitee', label: `Recruitee · ${apps} applicants` },
+                { value: 'recruitee', label: recruiteeLoading ? 'Recruitee · loading…' : `Recruitee · ${rows.length} applicant${rows.length === 1 ? '' : 's'}` },
                 { value: 'manual', label: `Upload${uploadedFiles.length ? ` · ${uploadedFiles.length} file(s)` : ''}` },
               ]}/>
 
+              {cvMode === 'recruitee' && profile.source !== 'recruitee' && (
+                <div className="callout" style={{ marginTop: 12, marginBottom: 0 }}>
+                  This job is not linked to a Recruitee position. Switch to <strong>Upload</strong> to add CVs manually.
+                </div>
+              )}
               {cvMode === 'manual' ? (
                 <div className="col" style={{ marginTop: 18, gap: 14 }}>
                   <input
@@ -399,58 +408,66 @@ function RunScreeningSheet({ profile, onClose, go }) {
                 </div>
               ) : (
                 <div className="col" style={{ marginTop: 18, gap: 12 }}>
-                  <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <div className="row" style={{ gap: 8 }}>
-                      <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => true))}>Select all</Btn>
-                      <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => false))}>Clear</Btn>
-                      <span className="muted mono" style={{ fontSize: 11 }}>{nSelectedRec} of {rows.length} selected</span>
-                    </div>
-                    {nWarnSelected > 0
-                      ? <Badge tone="warn" dot>{nWarnSelected} parse warning{nWarnSelected === 1 ? '' : 's'}</Badge>
-                      : <Badge tone="ok" dot>Parse clean</Badge>}
-                  </div>
-                  <div className="card" style={{ maxHeight: 280, overflow: 'auto' }}>
-                    <table className="tbl">
-                      <thead>
-                        <tr>
-                          <th style={{ width: 32 }}/>
-                          <th>Applicant</th>
-                          <th style={{ width: 120 }}>Location</th>
-                          <th>Parse status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((c, i) => (
-                          <tr
-                            key={c.name}
-                            className={rowSel[i] ? 'is-selected' : ''}
-                            onClick={() => {
-                              const next = [...rowSel];
-                              next[i] = !next[i];
-                              setRecruiteeRowSelected(next);
-                            }}
-                            style={{ cursor: 'pointer' }}
-                          >
-                            <td>
-                              <span style={{
-                                display: 'inline-grid', placeItems: 'center', width: 16, height: 16,
-                                border: `1.5px solid ${rowSel[i] ? 'var(--ink)' : 'var(--faint)'}`,
-                                background: rowSel[i] ? 'var(--ink)' : 'var(--surface)',
-                                borderRadius: 3, color: 'var(--bg)',
-                              }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
-                            </td>
-                            <td><strong style={{ fontWeight: 500 }}>{c.name}</strong></td>
-                            <td className="muted">{c.loc}</td>
-                            <td>
-                              {c.status === 'ok'
-                                ? <Badge tone="ok" dot>Parsed</Badge>
-                                : <span className="row" style={{ gap: 6 }}><Badge tone="warn" dot>Warning</Badge><span className="muted" style={{ fontSize: 11 }}>{c.reason}</span></span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {recruiteeLoading ? (
+                    <div className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>Loading applicants from Recruitee…</div>
+                  ) : rows.length === 0 ? (
+                    <div className="callout">No applicants with CVs found in Recruitee for this position.</div>
+                  ) : (
+                    <>
+                      <div className="row" style={{ justifyContent: 'space-between' }}>
+                        <div className="row" style={{ gap: 8 }}>
+                          <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => true))}>Select all</Btn>
+                          <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => false))}>Unselect all</Btn>
+                          <span className="muted mono" style={{ fontSize: 11 }}>{nSelectedRec} of {rows.length} selected</span>
+                        </div>
+                        {nWarnSelected > 0
+                          ? <Badge tone="warn" dot>{nWarnSelected} without CV</Badge>
+                          : <Badge tone="ok" dot>All have CVs</Badge>}
+                      </div>
+                      <div className="card" style={{ maxHeight: 280, overflow: 'auto' }}>
+                        <table className="tbl">
+                          <thead>
+                            <tr>
+                              <th style={{ width: 32 }}/>
+                              <th>Applicant</th>
+                              <th style={{ width: 120 }}>Location</th>
+                              <th>CV</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((c, i) => (
+                              <tr
+                                key={c.id}
+                                className={rowSel[i] ? 'is-selected' : ''}
+                                onClick={() => {
+                                  const next = [...rowSel];
+                                  next[i] = !next[i];
+                                  setRecruiteeRowSelected(next);
+                                }}
+                                style={{ cursor: 'pointer' }}
+                              >
+                                <td>
+                                  <span style={{
+                                    display: 'inline-grid', placeItems: 'center', width: 16, height: 16,
+                                    border: `1.5px solid ${rowSel[i] ? 'var(--ink)' : 'var(--faint)'}`,
+                                    background: rowSel[i] ? 'var(--ink)' : 'var(--surface)',
+                                    borderRadius: 3, color: 'var(--bg)',
+                                  }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
+                                </td>
+                                <td><strong style={{ fontWeight: 500 }}>{c.name}</strong></td>
+                                <td className="muted">{c.loc}</td>
+                                <td>
+                                  {c.status === 'ok'
+                                    ? <Badge tone="ok" dot>Attached</Badge>
+                                    : <span className="row" style={{ gap: 6 }}><Badge tone="warn" dot>Missing</Badge><span className="muted" style={{ fontSize: 11 }}>{c.reason}</span></span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </>
@@ -458,27 +475,47 @@ function RunScreeningSheet({ profile, onClose, go }) {
 
           {step === 2 && (
             <div className="col" style={{ gap: 12 }}>
+              {runnable.error && (
+                <div className="callout" style={{ color: 'var(--bad-ink)' }}>{runnable.error}</div>
+              )}
+              {runnable.substituted && !runnable.error && (
+                <div className="callout">
+                  Screening will use <strong>{labelForModel(runnable.modelId)}</strong> because the job&apos;s
+                  model has no API key configured. Add keys in Settings → AI provider.
+                </div>
+              )}
               <div className="card">
                 <div className="card__head">
-                  <span className="card__title" style={{ fontSize: 12 }}>Criteria (from job)</span>
-                  <span className="mono muted" style={{ fontSize: 11 }}>{criteriaCount} total</span>
+                  <span className="card__title" style={{ fontSize: 12 }}>Scoring configuration</span>
+                  <span className="mono muted" style={{ fontSize: 11 }}>{criteriaCount} checklist items</span>
                 </div>
-                <div className="card__body" style={{ paddingTop: 8 }}>
-                  {criteria.must.length > 0 && (
-                    <div className="crit-chip-stack" style={{ marginBottom: 8 }}>
-                      {criteria.must.map((it) => <Chip key={it.id} kind="must" name={it.name} weight={it.weight}/>)}
+                <div className="card__body col" style={{ gap: 12, paddingTop: 8 }}>
+                  <p className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, margin: 0 }}>
+                    Each CV is scored against this rubric. Every line is <strong>Met</strong> or <strong>Not met</strong> (binary).
+                    Overall score = % of must + nice met, minus red-flag deductions.
+                  </p>
+                  {[
+                    { kind: 'must', label: 'Must-haves', items: criteria.must },
+                    { kind: 'nice', label: 'Nice-to-have', items: criteria.nice },
+                    { kind: 'flag', label: 'Red flags', items: criteria.flag },
+                  ].filter((s) => s.items.length > 0).map((sec) => (
+                    <div key={sec.kind}>
+                      <div className="eval-sec">
+                        <span>{sec.label}</span>
+                        <span className="eval-sec__line"/>
+                        <span className="mono">{sec.items.length}</span>
+                      </div>
+                      {sec.items.map((it) => (
+                        <ChecklistRow
+                          key={it.id}
+                          name={it.name}
+                          met={false}
+                          kind={sec.kind}
+                          weight={it.weight}
+                        />
+                      ))}
                     </div>
-                  )}
-                  {criteria.nice.length > 0 && (
-                    <div className="crit-chip-stack" style={{ marginBottom: 8 }}>
-                      {criteria.nice.map((it) => <Chip key={it.id} kind="nice" name={it.name} weight={it.weight}/>)}
-                    </div>
-                  )}
-                  {criteria.flag.length > 0 && (
-                    <div className="crit-chip-stack">
-                      {criteria.flag.map((it) => <Chip key={it.id} kind="flag" name={it.name} weight={it.weight}/>)}
-                    </div>
-                  )}
+                  ))}
                 </div>
               </div>
               <div className="card">
@@ -496,40 +533,59 @@ function RunScreeningSheet({ profile, onClose, go }) {
           )}
         </div>
 
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12 }}>
-          <div className="row" style={{ gap: 8 }}>
+        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {runError && (
+            <div style={{ fontSize: 12, color: 'var(--bad)', padding: '6px 10px', background: 'var(--bad-bg, #fff5f5)', borderRadius: 6 }}>
+              {runError}
+            </div>
+          )}
+          <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
             {step === 2 ? (
               <Btn variant="ghost" onClick={() => setStep(1)}>Back</Btn>
             ) : (
               <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
             )}
             {step === 1 ? (
-              <Btn variant="primary" iconRight="chevron-right" onClick={() => setStep(2)} disabled={!hasCriteria || (cvMode === 'manual' && !uploadedFiles.length) || (cvMode === 'recruitee' && !rowSel.some(Boolean))}>
+              <Btn
+                variant="primary"
+                iconRight="chevron-right"
+                onClick={() => setStep(2)}
+                disabled={!hasCriteria || (cvMode === 'manual' && !uploadedFiles.length) || (cvMode === 'recruitee' && !rowSel.some(Boolean))}
+                title={continueBlockedReason || undefined}
+              >
                 Continue
               </Btn>
             ) : (
-              <Btn variant="primary" icon="play" disabled={!canRun} onClick={() => startDemoRun()}>Run now</Btn>
+              <Btn variant="primary" icon="play" disabled={!canRun} onClick={startRealRun}>Run now</Btn>
             )}
           </div>
         </div>
       </div>
 
-      {demoProcessing && (
-        <JobSheetDemoOverlay
-          pipeline={demoProcessing.pipeline}
-          stepIndex={demoProcessing.stepIndex}
-          progressPct={demoProcessing.progressPct}
-          onCancel={() => {
-            demoCancelRef.current = true;
-            setDemoProcessing(null);
-          }}
-        />
+      {runProcessing && (
+        <div className="demo-run-overlay" role="dialog" aria-modal="true" aria-labelledby="run-progress-title">
+          <div className="demo-run-overlay__card">
+            <div className="demo-run-overlay__head">
+              <div>
+                <h2 id="run-progress-title" className="demo-run-overlay__title">Running screening…</h2>
+                <p className="demo-run-overlay__sub">{runProcessing.label}</p>
+              </div>
+              <Btn variant="ghost" size="sm" onClick={() => { runCancelRef.current = true; setRunProcessing(null); }}>Cancel</Btn>
+            </div>
+            <div className="demo-run-overlay__progress">
+              <div className="demo-run-overlay__progress-track">
+                <div className="demo-run-overlay__progress-fill" style={{ width: `${runProcessing.progress}%` }}/>
+              </div>
+              <span className="mono muted" style={{ fontSize: 11 }}>{runProcessing.progress}%</span>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-function PickJobToRunModal({ onClose, onPick }) {
+function PickJobToRunModal({ onClose, onPick, profiles }) {
   return (
     <div className="detail" onClick={onClose}>
       <div
@@ -553,7 +609,7 @@ function PickJobToRunModal({ onClose, onPick }) {
           <IconBtn name="x" size={14} onClick={onClose}/>
         </div>
         <div style={{ overflowY: 'auto', padding: 8 }}>
-          {PROFILES.map((p) => (
+          {(profiles ?? []).map((p) => (
             <button
               key={p.id}
               type="button"
@@ -585,15 +641,12 @@ function allocNewProfileId() {
 function buildProfileFromRecruiteeJob(job) {
   const postedOn = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const lastUpdated = postedOn;
-  const preview = typeof JOB_DESC_PREVIEW === 'string' ? JOB_DESC_PREVIEW : '';
-  const description =
-    job.id === 'rec-2841' && preview
-      ? preview
-      : `Imported from Recruitee — ${job.title} (${job.dept}).\n\n${preview ? `${preview.slice(0, 400)}…` : 'Open Overview to paste or edit the full job description.'}`;
+  const dept = job.department ?? job.dept ?? 'General';
+  const description = `Imported from Recruitee — ${job.title} (${dept}).\n\nEdit the overview to add the full job description and screening criteria.`;
   return {
-    id: allocNewProfileId(),
+    id: `REC-${job.id}`,
     name: job.title,
-    dept: job.dept,
+    dept,
     source: 'recruitee',
     sourceRef: job.id,
     status: 'open',
@@ -627,21 +680,138 @@ function buildManualProfile(title, descText) {
   };
 }
 
+function JobsPageLoading({ phase, onRetry }) {
+  return (
+    <div className="page">
+      <div className="page__head">
+        <div>
+          <div className="page__eyebrow">Jobs</div>
+          <h1 className="page__title">Jobs</h1>
+          <div className="page__sub">
+            Configure each job here (description, criteria, runs). Recruitee roles sync in the background when needed.
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="jobs-loading">
+          <div className="jobs-loading__spinner" role="status" aria-label="Loading jobs" />
+          <div style={{ marginTop: 16, fontSize: 15, fontWeight: 500, color: 'var(--ink)' }}>
+            Loading jobs
+          </div>
+          <div className="muted" style={{ marginTop: 6, fontSize: 13, maxWidth: 360 }}>
+            {phase}
+          </div>
+        </div>
+      </div>
+      {onRetry && (
+        <div style={{ marginTop: 12, textAlign: 'center' }}>
+          <Btn variant="default" onClick={onRetry}>Try again</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProfilesPage({ go, route }) {
+  const initialCache = React.useMemo(() => readJobsCache(), []);
   const [selectedId, setSelectedId] = React.useState(null);
   const [editorInitialTab, setEditorInitialTab] = React.useState(null);
-  const [, refreshProfiles] = React.useReducer((n) => n + 1, 0);
+  const [refreshToken, setRefreshToken] = React.useState({ n: 0, forceSync: false });
   const [showNew, setShowNew] = React.useState(false);
   const [filter, setFilter] = React.useState('all');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [runSheetProfileId, setRunSheetProfileId] = React.useState(null);
   const [showRunPicker, setShowRunPicker] = React.useState(false);
-  const profile = selectedId ? PROFILES.find(p => p.id === selectedId) : null;
+  const [liveProfiles, setLiveProfiles] = React.useState(() =>
+    initialCache?.jobs?.length ? shapeJobsList(initialCache.jobs) : null,
+  );
+  const [profilesLoading, setProfilesLoading] = React.useState(!initialCache?.jobs?.length);
+  const [profilesLoadError, setProfilesLoadError] = React.useState(null);
+  const [loadPhase, setLoadPhase] = React.useState('Syncing open roles from Recruitee…');
+  const [recruiteeSyncNote, setRecruiteeSyncNote] = React.useState(initialCache?.syncNote ?? '');
+  const [backgroundRefreshing, setBackgroundRefreshing] = React.useState(
+    Boolean(initialCache?.jobs?.length),
+  );
+
+  const refreshProfiles = React.useCallback((opts?: { forceSync?: boolean }) => {
+    setRefreshToken((t) => ({ n: t.n + 1, forceSync: Boolean(opts?.forceSync) }));
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const hadList = liveProfiles !== null;
+    const cache = readJobsCache();
+    const runSync = shouldRunRecruiteeSync(
+      cache?.lastSyncAt ?? null,
+      refreshToken.forceSync,
+    );
+
+    if (!hadList) {
+      setProfilesLoading(true);
+      setProfilesLoadError(null);
+      setLiveProfiles(null);
+    } else {
+      setBackgroundRefreshing(true);
+    }
+
+    (async () => {
+      let syncNote = cache?.syncNote ?? '';
+      let lastSyncAt = cache?.lastSyncAt ?? null;
+
+      if (runSync) {
+        if (!hadList) setLoadPhase('Syncing open roles from Recruitee…');
+        try {
+          const sync = await api.recruitee.syncJobs();
+          if (!cancelled) {
+            syncNote = formatSyncNote(sync);
+            lastSyncAt = Date.now();
+            setRecruiteeSyncNote(syncNote);
+          }
+        } catch {
+          if (!cancelled && !syncNote) setRecruiteeSyncNote('');
+        }
+      }
+
+      if (cancelled) return;
+      if (!hadList) setLoadPhase('Loading your job list…');
+
+      try {
+        const jobs = await api.jobs.list();
+        if (!cancelled) {
+          const shaped = shapeJobsList(jobs);
+          setLiveProfiles(shaped);
+          setProfilesLoadError(null);
+          writeJobsCache({
+            jobs,
+            fetchedAt: Date.now(),
+            lastSyncAt: runSync ? lastSyncAt : cache?.lastSyncAt ?? lastSyncAt,
+            syncNote,
+          });
+          if (syncNote) setRecruiteeSyncNote(syncNote);
+        }
+      } catch (err) {
+        if (!cancelled && !hadList) {
+          setLiveProfiles(null);
+          setProfilesLoadError(err?.message ?? 'Failed to load jobs.');
+        }
+      } finally {
+        if (!cancelled) {
+          setProfilesLoading(false);
+          setBackgroundRefreshing(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [refreshToken.n, refreshToken.forceSync]);
+
+  const jobs = liveProfiles ?? [];
+  const profile = selectedId && liveProfiles ? liveProfiles.find((p) => p.id === selectedId) : null;
 
   const openRunJobId = route && route.openRunJobId;
 
   React.useEffect(() => {
-    if (!openRunJobId || !PROFILES.some((p) => p.id === openRunJobId)) return;
+    if (!openRunJobId || !liveProfiles?.some((p) => p.id === openRunJobId)) return;
     setRunSheetProfileId(openRunJobId);
     setSelectedId(null);
     if (typeof history !== 'undefined' && String(location.hash).includes('job=')) {
@@ -649,7 +819,7 @@ function ProfilesPage({ go, route }) {
         history.replaceState(null, '', '#profiles');
       } catch (_) {}
     }
-  }, [openRunJobId]);
+  }, [openRunJobId, liveProfiles]);
 
   if (profile) {
     return (
@@ -670,15 +840,32 @@ function ProfilesPage({ go, route }) {
             profile={profile}
             onClose={() => setRunSheetProfileId(null)}
             go={go}
+            onEditCriteria={() => {
+              setRunSheetProfileId(null);
+              setEditorInitialTab('criteria');
+            }}
           />
         )}
       </>
     );
   }
 
-  const runSheetProfile = runSheetProfileId ? PROFILES.find((p) => p.id === runSheetProfileId) : null;
+  if (profilesLoading || liveProfiles === null) {
+    return <JobsPageLoading phase={loadPhase} />;
+  }
 
-  const filtered = PROFILES.filter(p => {
+  if (profilesLoadError) {
+    return (
+      <JobsPageLoading
+        phase={profilesLoadError}
+        onRetry={() => refreshProfiles()}
+      />
+    );
+  }
+
+  const runSheetProfile = runSheetProfileId ? jobs.find((p) => p.id === runSheetProfileId) : null;
+
+  const filtered = jobs.filter(p => {
     const q = searchQuery.trim().toLowerCase();
     if (q && !p.name.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
     if (filter === 'all') return true;
@@ -696,15 +883,33 @@ function ProfilesPage({ go, route }) {
           <div className="page__eyebrow">Jobs</div>
           <h1 className="page__title">Jobs</h1>
           <div className="page__sub">
-            Configure each job here (description, criteria, runs). Use <strong>Run screening</strong> on a job to choose CVs against its saved rubric.
+            Configure each job here (description, criteria, runs). Recruitee roles sync in the background when needed.
+            {recruiteeSyncNote && (
+              <span className="muted" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+                {recruiteeSyncNote}
+              </span>
+            )}
           </div>
         </div>
         <div className="row" style={{ gap: 8 }}>
-          <Btn variant="default" icon="database">Sync from Recruitee</Btn>
+          <Btn
+            variant="ghost"
+            icon="history"
+            disabled={backgroundRefreshing}
+            onClick={() => refreshProfiles({ forceSync: true })}
+          >
+            {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
+          </Btn>
           <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening…</Btn>
           <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
         </div>
       </div>
+
+      {backgroundRefreshing && (
+        <div className="jobs-refresh-banner" role="status">
+          Updating job list…
+        </div>
+      )}
 
       <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8 }}>
         <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
@@ -719,7 +924,7 @@ function ProfilesPage({ go, route }) {
           <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
         </div>
         <Segmented value={filter} onChange={setFilter} options={[
-          { value: 'all',       label: `All ${PROFILES.length}` },
+          { value: 'all',       label: `All ${jobs.length}` },
           { value: 'open',      label: 'Open' },
           { value: 'closed',    label: 'Closed' },
           { value: 'recruitee', label: 'From Recruitee' },
@@ -737,6 +942,7 @@ function ProfilesPage({ go, route }) {
               <th style={{ width: 112 }}>Posted</th>
               <th style={{ width: 120 }}>Source</th>
               <th style={{ width: 130 }}>Department</th>
+              <th style={{ width: 88 }} className="col-right">Applicants</th>
               <th style={{ width: 160 }}>Criteria</th>
               <th style={{ width: 90 }} className="col-right">Runs</th>
               <th style={{ width: 130 }}>Last run</th>
@@ -751,7 +957,15 @@ function ProfilesPage({ go, route }) {
               const fc = (p.redFlags || []).length;
               const total = mc + nc + fc;
               return (
-                <tr key={p.id} onClick={() => { setRunSheetProfileId(null); setEditorInitialTab(null); setSelectedId(p.id); }}>
+                <tr
+                  key={p.id}
+                  onMouseDown={() => {
+                    if (p.source === 'recruitee' && p.sourceRef) {
+                      prefetchRecruiteeApplicants(p.sourceRef);
+                    }
+                  }}
+                  onClick={() => openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, p)}
+                >
                   <td>
                     <div style={{ fontWeight: 500 }}>{p.name}</div>
                     <div className="muted mono" style={{ fontSize: 11, marginTop: 1 }}>
@@ -765,6 +979,11 @@ function ProfilesPage({ go, route }) {
                       : <Badge tone="ghost"><Icon name="edit" size={10}/> Manual</Badge>}
                   </td>
                   <td className="muted">{p.dept}</td>
+                  <td className="col-num col-right mono" style={{ fontSize: 12.5 }}>
+                    {p.source === 'recruitee' && p.applicantsCount != null
+                      ? p.applicantsCount
+                      : '—'}
+                  </td>
                   <td>
                     {total > 0 ? (
                       <span className="row" style={{ gap: 6, alignItems: 'center' }}>
@@ -798,7 +1017,7 @@ function ProfilesPage({ go, route }) {
 
       <div className="row" style={{ marginTop: 14, justifyContent: 'space-between' }}>
         <div className="muted" style={{ fontSize: 11.5 }}>
-          {filtered.length} of {PROFILES.length} jobs · synced from Recruitee 4 min ago
+          {filtered.length} of {jobs.length} jobs
         </div>
         <div className="row" style={{ gap: 4 }}>
           <Btn variant="ghost" size="sm" icon="chevron-left">Prev</Btn>
@@ -808,10 +1027,21 @@ function ProfilesPage({ go, route }) {
 
       {showNew && (
         <NewProfileDialog
+          profiles={jobs}
           onClose={() => setShowNew(false)}
           onCreate={(newProfile) => {
-            PROFILES.push(newProfile);
-            refreshProfiles();
+            const body = {
+              name: newProfile.name,
+              dept: newProfile.dept,
+              status: newProfile.status,
+              source: newProfile.source,
+              source_ref: newProfile.sourceRef,
+              description: newProfile.description,
+              posted_on: newProfile.postedOn,
+            };
+            api.jobs.upsert(newProfile.id, body)
+              .then(() => refreshProfiles())
+              .catch(() => {});
             setShowNew(false);
             setEditorInitialTab('criteria');
             setSelectedId(newProfile.id);
@@ -820,6 +1050,7 @@ function ProfilesPage({ go, route }) {
       )}
       {showRunPicker && (
         <PickJobToRunModal
+          profiles={jobs}
           onClose={() => setShowRunPicker(false)}
           onPick={(id) => {
             setShowRunPicker(false);
@@ -832,6 +1063,12 @@ function ProfilesPage({ go, route }) {
           profile={runSheetProfile}
           onClose={() => setRunSheetProfileId(null)}
           go={go}
+          onEditCriteria={() => {
+            const jobId = runSheetProfileId;
+            setRunSheetProfileId(null);
+            setEditorInitialTab('criteria');
+            setSelectedId(jobId);
+          }}
         />
       )}
     </div>
@@ -883,19 +1120,28 @@ function CriteriaKindCountBadge({ count, kind }) {
 }
 
 /* ─── New job dialog ─────────────────────────────────────── */
-function NewProfileDialog({ onClose, onCreate }) {
+function NewProfileDialog({ onClose, onCreate, profiles }) {
   const [mode, setMode] = React.useState('recruitee');
   const [picked, setPicked] = React.useState('');
   const [title, setTitle] = React.useState('');
   const [desc, setDesc] = React.useState('');
+  const [liveRecruiteeJobs, setLiveRecruiteeJobs] = React.useState(null);
+
+  React.useEffect(() => {
+    if (mode !== 'recruitee') return;
+    api.recruitee.jobs()
+      .then(setLiveRecruiteeJobs)
+      .catch(() => setLiveRecruiteeJobs([]));
+  }, [mode]);
 
   const recruiteeRefsInCaliper = React.useMemo(
-    () => new Set(PROFILES.filter((p) => p.source === 'recruitee' && p.sourceRef).map((p) => p.sourceRef)),
-    [],
+    () => new Set((profiles ?? PROFILES).filter((p) => p.source === 'recruitee' && p.sourceRef).map((p) => p.sourceRef)),
+    [profiles],
   );
+  const allRecruiteeJobs = liveRecruiteeJobs ?? RECRUITEE_JOBS;
   const recruiteeChoices = React.useMemo(
-    () => RECRUITEE_JOBS.filter((j) => !recruiteeRefsInCaliper.has(j.id)),
-    [recruiteeRefsInCaliper],
+    () => allRecruiteeJobs.filter((j) => !recruiteeRefsInCaliper.has(j.id)),
+    [allRecruiteeJobs, recruiteeRefsInCaliper],
   );
 
   React.useEffect(() => {
@@ -910,7 +1156,7 @@ function NewProfileDialog({ onClose, onCreate }) {
   const submit = () => {
     if (!onCreate || !canSubmit) return;
     if (mode === 'recruitee') {
-      const job = RECRUITEE_JOBS.find((j) => j.id === picked);
+      const job = allRecruiteeJobs.find((j) => j.id === picked);
       if (!job || recruiteeRefsInCaliper.has(job.id)) return;
       onCreate(buildProfileFromRecruiteeJob(job));
       return;
@@ -956,7 +1202,7 @@ function NewProfileDialog({ onClose, onCreate }) {
                     {recruiteeChoices.length ? 'Select a position to import…' : 'No new positions — all listed roles are already in Caliper'}
                   </option>
                   {recruiteeChoices.map((j) =>
-                    <option key={j.id} value={j.id}>{j.title} — {j.dept} ({j.apps} applicants)</option>
+                    <option key={j.id} value={j.id}>{j.title} — {j.dept ?? 'General'} ({j.applicants_count ?? j.apps ?? 0} applicants)</option>
                   )}
                 </select>
               </Field>
@@ -996,16 +1242,113 @@ function cloneCriteriaItems(items) {
   return items.map((x) => ({ ...x }));
 }
 
-function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
-  const isHero = profile.id === HERO_PROFILE.id;
-  const [mh, setMHState] = React.useState(() => cloneCriteriaItems(profile.mustHave));
-  const [nh, setNHState] = React.useState(() => cloneCriteriaItems(profile.niceToHave));
-  const [rf, setRFState] = React.useState(() => cloneCriteriaItems(profile.redFlags));
-  const [desc, setDescState] = React.useState(() => profile.description || '');
+function newCriterionId() {
+  return `crit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function buildCriteriaPayload(mh, nh, rf) {
+  return [
+    ...mh.map((c) => ({ id: c.id, kind: 'must', name: c.name, weight: c.weight, biased: Boolean(c.biased) })),
+    ...nh.map((c) => ({ id: c.id, kind: 'nice', name: c.name, weight: c.weight, biased: Boolean(c.biased) })),
+    ...rf.map((c) => ({ id: c.id, kind: 'flag', name: c.name, weight: c.weight, biased: Boolean(c.biased) })),
+  ];
+}
+
+function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, profile) {
+  if (profile.source === 'recruitee' && profile.sourceRef) {
+    prefetchRecruiteeApplicants(profile.sourceRef);
+  }
+  setRunSheetProfileId(null);
+  setEditorInitialTab(null);
+  setSelectedId(profile.id);
+}
+
+function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpenRunSheet }) {
+  const isHero = initialProfile.id === HERO_PROFILE.id;
+  const [profile, setProfile] = React.useState(initialProfile);
+  const [detailRefreshing, setDetailRefreshing] = React.useState(false);
+
+  React.useEffect(() => {
+    if (initialProfile.source === 'recruitee' && initialProfile.sourceRef) {
+      prefetchRecruiteeApplicants(initialProfile.sourceRef);
+    }
+  }, [initialProfile.id, initialProfile.source, initialProfile.sourceRef]);
+  const [mh, setMHState] = React.useState(() => cloneCriteriaItems(initialProfile.mustHave));
+  const [nh, setNHState] = React.useState(() => cloneCriteriaItems(initialProfile.niceToHave));
+  const [rf, setRFState] = React.useState(() => cloneCriteriaItems(initialProfile.redFlags));
+  const [desc, setDescState] = React.useState(() => initialProfile.description || '');
   const [showBias, setShowBias] = React.useState(false);
+  const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
+  const [screeningModel, setScreeningModel] = React.useState(
+    () => initialProfile.screeningModel || 'claude-sonnet-4-6',
+  );
+  const [saveState, setSaveState] = React.useState({ status: 'idle', message: '' });
+  const criteriaDirtyRef = React.useRef(false);
   const totalCriteria = mh.length + nh.length + rf.length;
 
+  const markCriteriaDirty = React.useCallback(() => {
+    criteriaDirtyRef.current = true;
+  }, []);
+
+  React.useEffect(() => {
+    criteriaDirtyRef.current = false;
+  }, [initialProfile.id]);
+
+  React.useEffect(() => {
+    setProfile(initialProfile);
+    if (isHero || !String(initialProfile.id).startsWith('REC-')) {
+      setDetailRefreshing(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDetailRefreshing(true);
+    const applyJob = (job: Record<string, unknown>) => {
+      const shaped = shapeJobRow(job);
+      setProfile(shaped);
+      if (!criteriaDirtyRef.current) {
+        setMHState(cloneCriteriaItems(shaped.mustHave));
+        setNHState(cloneCriteriaItems(shaped.niceToHave));
+        setRFState(cloneCriteriaItems(shaped.redFlags));
+        setDescState(shaped.description || '');
+        setScreeningModel(shaped.screeningModel || 'claude-sonnet-4-6');
+      }
+    };
+
+    const load = async () => {
+      try {
+        const job = await api.jobs.get(initialProfile.id);
+        if (!cancelled) applyJob(job as unknown as Record<string, unknown>);
+      } catch {
+        if (!cancelled) setProfile(initialProfile);
+      }
+
+      try {
+        const job = await api.jobs.refreshFromRecruitee(initialProfile.id);
+        if (!cancelled) applyJob(job as unknown as Record<string, unknown>);
+      } catch {
+        // Keep list / GET data if Recruitee refresh fails.
+      } finally {
+        if (!cancelled) setDetailRefreshing(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [initialProfile.id, isHero]);
+
+  React.useEffect(() => {
+    api.settings.get().then(setWorkspaceSettings).catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    if (profile.screeningModel) return;
+    if (workspaceSettings?.default_model) {
+      setScreeningModel(workspaceSettings.default_model);
+    }
+  }, [workspaceSettings, profile.screeningModel]);
+
   React.useLayoutEffect(() => {
+    if (criteriaDirtyRef.current) return;
     const mh0 = cloneCriteriaItems(profile.mustHave);
     const nh0 = cloneCriteriaItems(profile.niceToHave);
     const rf0 = cloneCriteriaItems(profile.redFlags);
@@ -1014,53 +1357,104 @@ function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
     setNHState(nh0);
     setRFState(rf0);
     setDescState(d0);
-    profile.mustHave = mh0;
-    profile.niceToHave = nh0;
-    profile.redFlags = rf0;
-    profile.description = d0;
-  }, [profile.id]);
+    setScreeningModel(profile.screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6');
+    setSaveState({ status: 'idle', message: '' });
+  }, [profile, workspaceSettings?.default_model]);
+
+  const saveProfile = React.useCallback(async () => {
+    if (isHero) return;
+    setSaveState({ status: 'saving', message: '' });
+    try {
+      const criteria = buildCriteriaPayload(mh, nh, rf);
+      if (criteria.length === 0) {
+        setSaveState({
+          status: 'error',
+          message: 'Add at least one criterion (click + Add), then save.',
+        });
+        return;
+      }
+      for (const c of criteria) {
+        const blocked = getProtectedAttributeError(c.name);
+        if (blocked) {
+          setSaveState({ status: 'error', message: blocked });
+          return;
+        }
+      }
+      await api.jobs.upsert(profile.id, {
+        name: profile.name,
+        dept: profile.dept,
+        status: profile.status,
+        source: profile.source,
+        source_ref: profile.sourceRef,
+        description: desc,
+        screening_model: screeningModel,
+        criteria,
+      });
+      profile.screeningModel = screeningModel;
+      profile.mustHave = mh;
+      profile.niceToHave = nh;
+      profile.redFlags = rf;
+      profile.description = desc;
+      criteriaDirtyRef.current = false;
+      clearJobsCache();
+      setSaveState({ status: 'saved', message: 'Saved.' });
+      setTimeout(() => setSaveState({ status: 'idle', message: '' }), 2500);
+    } catch (err) {
+      setSaveState({ status: 'error', message: err?.message ?? 'Save failed.' });
+    }
+  }, [isHero, profile, mh, nh, rf, desc, screeningModel]);
 
   const setMH = React.useCallback((up) => {
+    markCriteriaDirty();
     setMHState((prev) => {
       const next = typeof up === 'function' ? up(prev) : up;
       profile.mustHave = next;
       return next;
     });
-  }, [profile]);
+  }, [profile, markCriteriaDirty]);
 
   const setNH = React.useCallback((up) => {
+    markCriteriaDirty();
     setNHState((prev) => {
       const next = typeof up === 'function' ? up(prev) : up;
       profile.niceToHave = next;
       return next;
     });
-  }, [profile]);
+  }, [profile, markCriteriaDirty]);
 
   const setRF = React.useCallback((up) => {
+    markCriteriaDirty();
     setRFState((prev) => {
       const next = typeof up === 'function' ? up(prev) : up;
       profile.redFlags = next;
       return next;
     });
-  }, [profile]);
+  }, [profile, markCriteriaDirty]);
 
   const setDesc = React.useCallback((up) => {
+    markCriteriaDirty();
     setDescState((prev) => {
       const next = typeof up === 'function' ? up(prev) : up;
       profile.description = next;
       return next;
     });
-  }, [profile]);
+  }, [profile, markCriteriaDirty]);
 
-  // Mock runs against this profile
-  const profileRuns = RUNS.filter(r => r.profile && r.profile.includes(profile.name.split(',')[0].slice(0, 12)))
-    .slice(0, 3);
   const fallbackRuns = [
     { id: '12052026', date: 'May 12, 2026', cvs: 38, scoreRange: [42, 91], status: 'completed', duration: '4m 12s', owner: 'You' },
     { id: '30042026', date: 'Apr 30, 2026', cvs: 24, scoreRange: [38, 87], status: 'completed', duration: '3m 04s', owner: 'Mara Achterberg' },
     { id: '18042026', date: 'Apr 18, 2026', cvs: 19, scoreRange: [45, 83], status: 'completed', duration: '2m 41s', owner: 'You' },
   ];
-  const runsToShow = isHero ? fallbackRuns : profileRuns.length ? profileRuns : [];
+  const runsToShow = isHero
+    ? fallbackRuns
+    : runsForDisplay(profile.screeningRuns ?? []);
+
+  const subtitleParts = [
+    profile.dept || null,
+    profile.postedOn ? `posted ${profile.postedOn}` : null,
+    `${profile.runsCount || 0} screening ${profile.runsCount === 1 ? 'run' : 'runs'}`,
+    profile.lastUpdated ? `last updated ${profile.lastUpdated}` : null,
+  ].filter(Boolean);
 
   return (
     <div className="page">
@@ -1081,7 +1475,9 @@ function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
             </Badge>
           </div>
           <div className="page__sub">
-            {profile.dept} · posted {profile.postedOn} · {profile.runsCount || 0} screening {profile.runsCount === 1 ? 'run' : 'runs'} · last updated {profile.lastUpdated}
+            {detailRefreshing
+              ? `${subtitleParts.join(' · ')} · refreshing from Recruitee…`
+              : subtitleParts.join(' · ')}
           </div>
         </div>
         <div className="row" style={{ gap: 8 }}>
@@ -1093,6 +1489,7 @@ function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
 
       {/* Tabbed: Overview · Criteria · Runs · Audit */}
       <ProfileTabs
+        key={profile.id}
         profile={profile}
         initialTab={initialTab}
         desc={desc} setDesc={setDesc}
@@ -1102,6 +1499,12 @@ function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
         runsToShow={runsToShow}
         showBias={showBias} setShowBias={setShowBias}
         totalCriteria={totalCriteria}
+        workspaceSettings={workspaceSettings}
+        screeningModel={screeningModel}
+        setScreeningModel={(v) => { markCriteriaDirty(); setScreeningModel(v); }}
+        onSaveProfile={saveProfile}
+        saveState={saveState}
+        isHero={isHero}
         go={go}
         onOpenRunSheet={onOpenRunSheet}
       />
@@ -1109,7 +1512,12 @@ function ProfileEditor({ profile, initialTab, onBack, go, onOpenRunSheet }) {
   );
 }
 
-function ProfileTabs({ profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF, runsToShow, showBias, setShowBias, totalCriteria, go, onOpenRunSheet }) {
+function ProfileTabs({
+  profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF,
+  runsToShow, showBias, setShowBias, totalCriteria,
+  workspaceSettings, screeningModel, setScreeningModel, onSaveProfile, saveState, isHero,
+  go, onOpenRunSheet,
+}) {
   const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
   React.useLayoutEffect(() => {
     setTab(initialTab === 'criteria' ? 'criteria' : 'overview');
@@ -1122,6 +1530,55 @@ function ProfileTabs({ profile, initialTab, desc, setDesc, mh, setMH, nh, setNH,
     () => (typeof getCompletedRunsForProfile === 'function' ? getCompletedRunsForProfile(profile.id) : []),
     [profile.id],
   );
+  const initialApplicants = React.useMemo(
+    () => (profile.sourceRef ? getCachedApplicants(profile.sourceRef) : null),
+    [profile.sourceRef],
+  );
+  const [recruiteeApps, setRecruiteeApps] = React.useState(() => initialApplicants ?? []);
+  const [recruiteeAppsLoading, setRecruiteeAppsLoading] = React.useState(
+    () =>
+      profile.source === 'recruitee'
+      && Boolean(profile.sourceRef)
+      && !(initialApplicants?.length),
+  );
+  const [auditCount, setAuditCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (profile.source !== 'recruitee' || !profile.sourceRef) {
+      setRecruiteeApps([]);
+      setRecruiteeAppsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const cached = getCachedApplicants(profile.sourceRef);
+    if (cached?.length) {
+      setRecruiteeApps(cached);
+      setRecruiteeAppsLoading(false);
+    } else {
+      setRecruiteeAppsLoading(true);
+    }
+
+    loadRecruiteeApplicants(profile.sourceRef)
+      .then((apps) => {
+        if (!cancelled) setRecruiteeApps(apps);
+      })
+      .catch(() => {
+        if (!cancelled) setRecruiteeApps([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRecruiteeAppsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [profile.id, profile.sourceRef, profile.source]);
+
+  const candidatesTabCount = Math.max(
+    candidateRows.length,
+    recruiteeApps.length,
+    profile.applicantsCount ?? 0,
+    initialApplicants?.length ?? 0,
+  );
 
   return (
     <>
@@ -1129,8 +1586,8 @@ function ProfileTabs({ profile, initialTab, desc, setDesc, mh, setMH, nh, setNH,
         <TabBtn label="Overview"  count={null}            active={tab === 'overview'} onClick={() => setTab('overview')}/>
         <TabBtn label="Criteria"  count={totalCriteria}   active={tab === 'criteria'} onClick={() => setTab('criteria')}/>
         <TabBtn label="Runs"      count={runsToShow.length} active={tab === 'runs'}   onClick={() => setTab('runs')}/>
-        <TabBtn label="Candidates" count={candidateRows.length} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
-        <TabBtn label="Audit"     count={AUDIT.length}    active={tab === 'audit'}    onClick={() => setTab('audit')}/>
+        <TabBtn label="Candidates" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
+        <TabBtn label="Audit"     count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
       </div>
 
       {tab === 'overview' && (
@@ -1141,22 +1598,45 @@ function ProfileTabs({ profile, initialTab, desc, setDesc, mh, setMH, nh, setNH,
           mh={mh}
           nh={nh}
           rf={rf}
+          screeningModel={screeningModel}
           runsToShow={runsToShow}
           go={go}
           onGoToCriteria={() => setTab('criteria')}
         />
       )}
-      {tab === 'criteria' && <CriteriaPane mh={mh} setMH={setMH} nh={nh} setNH={setNH} rf={rf} setRF={setRF} showBias={showBias} setShowBias={setShowBias}/>}
+      {tab === 'criteria' && (
+        <CriteriaPane
+          mh={mh} setMH={setMH} nh={nh} setNH={setNH} rf={rf} setRF={setRF}
+          showBias={showBias} setShowBias={setShowBias}
+          workspaceSettings={workspaceSettings}
+          screeningModel={screeningModel}
+          setScreeningModel={setScreeningModel}
+          onSave={onSaveProfile}
+          saveState={saveState}
+          isHero={isHero}
+        />
+      )}
       {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet}/>}
       {tab === 'candidates' && (
         <JobCandidatesPane
+          profile={profile}
           rows={candidateRows}
+          recruiteeApps={recruiteeApps}
+          recruiteeLoading={recruiteeAppsLoading}
           completedRuns={completedRunsForJob}
           go={go}
           onOpenRunSheet={onOpenRunSheet}
         />
       )}
-      {tab === 'audit'    && <AuditPane/>}
+      {tab === 'audit' && (
+        <AuditPane
+          jobId={profile.id}
+          isHero={isHero}
+          active={tab === 'audit'}
+          onCount={setAuditCount}
+          go={go}
+        />
+      )}
     </>
   );
 }
@@ -1174,8 +1654,12 @@ const TabBtn = ({ label, count, active, onClick }) => (
   </button>
 );
 
+function looksLikeHtml(text) {
+  return typeof text === 'string' && /<[a-z][\s\S]*>/i.test(text);
+}
+
 /* ----- Overview pane ----- */
-function OverviewPane({ profile, desc, setDesc, mh, nh, rf, runsToShow, go, onGoToCriteria }) {
+function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runsToShow, go, onGoToCriteria }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24, alignItems: 'flex-start' }}>
       <div className="col" style={{ gap: 18 }}>
@@ -1190,9 +1674,16 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, runsToShow, go, onGo
           </div>
           <div className="card__body">
             {profile.source === 'recruitee' ? (
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6, color: 'var(--ink-soft)' }}>
-                {desc}
-              </div>
+              looksLikeHtml(desc) ? (
+                <div
+                  className="job-desc-html"
+                  dangerouslySetInnerHTML={{ __html: desc }}
+                />
+              ) : (
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6, color: 'var(--ink-soft)' }}>
+                  {desc || 'No description available from Recruitee.'}
+                </div>
+              )
             ) : (
               <textarea className="ta" rows={10} value={desc} onChange={(e) => setDesc(e.target.value)}/>
             )}
@@ -1266,11 +1757,11 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, runsToShow, go, onGo
           <div className="card__body">
             <div className="row" style={{ gap: 12, marginBottom: 10 }}>
               <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Posted</span>
-              <span style={{ fontSize: 12.5 }}>{profile.postedOn}</span>
+              <span style={{ fontSize: 12.5 }}>{profile.postedOn ?? '—'}</span>
             </div>
             <div className="row" style={{ gap: 12, marginBottom: 10 }}>
               <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Department</span>
-              <span style={{ fontSize: 12.5 }}>{profile.dept}</span>
+              <span style={{ fontSize: 12.5 }}>{profile.dept || '—'}</span>
             </div>
             <div className="row" style={{ gap: 12, marginBottom: 10 }}>
               <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Source</span>
@@ -1278,10 +1769,22 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, runsToShow, go, onGo
                 {profile.source === 'recruitee' ? `Recruitee · ${profile.sourceRef}` : 'Manually added'}
               </span>
             </div>
+            {screeningModel && (
+              <div className="row" style={{ gap: 12, marginBottom: 10 }}>
+                <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Model</span>
+                <span style={{ fontSize: 12.5 }}>{labelForModel(screeningModel)}</span>
+              </div>
+            )}
             <div className="row" style={{ gap: 12 }}>
               <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Last edit</span>
-              <span style={{ fontSize: 12.5 }}>{profile.lastUpdated}</span>
+              <span style={{ fontSize: 12.5 }}>{profile.lastUpdated ?? '—'}</span>
             </div>
+            {profile.source === 'recruitee' && profile.applicantsCount != null && (
+              <div className="row" style={{ gap: 12, marginTop: 10 }}>
+                <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Applicants</span>
+                <span className="mono" style={{ fontSize: 12.5 }}>{profile.applicantsCount}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1304,39 +1807,147 @@ const SummaryGroup = ({ kind, label, items }) => (
   </div>
 );
 
+/* ----- Screening model picker ----- */
+function ScreeningModelPicker({ modelId, onChange, settings }) {
+  const provider = providerForModel(modelId);
+  const providerModels = modelsForProvider(provider);
+  const claudeReady = isProviderConfigured('claude', settings);
+  const openaiReady = isProviderConfigured('openai', settings);
+
+  const onProviderChange = (nextProvider) => {
+    const next = firstConfiguredModel(nextProvider, settings)
+      ?? modelsForProvider(nextProvider)[0]?.id;
+    if (next) onChange(next);
+  };
+
+  return (
+    <div className="card">
+      <div className="card__head">
+        <Icon name="sparkle" size={14} className="muted"/>
+        <span className="card__title">Screening model</span>
+      </div>
+      <div className="card__body col" style={{ gap: 12 }}>
+        <div className="row" style={{ gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <Field label="Provider" style={{ flex: '1 1 180px', minWidth: 160 }}>
+            <select
+              className="sel"
+              value={provider}
+              onChange={(e) => onProviderChange(e.target.value)}
+            >
+              <option value="claude">{PROVIDER_LABELS.claude}</option>
+              <option value="openai">{PROVIDER_LABELS.openai}</option>
+            </select>
+          </Field>
+          <Field label="Model" style={{ flex: '2 1 220px', minWidth: 200 }}>
+            <select
+              className="sel"
+              value={modelId}
+              onChange={(e) => onChange(e.target.value)}
+            >
+              {providerModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+          Used when you <strong>Run screening</strong> on this job. API keys are configured in{' '}
+          <strong>Settings → AI provider</strong>.
+        </div>
+        {provider === 'claude' && !claudeReady && (
+          <div className="callout">Add an Anthropic API key in Settings to run screening with Claude.</div>
+        )}
+        {provider === 'openai' && !openaiReady && (
+          <div className="callout">Add an OpenAI API key in Settings to run screening with OpenAI.</div>
+        )}
+        {settings?.default_model && settings.default_model !== modelId && (
+          <div className="muted" style={{ fontSize: 11.5 }}>
+            Workspace default: <span className="mono">{labelForModel(settings.default_model)}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ----- Criteria pane ----- */
-function CriteriaPane({ mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias }) {
+function CriteriaPane({
+  mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias,
+  workspaceSettings, screeningModel, setScreeningModel, onSave, saveState, isHero,
+}) {
   const [biasPending, setBiasPending] = React.useState(null);
+
+  const addBiasedCriterion = () => {
+    if (!biasPending) return;
+    const item = {
+      id: newCriterionId(),
+      name: biasPending.name,
+      weight: biasPending.weight,
+      biased: true,
+    };
+    if (biasPending.kind === 'must') setMH((prev) => [...prev, item]);
+    else if (biasPending.kind === 'nice') setNH((prev) => [...prev, item]);
+    else setRF((prev) => [...prev, item]);
+    setBiasPending(null);
+    setShowBias(false);
+  };
+
   return (
     <div className="col" style={{ gap: 16 }}>
+      <ScreeningModelPicker
+        modelId={screeningModel}
+        onChange={setScreeningModel}
+        settings={workspaceSettings}
+      />
       <CriteriaList kind="must" label="Must-have criteria"
-        help="If Claude can't find evidence for these, the candidate falls in the ranking — heavily."
-        items={mh} setItems={setMH}/>
+        help="Missing or weak evidence applies a heavy score penalty. Quoted CV evidence counts fully; inferred matches count for less."
+        items={mh} setItems={setMH}
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'must' }); setShowBias(true); }}/>
       <CriteriaList kind="nice" label="Nice-to-have"
-        help="Boosts when matched. Doesn't penalise when missing."
-        items={nh} setItems={setNH}/>
+        help="Boosts when matched with evidence. Doesn't penalise when missing."
+        items={nh} setItems={setNH}
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'nice' }); setShowBias(true); }}/>
       <CriteriaList kind="flag" label="Red flags"
-        help="If matched, the candidate is marked Flagged and surfaced for manual review. Use sparingly."
+        help="If matched, points are deducted (weight ×4 per flag, ×2 if inferred) and the candidate is marked Flagged."
         items={rf} setItems={setRF}
-        onBiasWarn={(payload) => { setBiasPending(payload); setShowBias(true); }}/>
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'flag' }); setShowBias(true); }}/>
       {showBias && (
         <div className="bias-banner">
           <Icon name="alert" size={16} className="bias-banner__icon"/>
           <div>
             <div className="bias-banner__title">This criterion may correlate with demographic bias.</div>
             <div className="bias-banner__body">
-              Patterns like “employment gaps,” “frequent short tenures,” or “non-linear career paths” are commonly associated with protected characteristics — caregivers returning to work, candidates in volatile labour markets, etc. Consider whether you've evidence this is genuinely predictive for the role. The platform doesn't block the criterion, but the warning is recorded in the audit trail.
+              Patterns like employment gaps, short tenures, or age-related wording are commonly associated with protected characteristics.
+              If you add it anyway, it is saved with a bias flag on the audit trail.
               <div className="row" style={{ marginTop: 10, gap: 8 }}>
-                <Btn size="sm" variant="default" onClick={() => {
-                  if (!biasPending) return;
-                  setRF((prev) => [...prev, { id: 'x' + Date.now(), name: biasPending.name, weight: biasPending.weight }]);
-                  setBiasPending(null);
-                  setShowBias(false);
-                }}>Add anyway (logged)</Btn>
-                <Btn size="sm" variant="ghost" onClick={() => { setBiasPending(null); setShowBias(false); }}>Don't add</Btn>
+                <Btn size="sm" variant="default" onClick={addBiasedCriterion}>Add anyway (logged)</Btn>
+                <Btn size="sm" variant="ghost" onClick={() => { setBiasPending(null); setShowBias(false); }}>Don&apos;t add</Btn>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {!isHero && (
+        <div className="row" style={{ gap: 10, alignItems: 'center', justifyContent: 'flex-end' }}>
+          {saveState?.message && (
+            <span
+              style={{
+                fontSize: 12.5,
+                color: saveState.status === 'error' ? 'var(--bad)' : 'var(--ok-ink, green)',
+              }}
+            >
+              {saveState.message}
+            </span>
+          )}
+          <Btn
+            variant="primary"
+            icon="check"
+            disabled={saveState?.status === 'saving'}
+            onClick={() => onSave && onSave()}
+          >
+            {saveState?.status === 'saving' ? 'Saving…' : 'Save criteria & model'}
+          </Btn>
         </div>
       )}
 
@@ -1349,10 +1960,11 @@ function CriteriaPane({ mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias }
         <div className="card__body" style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 32 }}>
           <div>
             <div style={{ marginBottom: 10, fontSize: 13, lineHeight: 1.6, color: 'var(--ink-soft)' }}>
-              A weight of <strong>×1</strong> means the criterion contributes its base value to the score. A weight of <strong>×5</strong> means it contributes <em>five</em> times that.
+              Scoring uses a <strong>binary checklist</strong>: each line is Met or Not met.
+              Your overall score is the <strong>% of must + nice criteria met</strong>, minus deductions for triggered red flags (weight ×4 each).
             </div>
             <div className="muted" style={{ fontSize: 12.5, maxWidth: '54ch' }}>
-              This lets <em>“500+ interviews conducted”</em> matter substantially more than <em>“familiar with Google Sheets”</em>, rather than every criterion being equal.
+              Weights affect red-flag deductions only; checklist percentages count each line equally.
             </div>
           </div>
           <div className="col" style={{ gap: 4, minWidth: 200 }}>
@@ -1438,26 +2050,125 @@ function RunsPane({ runs, go, onOpenRunSheet }) {
   );
 }
 
-/* ----- Candidates across completed runs ----- */
-function JobCandidatesPane({ rows, completedRuns, go, onOpenRunSheet }) {
+function RecruiteeCvModal({ candidateId, candidateName, onClose }) {
+  const [blobUrl, setBlobUrl] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+
+    setLoading(true);
+    setError(null);
+    setBlobUrl(null);
+
+    api.recruitee
+      .fetchCv(candidateId)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err?.message ?? 'Could not load CV.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [candidateId]);
+
+  return (
+    <div
+      className="demo-run-overlay cv-preview-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cv-preview-title"
+      onClick={onClose}
+    >
+      <div className="cv-preview-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="cv-preview-modal__head">
+          <div>
+            <h2 id="cv-preview-title" className="cv-preview-modal__title">{candidateName}</h2>
+            <p className="cv-preview-modal__sub muted">CV from Recruitee</p>
+          </div>
+          <IconBtn icon="x" label="Close" onClick={onClose} />
+        </div>
+        <div className="cv-preview-modal__body">
+          {loading && (
+            <div className="cv-preview-modal__status muted">Loading CV…</div>
+          )}
+          {error && (
+            <div className="cv-preview-modal__status">
+              <div className="callout">{error}</div>
+            </div>
+          )}
+          {blobUrl && !loading && (
+            <iframe
+              title={`CV — ${candidateName}`}
+              src={blobUrl}
+              className="cv-preview-modal__frame"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----- Recruitee applicants + screened candidates ----- */
+function JobCandidatesPane({
+  profile,
+  rows,
+  recruiteeApps,
+  recruiteeLoading,
+  completedRuns,
+  go,
+  onOpenRunSheet,
+}) {
+  const [cvPreview, setCvPreview] = React.useState(null);
+
   const uniquePeople = React.useMemo(() => {
     const s = new Set();
     rows.forEach((r) => s.add(r.name.toLowerCase()));
     return s.size;
   }, [rows]);
 
-  if (completedRuns.length === 0) {
+  const hasRecruitee = profile.source === 'recruitee' && profile.sourceRef;
+  const hasScreened = rows.length > 0 && completedRuns.length > 0;
+  const showRecruitee = hasRecruitee && (recruiteeLoading || recruiteeApps.length > 0);
+
+  if (!showRecruitee && !hasScreened) {
     return (
       <div className="card">
         <div className="empty">
           <Icon name="users" size={22}/>
-          <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>No screened candidates yet</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '48ch' }}>
-            When you have at least one <strong>completed</strong> run for this job, every scored candidate from those runs appears here (one row per person per run; a backend can merge duplicates across runs).
+          <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>
+            {recruiteeLoading ? 'Loading applicants from Recruitee…' : 'No applicants yet'}
           </div>
-          <div style={{ marginTop: 16 }}>
-            <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
-          </div>
+          {!recruiteeLoading && (
+            <>
+              <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '48ch' }}>
+                Applicants from Recruitee appear here. After screening, scored candidates show in a separate section.
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -1465,129 +2176,291 @@ function JobCandidatesPane({ rows, completedRuns, go, onOpenRunSheet }) {
 
   return (
     <div className="col" style={{ gap: 14 }}>
-      <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-        <strong>{rows.length}</strong> scored candidate row{rows.length === 1 ? '' : 's'} across{' '}
-        <strong>{completedRuns.length}</strong> completed run{completedRuns.length === 1 ? '' : 's'}
-        {uniquePeople > 0 && (
-          <>
-            {' · '}
-            <span className="mono">{uniquePeople}</span> distinct names in this mock
-          </>
-        )}
-        . Click a row to open the candidate detail drawer (or the run only when no candidate id is linked).
-      </div>
+      {showRecruitee && (
+        <>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+            <strong>{recruiteeApps.length || profile.applicantsCount || 0}</strong> applicant
+            {(recruiteeApps.length || profile.applicantsCount || 0) === 1 ? '' : 's'} in Recruitee
+            {recruiteeLoading && ' · loading…'}
+            . Use <strong>Run screening</strong> to score CVs from this list.
+          </div>
+          <div className="card">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Applicant</th>
+                  <th style={{ width: 140 }}>Location</th>
+                  <th style={{ width: 140 }}>Stage</th>
+                  <th style={{ width: 100 }}>CV</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recruiteeLoading && recruiteeApps.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="muted" style={{ padding: 20, fontSize: 12.5 }}>
+                      Loading applicants…
+                    </td>
+                  </tr>
+                )}
+                {recruiteeApps.map((a) => (
+                  <tr key={a.id}>
+                    <td>
+                      <div style={{ fontWeight: 500, fontSize: 13.5 }}>{a.name || 'Unknown'}</div>
+                    </td>
+                    <td className="muted">{a.location || '—'}</td>
+                    <td className="muted" style={{ fontSize: 12 }}>{a.status || '—'}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {a.cv_url ? (
+                        <Btn
+                          size="sm"
+                          variant="ghost"
+                          icon="eye"
+                          onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
+                        >
+                          View
+                        </Btn>
+                      ) : (
+                        <Badge tone="warn">No CV</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
-      <div className="card">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Candidate</th>
-              <th style={{ width: 120 }}>Location</th>
-              <th style={{ width: 72 }} className="col-right">Score</th>
-              <th style={{ width: 100 }}>Confidence</th>
-              <th style={{ width: 130 }}>Status</th>
-              <th style={{ width: 140 }}>Run</th>
-              <th style={{ width: 110 }}>Date</th>
-              <th style={{ width: 36 }}/>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.key}
-                className="is-clickable"
-                tabIndex={0}
-                role="button"
-                onClick={() => {
-                  if (go && row.candidateId) {
-                    go('results', { run: row.runId, candidate: row.candidateId });
-                  } else if (go) {
-                    go('results', row.runId);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    if (go && row.candidateId) {
-                      go('results', { run: row.runId, candidate: row.candidateId });
-                    } else if (go) {
-                      go('results', row.runId);
+      {cvPreview && (
+        <RecruiteeCvModal
+          candidateId={cvPreview.id}
+          candidateName={cvPreview.name}
+          onClose={() => setCvPreview(null)}
+        />
+      )}
+
+      {hasScreened && (
+        <>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+            <strong>{rows.length}</strong> scored candidate row{rows.length === 1 ? '' : 's'} across{' '}
+            <strong>{completedRuns.length}</strong> completed run{completedRuns.length === 1 ? '' : 's'}
+            {uniquePeople > 0 && (
+              <>
+                {' · '}
+                <span className="mono">{uniquePeople}</span> distinct names
+              </>
+            )}
+            . Click a row to open candidate details.
+          </div>
+
+          <div className="card">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Candidate</th>
+                  <th style={{ width: 120 }}>Location</th>
+                  <th style={{ width: 72 }} className="col-right">Score</th>
+                  <th style={{ width: 100 }}>Confidence</th>
+                  <th style={{ width: 130 }}>Status</th>
+                  <th style={{ width: 140 }}>Run</th>
+                  <th style={{ width: 110 }}>Date</th>
+                  <th style={{ width: 36 }}/>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.key}
+                    className="is-clickable"
+                    tabIndex={0}
+                    role="button"
+                    onClick={() => {
+                      if (go && row.candidateId) {
+                        go('results', { run: row.runId, candidate: row.candidateId });
+                      } else if (go) {
+                        go('results', row.runId);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (go && row.candidateId) {
+                          go('results', { run: row.runId, candidate: row.candidateId });
+                        } else if (go) {
+                          go('results', row.runId);
+                        }
+                      }
+                    }}
+                    aria-label={
+                      row.candidateId
+                        ? `Open candidate ${row.name} in ${row.runId}`
+                        : `Open run ${row.runId}`
                     }
-                  }
-                }}
-                aria-label={
-                  row.candidateId
-                    ? `Open candidate ${row.name} in ${row.runId}`
-                    : `Open run ${row.runId}`
-                }
-              >
-                <td>
-                  <div style={{ fontWeight: 500, fontSize: 13.5 }}>{row.name}</div>
-                  <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>{row.title}</div>
-                </td>
-                <td className="muted">{row.loc}</td>
-                <td className="col-num col-right mono" style={{ fontSize: 12.5 }}>{row.score}</td>
-                <td><Confidence level={row.confidence}/></td>
-                <td><StatusBadge s={row.status}/></td>
-                <td className="mono muted" style={{ fontSize: 11.5 }}>{row.runId}</td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{row.runDate}</td>
-                <td><Icon name="chevron-right" size={14} className="muted"/></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  >
+                    <td>
+                      <div style={{ fontWeight: 500, fontSize: 13.5 }}>{row.name}</div>
+                      <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>{row.title}</div>
+                    </td>
+                    <td className="muted">{row.loc}</td>
+                    <td className="col-num col-right mono" style={{ fontSize: 12.5 }}>{row.score}</td>
+                    <td><Confidence level={row.confidence}/></td>
+                    <td><StatusBadge s={row.status}/></td>
+                    <td className="mono muted" style={{ fontSize: 11.5 }}>{row.runId}</td>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{row.runDate}</td>
+                    <td><Icon name="chevron-right" size={14} className="muted"/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
+const AUDIT_KIND_META = {
+  criteria: { icon: 'sliders', label: 'Criteria' },
+  run: { icon: 'play', label: 'Screening' },
+  override: { icon: 'edit', label: 'Override' },
+  job: { icon: 'doc', label: 'Job' },
+  sync: { icon: 'database', label: 'Recruitee' },
+  other: { icon: 'history', label: 'Activity' },
+};
+
 /* ----- Audit pane ----- */
-function AuditPane() {
+function AuditPane({ jobId, isHero, active, onCount, go }) {
+  const [entries, setEntries] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  const loadAudit = React.useCallback(() => {
+    if (isHero || !jobId) {
+      setEntries([]);
+      onCount?.(0);
+      setLoading(false);
+      return () => {};
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    api.jobs
+      .audit(jobId)
+      .then((rows) => {
+        if (cancelled) return;
+        setEntries(rows);
+        onCount?.(rows.length);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEntries([]);
+        onCount?.(0);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [jobId, isHero, onCount]);
+
+  React.useEffect(() => {
+    if (!active) return undefined;
+    return loadAudit();
+  }, [active, loadAudit]);
+
   return (
     <div className="card">
       <div className="card__head">
         <Icon name="history" size={14} className="muted"/>
-        <span className="card__title">Audit trail</span>
+        <span className="card__title">Activity log</span>
         <div className="spacer"/>
-        <span className="mono muted" style={{ fontSize: 11 }}>{AUDIT.length} entries</span>
-        <Btn size="sm" variant="ghost" icon="download">Export log</Btn>
+        {!loading && entries.length > 0 && (
+          <Btn size="sm" variant="ghost" onClick={loadAudit}>Refresh</Btn>
+        )}
+        <span className="mono muted" style={{ fontSize: 11 }}>
+          {loading ? 'Loading…' : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
+        </span>
       </div>
       <div className="card__body" style={{ paddingTop: 4 }}>
-        <div className="log">
-          {AUDIT.map((a, i) => (
-            <div key={i} className="log__row">
-              <div className="log__ts">{a.ts}</div>
-              <div className="log__msg">
-                <b>{a.who}</b> {a.msg}
-                {a.warned && (
-                  <span className="ml-2 inline-flex items-center rounded-full border border-transparent bg-amber-50 px-2 py-0.5 text-[10px] font-medium leading-none text-amber-800">
-                    Bias notice shown
-                  </span>
-                )}
-                {a.reason !== '—' && <div><em>Reason: {a.reason}</em></div>}
-              </div>
+        {loading && (
+          <div className="muted" style={{ padding: 18, fontSize: 12.5 }}>Loading activity…</div>
+        )}
+        {!loading && entries.length === 0 && (
+          <div className="empty" style={{ padding: '24px 18px' }}>
+            <Icon name="history" size={22}/>
+            <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>No activity yet</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '52ch', lineHeight: 1.55 }}>
+              Saving criteria, running screening, and overriding scores on this job are recorded here automatically.
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+        {!loading && entries.length > 0 && (
+          <div className="log">
+            {entries.map((a) => {
+              const meta = AUDIT_KIND_META[a.kind] ?? AUDIT_KIND_META.other;
+              return (
+                <div key={a.id} className={`log__row log__row--${a.kind}`}>
+                  <div className="log__ts">{a.ts}</div>
+                  <div className="log__main">
+                    <div className="log__kind">
+                      <Icon name={meta.icon} size={12} className="muted"/>
+                      <span>{meta.label}</span>
+                    </div>
+                    <div className="log__msg">
+                      <b>{a.who}</b> {a.msg}
+                      {a.warned && (
+                        <Badge tone="warn" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+                          Bias criteria
+                        </Badge>
+                      )}
+                    </div>
+                    {a.reason !== '—' && (
+                      <div className="log__reason muted">Reason: {a.reason}</div>
+                    )}
+                    {a.runId && go && (a.kind === 'run' || a.kind === 'override') && (
+                      <button
+                        type="button"
+                        className="linkish log__link"
+                        onClick={() => go('results', a.runId)}
+                      >
+                        View run →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/* ----- Criteria list (shared) ----- */
-const BIAS_PATTERNS = /tenure|gap|short|non[- ]linear|career break|young|old/i;
 
+/* ----- Criteria list (shared) ----- */
 function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
   const [input, setInput] = React.useState('');
-  const [weight, setWeight] = React.useState(3);
+  const [weight, setWeight] = React.useState(kind === 'must' ? 5 : 3);
+  const [inputError, setInputError] = React.useState('');
+
+  const draftText = input.trim();
+  const hasDraft = draftText.length > 0;
 
   const add = () => {
-    if (!input.trim()) return;
-    if (kind === 'flag' && BIAS_PATTERNS.test(input) && onBiasWarn) {
-      onBiasWarn({ name: input.trim(), weight });
+    const name = input.trim();
+    if (!name) return;
+    const blocked = getProtectedAttributeError(name);
+    if (blocked) {
+      setInputError(blocked);
       return;
     }
-    setItems([...items, { id: 'x' + Date.now(), name: input.trim(), weight }]);
+    setInputError('');
+    if (getBiasWarning(name) && onBiasWarn) {
+      onBiasWarn({ name, weight });
+      setInput('');
+      return;
+    }
+    setItems([...items, { id: newCriterionId(), name, weight }]);
     setInput('');
   };
   const remove = (id) => setItems(items.filter(x => x.id !== id));
@@ -1595,6 +2468,12 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
 
   return (
     <div className="crit-list">
+      {hasDraft && (
+        <div className="callout" style={{ marginBottom: 10, fontSize: 12.5 }}>
+          You have unsaved text in the box below. Click <strong>+ Add</strong>, then{' '}
+          <strong>Save criteria &amp; model</strong> — typing alone does not add a criterion.
+        </div>
+      )}
       <div className="crit-list__hd">
         <div className="crit-list__title">
           <span style={{
@@ -1622,7 +2501,8 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
         </div>
         <div className="crit-list__add">
           <input className="inp" placeholder={`Add a ${kind === 'must' ? 'must-have' : kind === 'nice' ? 'nice-to-have' : 'red flag'} criterion…`}
-                 value={input} onChange={(e) => setInput(e.target.value)}
+                 value={input}
+                 onChange={(e) => { setInput(e.target.value); if (inputError) setInputError(''); }}
                  onKeyDown={(e) => e.key === 'Enter' && add()}
                  style={{ flex: 1 }}/>
           <div className="row" style={{ gap: 4 }}>
@@ -1631,6 +2511,9 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
           </div>
           <Btn icon="plus" onClick={add}>Add</Btn>
         </div>
+        {inputError && (
+          <p style={{ fontSize: 12, color: 'var(--bad)', margin: '8px 0 0' }}>{inputError}</p>
+        )}
       </div>
     </div>
   );
