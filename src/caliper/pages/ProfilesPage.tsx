@@ -44,6 +44,19 @@ import { ChecklistRow } from '@/caliper/components/CriteriaChecklist'
 function shapeJobsList(jobs: unknown[]) {
   return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
 }
+
+const StatCell = ({ label, value, delta, deltaTone, sub }) => (
+  <div className="stats__cell">
+    <div className="stats__lbl">{label}</div>
+    <div className="stats__val">{value}</div>
+    {delta && (
+      <div className={`stats__delta${deltaTone ? ` stats__delta--${deltaTone}` : ''}`}>
+        {deltaTone === 'up' ? '↑' : deltaTone === 'down' ? '↓' : '·'} {delta}
+        {sub && <span className="muted" style={{ marginLeft: 4 }}> {sub}</span>}
+      </div>
+    )}
+  </div>
+);
 import {
   Icon,
   Btn,
@@ -449,8 +462,8 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
                                 <td>
                                   <span style={{
                                     display: 'inline-grid', placeItems: 'center', width: 16, height: 16,
-                                    border: `1.5px solid ${rowSel[i] ? 'var(--ink)' : 'var(--faint)'}`,
-                                    background: rowSel[i] ? 'var(--ink)' : 'var(--surface)',
+                                    border: `1.5px solid ${rowSel[i] ? 'var(--brand-primary)' : 'var(--faint)'}`,
+                                    background: rowSel[i] ? 'var(--brand-primary)' : 'var(--surface)',
                                     borderRadius: 3, color: 'var(--bg)',
                                   }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
                                 </td>
@@ -683,15 +696,6 @@ function buildManualProfile(title, descText) {
 function JobsPageLoading({ phase, onRetry }) {
   return (
     <div className="page">
-      <div className="page__head">
-        <div>
-          <div className="page__eyebrow">Jobs</div>
-          <h1 className="page__title">Jobs</h1>
-          <div className="page__sub">
-            Configure each job here (description, criteria, runs). Recruitee roles sync in the background when needed.
-          </div>
-        </div>
-      </div>
       <div className="card">
         <div className="jobs-loading">
           <div className="jobs-loading__spinner" role="status" aria-label="Loading jobs" />
@@ -728,7 +732,6 @@ function ProfilesPage({ go, route }) {
   const [profilesLoading, setProfilesLoading] = React.useState(!initialCache?.jobs?.length);
   const [profilesLoadError, setProfilesLoadError] = React.useState(null);
   const [loadPhase, setLoadPhase] = React.useState('Syncing open roles from Recruitee…');
-  const [recruiteeSyncNote, setRecruiteeSyncNote] = React.useState(initialCache?.syncNote ?? '');
   const [backgroundRefreshing, setBackgroundRefreshing] = React.useState(
     Boolean(initialCache?.jobs?.length),
   );
@@ -765,10 +768,9 @@ function ProfilesPage({ go, route }) {
           if (!cancelled) {
             syncNote = formatSyncNote(sync);
             lastSyncAt = Date.now();
-            setRecruiteeSyncNote(syncNote);
           }
         } catch {
-          if (!cancelled && !syncNote) setRecruiteeSyncNote('');
+          /* keep prior syncNote from cache */
         }
       }
 
@@ -787,7 +789,6 @@ function ProfilesPage({ go, route }) {
             lastSyncAt: runSync ? lastSyncAt : cache?.lastSyncAt ?? lastSyncAt,
             syncNote,
           });
-          if (syncNote) setRecruiteeSyncNote(syncNote);
         }
       } catch (err) {
         if (!cancelled && !hadList) {
@@ -876,40 +877,23 @@ function ProfilesPage({ go, route }) {
     return true;
   });
 
+  const openCount = jobs.filter((p) => p.status === 'open').length;
+  const totalRuns = jobs.reduce((sum, p) => sum + (p.runsCount || 0), 0);
+  const avgRunsPerJob = jobs.length ? Math.round(totalRuns / jobs.length) : 0;
+
   return (
     <div className="page">
-      <div className="page__head">
-        <div>
-          <div className="page__eyebrow">Jobs</div>
-          <h1 className="page__title">Jobs</h1>
-          <div className="page__sub">
-            Configure each job here (description, criteria, runs). Recruitee roles sync in the background when needed.
-            {recruiteeSyncNote && (
-              <span className="muted" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
-                {recruiteeSyncNote}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="row" style={{ gap: 8 }}>
-          <Btn
-            variant="ghost"
-            icon="history"
-            disabled={backgroundRefreshing}
-            onClick={() => refreshProfiles({ forceSync: true })}
-          >
-            {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
-          </Btn>
-          <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening…</Btn>
-          <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
-        </div>
-      </div>
-
       {backgroundRefreshing && (
         <div className="jobs-refresh-banner" role="status">
           Updating job list…
         </div>
       )}
+
+      <div className="stats" style={{ marginTop: 20, marginBottom: 28 }}>
+        <StatCell label="Open jobs" value={openCount} />
+        <StatCell label="Avg. runs per job" value={avgRunsPerJob || '—'} />
+        <StatCell label="Total jobs" value={jobs.length} />
+      </div>
 
       <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8 }}>
         <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
@@ -931,7 +915,16 @@ function ProfilesPage({ go, route }) {
           { value: 'manual',    label: 'Manually added' },
         ]}/>
         <div className="spacer"/>
-        <Btn icon="archive" variant="ghost" size="sm">Archived</Btn>
+        <Btn
+          variant="ghost"
+          icon="history"
+          disabled={backgroundRefreshing}
+          onClick={() => refreshProfiles({ forceSync: true })}
+        >
+          {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
+        </Btn>
+        <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening</Btn>
+        <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
       </div>
 
       <div className="card">
@@ -1458,27 +1451,15 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
 
   return (
     <div className="page">
-      <div className="page__head" style={{ alignItems: 'flex-end' }}>
-        <div>
-          <div className="page__eyebrow">
-            <button type="button" className="linkish" onClick={onBack}>← Jobs</button>
-            <span style={{ margin: '0 8px', color: 'var(--faint)' }}>·</span>
-            <span className="mono">{profile.id}</span>
-          </div>
-          <div className="row" style={{ gap: 10, alignItems: 'center', marginBottom: 6 }}>
-            <h1 className="page__title" style={{ margin: 0 }}>{profile.name}</h1>
-            {profile.source === 'recruitee'
-              ? <Badge tone="info"><Icon name="database" size={11}/> Recruitee · {profile.sourceRef}</Badge>
-              : <Badge tone="ghost"><Icon name="edit" size={11}/> Manually added</Badge>}
-            <Badge tone={profile.status === 'open' ? 'ok' : 'ghost'} dot={profile.status === 'open'}>
-              {profile.status === 'open' ? 'Open' : profile.status === 'closed' ? 'Closed' : 'Archived'}
-            </Badge>
-          </div>
-          <div className="page__sub">
-            {detailRefreshing
-              ? `${subtitleParts.join(' · ')} · refreshing from Recruitee…`
-              : subtitleParts.join(' · ')}
-          </div>
+      <div className="row" style={{ marginBottom: 16, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="linkish" onClick={onBack}>← Jobs</button>
+          {profile.source === 'recruitee'
+            ? <Badge tone="info"><Icon name="database" size={11}/> Recruitee · {profile.sourceRef}</Badge>
+            : <Badge tone="ghost"><Icon name="edit" size={11}/> Manually added</Badge>}
+          <Badge tone={profile.status === 'open' ? 'ok' : 'ghost'} dot={profile.status === 'open'}>
+            {profile.status === 'open' ? 'Open' : profile.status === 'closed' ? 'Closed' : 'Archived'}
+          </Badge>
         </div>
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" icon="copy">Duplicate</Btn>
@@ -1973,7 +1954,7 @@ function CriteriaPane({
                 <span className="mono muted" style={{ width: 24, fontSize: 11 }}>×{w}</span>
                 <span style={{
                   height: 6, borderRadius: 3,
-                  background: 'var(--ink)',
+                  background: 'var(--brand-primary)',
                   width: `${w * 16 + 30}px`,
                   opacity: 0.4 + w * 0.12,
                 }}/>

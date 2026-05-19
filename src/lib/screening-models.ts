@@ -44,7 +44,7 @@ export function firstConfiguredModel(
   provider: ScreeningProvider,
   settings: { has_anthropic_key?: boolean; has_openai_key?: boolean; default_model?: string } | null,
 ): string | null {
-  const pool = modelsForProvider(provider).filter((m) => isProviderConfigured(provider, settings));
+  const pool = modelsForProvider(provider).filter(() => isProviderConfigured(provider, settings));
   if (pool.length === 0) return null;
   const preferred = settings?.default_model;
   if (preferred && pool.some((m) => m.id === preferred)) return preferred;

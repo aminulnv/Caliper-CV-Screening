@@ -57,21 +57,7 @@ function RunsPage({ go }) {
 
   return (
     <div className="page">
-      <div className="page__head">
-        <div>
-          <div className="page__eyebrow">Runs · {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
-          <h1 className="page__title">Screening runs</h1>
-          <div className="page__sub">
-            History of every CV screening. Open a completed run for rankings and overrides. To start screening, open a job under <strong>Jobs</strong> and use <strong>Run screening</strong>.
-          </div>
-        </div>
-        <div className="row">
-          <Btn icon="search" variant="ghost">Search</Btn>
-          <Btn icon="layers" variant="primary" size="lg" onClick={() => go('profiles')}>Jobs</Btn>
-        </div>
-      </div>
-
-      <div className="stats" style={{ marginBottom: 28 }}>
+      <div className="stats" style={{ marginTop: 20, marginBottom: 28 }}>
         <StatCell label="Runs this month"     value={thisMonth.length} />
         <StatCell label="Avg. CVs per run"    value={avgCvs || '—'} />
         <StatCell label="Total runs"          value={runs.length} />
@@ -85,6 +71,8 @@ function RunsPage({ go }) {
           { value: 'failed',      label: 'Failed' },
         ]}/>
         <div className="spacer"/>
+        <Btn icon="search" variant="ghost" size="sm">Search</Btn>
+        <Btn icon="briefcase" variant="primary" size="sm" onClick={() => go('profiles')}>Jobs</Btn>
         <Btn icon="filter" variant="ghost" size="sm">Filter</Btn>
         <Btn icon="download" variant="ghost" size="sm">Export</Btn>
       </div>

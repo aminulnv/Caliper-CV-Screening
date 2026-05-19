@@ -1,4 +1,4 @@
-import { Layers, List, Settings, User } from 'lucide-react'
+import { Briefcase, FileUser, List, Settings } from 'lucide-react'
 import type { AppLayoutConfig } from '@/layout'
 import { assets } from './assets'
 
@@ -9,14 +9,13 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
   brand: {
     name: 'Caliper',
     subtitle: 'CV Screening',
-    icon: Layers,
-    logoColor: '#2CA85A',
+    icon: FileUser,
+    logoColor: assets.brandLogoColor,
     logoUrl: assets.logoUrl || undefined,
   },
   navItems: [
+    { path: '/jobs', label: 'Jobs', icon: Briefcase, end: true },
     { path: '/runs', label: 'Runs', icon: List, end: true },
-    { path: '/jobs', label: 'Jobs', icon: Layers, end: true },
-    { path: '/profile', label: 'Profile', icon: User, end: true },
     { path: '/settings', label: 'Settings', icon: Settings, end: true },
   ],
 }
@@ -29,8 +28,8 @@ export function getPageTitle(pathname: string): string {
   const titles: Record<string, string> = {
     '/runs': 'Runs',
     '/jobs': 'Jobs',
-    '/profile': 'Profile',
     '/settings': 'Settings',
+    '/profile': 'Profile',
   }
   return titles[pathname] ?? 'Caliper'
 }

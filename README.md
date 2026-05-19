@@ -16,7 +16,7 @@ Originally scaffolded from [Auth Basement](https://github.com/mr-aminul/Auth-Bas
 
 ```
 src/
-  layout/           # App shell: AppLayout, Sidebar, TopBar, useBreakpoint, AuthenticatedLayout
+  layout/           # App shell: AppLayout, AppNavBar, ContentHeader, useBreakpoint, AuthenticatedLayout
   config/           # App config (e.g. layout/nav, brand, page titles)
   components/       # Shared UI (e.g. ProtectedRoute)
   contexts/         # React context (AuthContext)

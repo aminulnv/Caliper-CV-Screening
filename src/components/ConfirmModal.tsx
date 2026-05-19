@@ -35,8 +35,8 @@ export function ConfirmModal({
           cursor: 'pointer',
         }
       : {
-          background: '#111827',
-          color: '#fff',
+          background: 'var(--brand-primary)',
+          color: 'var(--brand-primary-contrast)',
           border: 'none',
           padding: '0.5rem 1rem',
           borderRadius: '0.375rem',

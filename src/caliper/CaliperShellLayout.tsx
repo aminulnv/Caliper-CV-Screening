@@ -7,6 +7,8 @@ import {
   TweakColor,
   TweakRadio,
 } from '@/caliper/tweaks-panel'
+import { assets } from '@/config/assets'
+import { applyBrandTheme, getDefaultAccentTweaks } from '@/config/brand-theme'
 
 export type CaliperTweaksState = {
   accent: string
@@ -17,10 +19,10 @@ export type CaliperTweaksState = {
   detailLayout: string
 }
 
+const brandAccent = getDefaultAccentTweaks(assets.layoutBackgroundValue)
+
 const TWEAK_DEFAULTS: CaliperTweaksState = {
-  accent: 'oklch(0.52 0.09 150)',
-  accentSoft: 'oklch(0.95 0.04 150)',
-  accentInk: 'oklch(0.32 0.07 150)',
+  ...brandAccent,
   density: 'regular',
   scoreStyle: 'stacked',
   detailLayout: 'split',
@@ -36,6 +38,7 @@ export default function CaliperShellLayout() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS)
 
   useEffect(() => {
+    applyBrandTheme(assets.layoutBackgroundValue)
     document.documentElement.style.setProperty('--accent', t.accent)
     document.documentElement.style.setProperty('--accent-soft', t.accentSoft)
     document.documentElement.style.setProperty('--accent-ink', t.accentInk)
@@ -53,20 +56,29 @@ export default function CaliperShellLayout() {
           label="Accent"
           value={t.accent}
           options={[
+            brandAccent.accent,
             'oklch(0.52 0.09 150)',
             'oklch(0.50 0.10 250)',
             'oklch(0.52 0.10 30)',
             'oklch(0.42 0.06 280)',
-            'oklch(0.34 0.02 60)',
           ]}
           onChange={(v: string | string[]) => {
-            const m = /oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)\)/.exec(String(v))
-            const hue = m ? m[3] : '150'
-            setTweak({
-              accent: v as string,
-              accentSoft: `oklch(0.95 0.04 ${hue})`,
-              accentInk: `oklch(0.32 0.07 ${hue})`,
-            })
+            const accent = String(v)
+            const m = /oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)\)/.exec(accent)
+            if (m) {
+              const hue = m[3]
+              setTweak({
+                accent,
+                accentSoft: `oklch(0.95 0.04 ${hue})`,
+                accentInk: `oklch(0.32 0.07 ${hue})`,
+              })
+            } else {
+              setTweak({
+                accent,
+                accentSoft: `color-mix(in srgb, ${accent} 14%, white)`,
+                accentInk: `color-mix(in srgb, ${accent} 55%, black)`,
+              })
+            }
           }}
         />
         <TweakRadio

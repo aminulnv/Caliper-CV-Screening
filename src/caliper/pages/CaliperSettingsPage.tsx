@@ -91,20 +91,11 @@ function SettingsPage() {
 
   return (
     <div className="page">
-      <div className="page__head">
-        <div>
-          <div className="page__eyebrow">Settings</div>
-          <h1 className="page__title">Workspace settings</h1>
-          <div className="page__sub">
-            Integrations, screening defaults, access, and data retention.
-          </div>
+      {saveMsg && (
+        <div style={{ fontSize: 13, color: saveMsg.ok ? 'var(--ok-ink, green)' : 'var(--bad)', marginBottom: 16 }}>
+          {saveMsg.text}
         </div>
-        {saveMsg && (
-          <div style={{ fontSize: 13, color: saveMsg.ok ? 'var(--ok-ink, green)' : 'var(--bad)', padding: '6px 12px', borderRadius: 6 }}>
-            {saveMsg.text}
-          </div>
-        )}
-      </div>
+      )}
 
       <Section
         title="AI provider"

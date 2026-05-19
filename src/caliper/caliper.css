@@ -16,10 +16,17 @@
   --line: #e7e5e4;
   --line-soft: #efece8;
 
-  /* accent — institutional muted green by default */
-  --accent: oklch(0.52 0.09 150);
-  --accent-soft: oklch(0.95 0.04 150);
-  --accent-ink: oklch(0.32 0.07 150);
+  /* accent — synced from layout background via brand-theme (see main.tsx) */
+  --brand-primary: #390b77;
+  --brand-primary-hover: color-mix(in srgb, #390b77 88%, black);
+  --brand-primary-mid: #390b77;
+  --brand-primary-dark: #200644;
+  --brand-primary-contrast: #ffffff;
+  --brand-primary-soft: color-mix(in srgb, #390b77 16%, white);
+  --brand-primary-ink: #390b77;
+  --accent: var(--brand-primary);
+  --accent-soft: var(--brand-primary-soft);
+  --accent-ink: var(--brand-primary-ink);
 
   /* semantic */
   --ok: oklch(0.58 0.11 150);
@@ -68,7 +75,7 @@ a { color: inherit; text-decoration: none; }
 
 /* ─── Page content ─────────────────────────────────────────── */
 .page {
-  padding: 28px 32px 64px;
+  padding: 0 32px 64px;
   max-width: 1280px;
   margin: 0 auto;
   width: 100%;
@@ -323,8 +330,8 @@ a { color: inherit; text-decoration: none; }
   outline: none;
 }
 .inp:focus, .ta:focus, .sel:focus {
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(28,25,23,.08);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 22%, transparent);
 }
 .ta {
   height: auto;
@@ -375,7 +382,7 @@ button.wiz__step {
   border: 1px solid var(--line);
   flex: none;
 }
-.wiz__step.is-active .wiz__step-num { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.wiz__step.is-active .wiz__step-num { background: var(--brand-primary); color: var(--brand-primary-contrast); border-color: var(--brand-primary); }
 .wiz__step.is-done .wiz__step-num { background: var(--ok); color: #fff; border-color: var(--ok); }
 .wiz__step-lbl { font-size: 12.5px; font-weight: 500; color: var(--ink); line-height: 1.3; }
 .wiz__step-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -845,8 +852,8 @@ button.wiz__step {
 }
 .crit:hover { border-color: var(--faint); }
 .crit.is-active {
-  border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(28,25,23,.08);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-primary) 22%, transparent);
 }
 .crit__hd {
   display: flex; align-items: center; gap: 10px;
@@ -1073,8 +1080,8 @@ button.wiz__step {
   font: inherit;
 }
 .tab-btn[aria-selected="true"] {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+  color: var(--brand-primary-ink);
+  border-bottom-color: var(--brand-primary);
 }
 .profile-tab-btn {
   padding: 10px 16px;
@@ -1089,8 +1096,8 @@ button.wiz__step {
   font: inherit;
 }
 .profile-tab-btn[aria-selected="true"] {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+  color: var(--brand-primary-ink);
+  border-bottom-color: var(--brand-primary);
 }
 .linkish {
   appearance: none;
@@ -1406,7 +1413,7 @@ button.wiz__step {
   width: 28px;
   height: 28px;
   border: 2px solid var(--line);
-  border-top-color: var(--ink);
+  border-top-color: var(--brand-primary);
   border-radius: 50%;
   animation: jobs-loading-spin 0.75s linear infinite;
 }
@@ -1488,9 +1495,9 @@ button.wiz__step {
   cursor: pointer;
 }
 .checklist-decision.is-on {
-  border-color: var(--ink);
-  background: var(--bg-sunk);
-  color: var(--ink);
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-ink);
 }
 .checklist-decision--warn.is-on {
   border-color: var(--warn);

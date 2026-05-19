@@ -11,6 +11,7 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
     case 'play':       return <svg {...p}><path d="M5 4l14 8-14 8z"/></svg>;
     case 'list':       return <svg {...p}><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>;
     case 'layers':     return <svg {...p}><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>;
+    case 'briefcase':  return <svg {...p}><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><path d="M20 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"/></svg>;
     case 'sliders':    return <svg {...p}><path d="M4 6h11M19 6h1M4 12h5M13 12h7M4 18h13M19 18h1"/><circle cx="17" cy="6" r="2"/><circle cx="11" cy="12" r="2"/><circle cx="19" cy="18" r="0"/></svg>;
     case 'search':     return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>;
     case 'plus':       return <svg {...p}><path d="M12 5v14M5 12h14"/></svg>;
@@ -46,13 +47,14 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
 
 /* ----- Button -------------------------------------------------------- */
 const BTN_BASE =
-  'inline-flex items-center justify-center gap-2 rounded-lg border font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/45 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 disabled:pointer-events-none disabled:opacity-40';
+  'inline-flex items-center justify-center gap-2 rounded-lg border font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--brand-primary)_40%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 disabled:pointer-events-none disabled:opacity-40';
 
 const Btn = ({ variant = 'default', size, children, icon, iconRight, ...rest }) => {
   let variantCls =
     'border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50';
   if (variant === 'primary') {
-    variantCls = 'border-slate-900 bg-slate-900 text-white shadow-sm hover:bg-slate-800';
+    variantCls =
+      'border-[var(--brand-primary)] bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-sm hover:bg-[var(--brand-primary-hover)]';
   } else if (variant === 'ghost') {
     variantCls =
       'border-transparent bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900';
@@ -91,7 +93,7 @@ const BADGE_TONE_CLASSES = {
   bad: 'border-transparent bg-red-50 text-red-800',
   info: 'border-transparent bg-sky-50 text-sky-800',
   ghost: 'border border-slate-200 bg-transparent text-slate-600',
-  solid: 'border-transparent bg-slate-900 text-white',
+  solid: 'border-transparent bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)]',
 };
 
 const Badge = ({ tone = 'default', children, dot }) => {
@@ -196,7 +198,7 @@ const Segmented = ({ value, onChange, options }) => (
         type="button"
         className={`rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors ${
           value === o.value
-            ? 'bg-slate-900 text-white shadow-sm'
+            ? 'bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-sm'
             : 'border border-transparent text-slate-500 hover:text-slate-800'
         }`}
         aria-pressed={value === o.value}
@@ -215,8 +217,8 @@ const Toggle = ({ on, onChange }) => (
     role="switch"
     aria-checked={!!on}
     onClick={() => onChange(!on)}
-    className={`relative h-[18px] w-8 shrink-0 rounded-full border-0 p-0 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 ${
-      on ? 'bg-slate-900' : 'bg-slate-300'
+    className={`relative h-[18px] w-8 shrink-0 rounded-full border-0 p-0 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--brand-primary)_40%,transparent)] focus-visible:ring-offset-2 ${
+      on ? 'bg-[var(--brand-primary)]' : 'bg-slate-300'
     }`}
   >
     <span

@@ -44,17 +44,7 @@ optgroup,
   background-color: #DC2626 !important;
   color: #fff !important;
 }
-.topbar-dropdown-item.topbar-dropdown-item--signout:hover svg,
-.sidebar-signout-btn:hover svg {
+.topbar-dropdown-item.topbar-dropdown-item--signout:hover svg {
   stroke: #fff !important;
-  color: #fff !important;
-}
-
-/* Sidebar sign out: red fill on hover (same as profile dropdown) */
-.sidebar-signout-btn {
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-.sidebar-signout-btn:hover {
-  background-color: #DC2626 !important;
   color: #fff !important;
 }

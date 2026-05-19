@@ -109,29 +109,10 @@ function ResultsPage({ tweaks, route, go }) {
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
-      <div className="page__head">
-        <div>
-          <div className="page__eyebrow">
-            <span className="mono">{run.id}</span>
-            <span style={{ margin: '0 8px', color: 'var(--faint)' }}>·</span>
-            {run.status === 'completed'
-              ? `Completed · ${run.cv_count} CVs`
-              : run.status === 'in_progress'
-                ? <span>In progress…</span>
-                : run.status === 'failed'
-                  ? <span style={{ color: 'var(--bad-ink)' }}>Failed{run.error_message ? ` · ${run.error_message}` : ''}</span>
-                  : run.status}
-          </div>
-          <h1 className="page__title">{run.job_profiles?.name ?? run.job_id}</h1>
-          <div className="page__sub">
-            {run.cv_count} CVs scored. Click a candidate for the structured evaluation with sourced quotes. Record agree or override per criterion.
-          </div>
-        </div>
-        <div className="row">
-          <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
-          <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv}>Export CSV</Btn>
-          <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: run.job_id })}>Re-run</Btn>
-        </div>
+      <div className="row" style={{ marginBottom: 16, justifyContent: 'flex-end', gap: 8 }}>
+        <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
+        <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv}>Export CSV</Btn>
+        <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: run.job_id })}>Re-run</Btn>
       </div>
 
       <div className="stats stats--4" style={{ marginBottom: 22 }}>

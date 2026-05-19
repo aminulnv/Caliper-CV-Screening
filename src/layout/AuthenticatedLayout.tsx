@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { layoutConfig, getPageTitle } from '@/config/layout'
 
 /**
- * App shell layout with sidebar and top bar, wired to auth (user name in header).
+ * App shell layout with top navigation bar, wired to auth (user name in header).
  * Use as the element of the protected layout route.
  */
 export default function AuthenticatedLayout() {
