@@ -4,8 +4,8 @@ import { AppNavBar } from './AppNavBar'
 import { ContentHeader } from './TopBar'
 import { useBreakpoint } from './useBreakpoint'
 import type { AppLayoutConfig, NavItem } from './types'
-import { assets, getBackgroundStyle } from '@/config/assets'
 import { applyBrandTheme } from '@/config/brand-theme'
+import { assets } from '@/config/assets'
 
 interface AppLayoutProps extends AppLayoutConfig {
   banner?: React.ReactNode
@@ -29,9 +29,6 @@ export function AppLayout({
   brand,
   getPageTitle = () => '',
   fullScreenPaths = [],
-  fontFamily = "'Roboto', sans-serif",
-  outerBg = assets.layoutBackgroundValue,
-  contentCardBg = '#F4F7FB',
   banner,
   bottomNavItem,
   sidebarBottomContent,
@@ -47,13 +44,12 @@ export function AppLayout({
   const location = useLocation()
   const { isMobile } = useBreakpoint()
 
-  const shellBackground = assets.layoutBackgroundValue || outerBg
   useEffect(() => {
-    applyBrandTheme(shellBackground)
-  }, [shellBackground])
+    applyBrandTheme(assets.layoutBackgroundValue)
+  }, [])
 
   const isFullScreen = fullScreenPaths.some(
-    (p) => location.pathname === p || location.pathname.startsWith(p + '/')
+    (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
   )
 
   const pathname = location.pathname
@@ -68,41 +64,17 @@ export function AppLayout({
 
   if (isFullScreen) {
     return (
-      <div
-        style={{
-          fontFamily,
-          height: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
+      <div className="app-shell app-shell--fullscreen">
         {banner}
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <Outlet />
         </div>
       </div>
     )
   }
 
-  const outerStyle = {
-    fontFamily,
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    ...getBackgroundStyle(assets.layoutBackgroundValue || outerBg),
-  } as const
-
   return (
-    <div style={outerStyle}>
+    <div className="app-shell">
       {banner}
       <AppNavBar
         navItems={navItems}
@@ -117,43 +89,16 @@ export function AppLayout({
         onLanguageClick={onLanguageClick}
         isMobile={isMobile}
       />
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          padding: isMobile ? 0 : '0 0.5rem 0.5rem',
-        }}
-      >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            background: contentCardBg,
-            borderRadius: isMobile ? 0 : '0.75rem',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <ContentHeader
-            title={title}
-            titleIcon={titleIcon}
-            centerSlot={topBarCenterSlot}
-            searchPlaceholder={searchPlaceholder}
-          />
-          <main
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              padding: isMobile ? '0 1rem 1rem' : '0 1.5rem 1.5rem',
-            }}
-          >
-            <Outlet />
-          </main>
-        </div>
+      <div className="app-shell-body">
+        <ContentHeader
+          title={title}
+          titleIcon={titleIcon}
+          centerSlot={topBarCenterSlot}
+          searchPlaceholder={searchPlaceholder}
+        />
+        <main className={`app-shell-main${isMobile ? ' app-shell-main--mobile' : ''}`}>
+          <Outlet />
+        </main>
       </div>
     </div>
   )

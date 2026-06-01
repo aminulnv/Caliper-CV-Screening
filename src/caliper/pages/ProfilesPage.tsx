@@ -34,12 +34,14 @@ import {
   shouldRunRecruiteeSync,
   writeJobsCache,
 } from '@/lib/jobs-cache'
+import { CvViewer } from '@/caliper/components/CvViewer'
 import { runsForDisplay, shapeJobRow } from '@/lib/job-profile'
 import {
   getBiasWarning,
   getProtectedAttributeError,
 } from '@/lib/criteria-validation'
 import { ChecklistRow } from '@/caliper/components/CriteriaChecklist'
+import { RelatedProfilesPane } from '@/caliper/components/RelatedProfilesPane'
 
 function shapeJobsList(jobs: unknown[]) {
   return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
@@ -928,13 +930,13 @@ function ProfilesPage({ go, route }) {
       </div>
 
       <div className="card">
-        <table className="tbl">
+        <table className="tbl tbl--fixed">
           <thead>
             <tr>
               <th>Job announcement</th>
               <th style={{ width: 112 }}>Posted</th>
               <th style={{ width: 120 }}>Source</th>
-              <th style={{ width: 130 }}>Department</th>
+              <th style={{ width: 140 }}>Department</th>
               <th style={{ width: 88 }} className="col-right">Applicants</th>
               <th style={{ width: 160 }}>Criteria</th>
               <th style={{ width: 90 }} className="col-right">Runs</th>
@@ -971,7 +973,9 @@ function ProfilesPage({ go, route }) {
                       ? <Badge tone="info"><Icon name="database" size={10}/> Recruitee</Badge>
                       : <Badge tone="ghost"><Icon name="edit" size={10}/> Manual</Badge>}
                   </td>
-                  <td className="muted">{p.dept}</td>
+                  <td className="muted">
+                    <span className="cell-truncate" title={p.dept}>{p.dept}</span>
+                  </td>
                   <td className="col-num col-right mono" style={{ fontSize: 12.5 }}>
                     {p.source === 'recruitee' && p.applicantsCount != null
                       ? p.applicantsCount
@@ -1522,12 +1526,25 @@ function ProfileTabs({
       && Boolean(profile.sourceRef)
       && !(initialApplicants?.length),
   );
+  const [recruiteeAppsError, setRecruiteeAppsError] = React.useState(null);
   const [auditCount, setAuditCount] = React.useState(0);
+  const [relatedCount, setRelatedCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!profile?.id || profile.id === HERO_PROFILE.id) {
+      setRelatedCount(0);
+      return;
+    }
+    api.jobs.relatedProfiles(profile.id)
+      .then((rows) => setRelatedCount(rows.length))
+      .catch(() => setRelatedCount(0));
+  }, [profile.id]);
 
   React.useEffect(() => {
     if (profile.source !== 'recruitee' || !profile.sourceRef) {
       setRecruiteeApps([]);
       setRecruiteeAppsLoading(false);
+      setRecruiteeAppsError(null);
       return;
     }
 
@@ -1536,16 +1553,24 @@ function ProfileTabs({
     if (cached?.length) {
       setRecruiteeApps(cached);
       setRecruiteeAppsLoading(false);
+      setRecruiteeAppsError(null);
     } else {
       setRecruiteeAppsLoading(true);
+      setRecruiteeAppsError(null);
     }
 
     loadRecruiteeApplicants(profile.sourceRef)
       .then((apps) => {
-        if (!cancelled) setRecruiteeApps(apps);
+        if (!cancelled) {
+          setRecruiteeApps(apps);
+          setRecruiteeAppsError(null);
+        }
       })
-      .catch(() => {
-        if (!cancelled) setRecruiteeApps([]);
+      .catch((err) => {
+        if (!cancelled) {
+          setRecruiteeApps([]);
+          setRecruiteeAppsError(err?.message ?? 'Failed to load applicants from Recruitee.');
+        }
       })
       .finally(() => {
         if (!cancelled) setRecruiteeAppsLoading(false);
@@ -1568,6 +1593,7 @@ function ProfileTabs({
         <TabBtn label="Criteria"  count={totalCriteria}   active={tab === 'criteria'} onClick={() => setTab('criteria')}/>
         <TabBtn label="Runs"      count={runsToShow.length} active={tab === 'runs'}   onClick={() => setTab('runs')}/>
         <TabBtn label="Candidates" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
+        <TabBtn label="Related profiles" count={relatedCount} active={tab === 'related'} onClick={() => setTab('related')}/>
         <TabBtn label="Audit"     count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
       </div>
 
@@ -1604,6 +1630,7 @@ function ProfileTabs({
           rows={candidateRows}
           recruiteeApps={recruiteeApps}
           recruiteeLoading={recruiteeAppsLoading}
+          recruiteeError={recruiteeAppsError}
           completedRuns={completedRunsForJob}
           go={go}
           onOpenRunSheet={onOpenRunSheet}
@@ -1616,6 +1643,14 @@ function ProfileTabs({
           active={tab === 'audit'}
           onCount={setAuditCount}
           go={go}
+        />
+      )}
+      {tab === 'related' && (
+        <RelatedProfilesPane
+          jobId={profile.id}
+          jobName={profile.name}
+          hasDescription={Boolean(desc?.trim())}
+          isHero={isHero}
         />
       )}
     </>
@@ -2032,10 +2067,6 @@ function RunsPane({ runs, go, onOpenRunSheet }) {
 }
 
 function RecruiteeCvModal({ candidateId, candidateName, onClose }) {
-  const [blobUrl, setBlobUrl] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState(null);
-
   React.useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') onClose();
@@ -2044,66 +2075,31 @@ function RecruiteeCvModal({ candidateId, candidateName, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    let objectUrl = null;
-
-    setLoading(true);
-    setError(null);
-    setBlobUrl(null);
-
-    api.recruitee
-      .fetchCv(candidateId)
-      .then((blob) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setBlobUrl(objectUrl);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message ?? 'Could not load CV.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [candidateId]);
-
   return (
     <div
-      className="demo-run-overlay cv-preview-overlay"
+      className="detail cv-drawer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="cv-preview-title"
       onClick={onClose}
     >
-      <div className="cv-preview-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="cv-preview-modal__head">
-          <div>
-            <h2 id="cv-preview-title" className="cv-preview-modal__title">{candidateName}</h2>
-            <p className="cv-preview-modal__sub muted">CV from Recruitee</p>
+      <div
+        className="cv-drawer__panel"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="detail__head">
+          <div style={{ minWidth: 0 }}>
+            <h2 id="cv-preview-title" className="cv-drawer__title">{candidateName}</h2>
+            <p className="cv-drawer__sub muted">CV from Recruitee</p>
           </div>
-          <IconBtn icon="x" label="Close" onClick={onClose} />
+          <IconBtn name="x" size={16} onClick={onClose} aria-label="Close" />
         </div>
-        <div className="cv-preview-modal__body">
-          {loading && (
-            <div className="cv-preview-modal__status muted">Loading CV…</div>
-          )}
-          {error && (
-            <div className="cv-preview-modal__status">
-              <div className="callout">{error}</div>
-            </div>
-          )}
-          {blobUrl && !loading && (
-            <iframe
-              title={`CV — ${candidateName}`}
-              src={blobUrl}
-              className="cv-preview-modal__frame"
-            />
-          )}
+        <div className="cv-drawer__body">
+          <CvViewer
+            candidateId={candidateId}
+            candidateName={candidateName}
+            cvSource="recruitee"
+          />
         </div>
       </div>
     </div>
@@ -2116,6 +2112,7 @@ function JobCandidatesPane({
   rows,
   recruiteeApps,
   recruiteeLoading,
+  recruiteeError,
   completedRuns,
   go,
   onOpenRunSheet,
@@ -2138,9 +2135,23 @@ function JobCandidatesPane({
         <div className="empty">
           <Icon name="users" size={22}/>
           <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>
-            {recruiteeLoading ? 'Loading applicants from Recruitee…' : 'No applicants yet'}
+            {recruiteeLoading
+              ? 'Loading applicants from Recruitee…'
+              : recruiteeError
+                ? 'Could not load applicants'
+                : 'No applicants yet'}
           </div>
-          {!recruiteeLoading && (
+          {recruiteeError && (
+            <div className="callout" style={{ marginTop: 12, maxWidth: '52ch', textAlign: 'left' }}>
+              {recruiteeError}
+              {(profile.applicantsCount ?? 0) > 0 && (
+                <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  Recruitee reports {profile.applicantsCount} applicants for this role — fix the connection and refresh.
+                </div>
+              )}
+            </div>
+          )}
+          {!recruiteeLoading && !recruiteeError && (
             <>
               <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '48ch' }}>
                 Applicants from Recruitee appear here. After screening, scored candidates show in a separate section.

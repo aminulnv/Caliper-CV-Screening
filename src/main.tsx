@@ -8,6 +8,7 @@ import App from './App'
 import { applyBrandTheme } from '@/config/brand-theme'
 import { assets } from '@/config/assets'
 import './index.css'
+import '@/app-shell.css'
 import '@/caliper/caliper.css'
 
 applyBrandTheme(assets.layoutBackgroundValue)

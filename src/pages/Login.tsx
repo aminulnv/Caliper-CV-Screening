@@ -2,7 +2,7 @@ import { useState, useCallback, type CSSProperties } from 'react'
 import { signInWithGoogle } from '@/lib/auth'
 import { assets, getBackgroundStyle } from '@/config/assets'
 
-const AUTH_PANEL_CSS = `.auth-card input::placeholder { color: #9ca3af; }
+const AUTH_PANEL_CSS = `.auth-card input::placeholder { color: var(--subtle); }
 .auth-right-panel { overflow: auto; scrollbar-width: none; -ms-overflow-style: none; }
 .auth-right-panel::-webkit-scrollbar { display: none; }`
 
@@ -82,10 +82,9 @@ const styles: Record<string, CSSProperties> = {
     height: '100%',
     display: 'flex',
     overflow: 'hidden',
-    background: '#e5e7eb',
-    padding: '0.5rem',
+    background: 'var(--bg, #f3f2ef)',
+    padding: '1rem',
     boxSizing: 'border-box',
-    borderRadius: '0.75rem',
   },
   leftPanel: {
     flex: 7,
@@ -98,9 +97,10 @@ const styles: Record<string, CSSProperties> = {
     gap: '0.5rem',
     minHeight: 0,
     overflow: 'hidden',
-    borderRadius: '0.5rem',
+    borderRadius: 'var(--radius-xl, 16px)',
     borderTopRightRadius: 0,
     borderBottomRightRadius: 0,
+    boxShadow: 'var(--shadow-2)',
   },
   leftTitle: {
     margin: 0,
@@ -122,13 +122,16 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     minHeight: 0,
     padding: '2.5rem 2rem',
-    background: '#fff',
+    background: 'var(--surface, #fff)',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'auto',
-    borderRadius: '0.5rem',
+    borderRadius: 'var(--radius-xl, 16px)',
     borderTopLeftRadius: 0,
     borderBottomLeftRadius: 0,
+    border: '1px solid var(--line, #ddd8d1)',
+    borderLeft: 'none',
+    boxShadow: 'var(--shadow-2)',
   },
   rightPanelInner: {
     flex: 1,
@@ -144,22 +147,23 @@ const styles: Record<string, CSSProperties> = {
   formTitle: {
     margin: '0 0 0.25rem',
     fontSize: '1.75rem',
-    fontWeight: 800,
-    color: '#111827',
+    fontWeight: 700,
+    letterSpacing: '-0.025em',
+    color: 'var(--ink, #181614)',
     textAlign: 'center',
   },
   formSubtitle: {
     margin: '0 0 1.5rem',
     fontSize: '0.875rem',
-    color: '#6b7280',
+    color: 'var(--muted, #736d66)',
     textAlign: 'center',
   },
   error: {
     marginBottom: '1rem',
     padding: '0.5rem 0.75rem',
-    background: '#fef2f2',
-    color: '#b91c1c',
-    borderRadius: '0.5rem',
+    background: 'var(--bad-soft, #fef2f2)',
+    color: 'var(--bad-ink, #b91c1c)',
+    borderRadius: 'var(--radius, 8px)',
     fontSize: '0.8125rem',
   },
   googleButton: {
@@ -169,18 +173,18 @@ const styles: Record<string, CSSProperties> = {
     gap: '0.625rem',
     width: '100%',
     padding: '0.75rem 1rem',
-    background: '#fff',
-    color: '#111827',
-    border: '0.0625rem solid #e5e7eb',
-    borderRadius: '0.5rem',
+    background: 'var(--surface, #fff)',
+    color: 'var(--ink, #181614)',
+    border: '1px solid var(--line, #ddd8d1)',
+    borderRadius: 'var(--radius, 8px)',
     fontSize: '0.9375rem',
     fontWeight: 600,
-    boxShadow: '0 0.0625rem 0.125rem rgba(0,0,0,0.05)',
+    boxShadow: 'var(--shadow-1)',
   },
   hint: {
     margin: '1.25rem 0 0',
     fontSize: '0.75rem',
-    color: '#9ca3af',
+    color: 'var(--subtle, #a39e97)',
     textAlign: 'center',
     lineHeight: 1.4,
   },

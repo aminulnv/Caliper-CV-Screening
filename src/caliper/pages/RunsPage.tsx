@@ -4,6 +4,13 @@ import React from 'react'
 import { Btn, Icon, Segmented, RunStatusBadge } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunListItem } from '@/services/api'
+import {
+  formatRunDate,
+  formatRunDuration,
+  runCreatedAt,
+  runCvCount,
+  runScoreRange,
+} from '@/lib/run-display'
 
 const StatCell = ({ label, value, delta, deltaTone, sub }) => (
   <div className="stats__cell">
@@ -17,18 +24,6 @@ const StatCell = ({ label, value, delta, deltaTone, sub }) => (
     )}
   </div>
 );
-
-function formatDuration(started: string | null, completed: string | null): string {
-  if (!started || !completed) return '—';
-  const ms = new Date(completed).getTime() - new Date(started).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-}
 
 function RunsPage({ go }) {
   const [filter, setFilter] = React.useState('all');
@@ -46,11 +41,14 @@ function RunsPage({ go }) {
   const filtered = runs.filter((r) => filter === 'all' || r.status === filter);
 
   const thisMonth = runs.filter((r) => {
-    const d = new Date(r.created_at);
+    const d = runCreatedAt(r);
+    if (!d) return false;
     const now = new Date();
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
-  const avgCvs = runs.length ? Math.round(runs.reduce((s, r) => s + r.cv_count, 0) / runs.length) : 0;
+  const avgCvs = runs.length
+    ? Math.round(runs.reduce((s, r) => s + runCvCount(r), 0) / runs.length)
+    : 0;
 
   if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading runs…</div></div>;
   if (error) return <div className="page"><div style={{ color: 'var(--bad)', padding: 32 }}>{error}</div></div>;
@@ -95,7 +93,9 @@ function RunsPage({ go }) {
             {filtered.length === 0 && (
               <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 32 }}>No runs yet.</td></tr>
             )}
-            {filtered.map(r => (
+            {filtered.map((r) => {
+              const scoreRange = runScoreRange(r);
+              return (
               <tr
                 key={r.id}
                 className={r.status === 'completed' ? 'is-clickable' : ''}
@@ -112,25 +112,25 @@ function RunsPage({ go }) {
                   <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id}</div>
                   <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>{r.job_profiles?.dept}</div>
                 </td>
-                <td className="mono" style={{ fontSize: 11.5 }}>{formatDate(r.created_at)}</td>
-                <td className="col-num col-right">{r.cv_count}</td>
+                <td className="mono" style={{ fontSize: 11.5 }}>{formatRunDate(r)}</td>
+                <td className="col-num col-right">{runCvCount(r)}</td>
                 <td>
-                  {r.score_range ? (
+                  {scoreRange ? (
                     <div className="row" style={{ gap: 8 }}>
-                      <span className="mono tnum" style={{ fontSize: 12 }}>{r.score_range[0]}</span>
+                      <span className="mono tnum" style={{ fontSize: 12 }}>{scoreRange[0]}</span>
                       <span style={{
                         flex: 1, height: 4, borderRadius: 2,
-                        background: `linear-gradient(90deg, var(--bad) 0%, var(--warn) ${r.score_range[0]}%, var(--ok) ${r.score_range[1]}%, var(--line-soft) ${r.score_range[1]}%)`,
+                        background: `linear-gradient(90deg, var(--bad) 0%, var(--warn) ${scoreRange[0]}%, var(--ok) ${scoreRange[1]}%, var(--line-soft) ${scoreRange[1]}%)`,
                         minWidth: 60, maxWidth: 90,
                       }}/>
-                      <span className="mono tnum" style={{ fontSize: 12 }}>{r.score_range[1]}</span>
+                      <span className="mono tnum" style={{ fontSize: 12 }}>{scoreRange[1]}</span>
                     </div>
                   ) : <span className="muted">—</span>}
                 </td>
                 <td className="mono" style={{ fontSize: 11.5 }}>
                   {r.status === 'in_progress'
                     ? <span className="muted">In progress…</span>
-                    : formatDuration(r.started_at, r.completed_at)}
+                    : formatRunDuration(r)}
                 </td>
                 <td>
                   <RunStatusBadge s={r.status}/>
@@ -138,7 +138,8 @@ function RunsPage({ go }) {
                 </td>
                 <td><Icon name="chevron-right" size={14} className="muted"/></td>
               </tr>
-            ))}
+            );
+            })}
           </tbody>
         </table>
       </div>

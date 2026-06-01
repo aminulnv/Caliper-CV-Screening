@@ -2,6 +2,15 @@ import { getIdToken } from '../lib/auth';
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
+export class NeedsCountryError extends Error {
+  readonly needsCountry = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'NeedsCountryError';
+  }
+}
+
 async function getAuthHeader(): Promise<Record<string, string>> {
   const token = await getIdToken();
   if (!token) throw new Error('Not authenticated');
@@ -37,6 +46,44 @@ async function request<T>(
   }
 
   return res.json() as Promise<T>;
+}
+
+async function discoverRelatedProfilesRequest(
+  jobId: string,
+  body?: { linkedin_urls?: string[]; limit?: number; search_country?: string },
+): Promise<DiscoverRelatedProfilesResponse> {
+  const headers: Record<string, string> = {
+    ...(await getAuthHeader()),
+    'Content-Type': 'application/json',
+  };
+
+  const res = await fetch(`${BASE_URL}/api/v1/jobs/${jobId}/related-profiles/discover`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body ?? {}),
+  });
+
+  const payload = await res.json().catch(() => ({})) as {
+    error?: string;
+    message?: string;
+    needs_country?: boolean;
+  };
+
+  if (res.status === 422 && payload.needs_country) {
+    throw new NeedsCountryError(payload.error ?? 'Select a country or Global to continue.');
+  }
+
+  if (!res.ok) {
+    const generic =
+      payload.error?.toLowerCase() === 'internal server error' && payload.message
+        ? payload.message
+        : null;
+    throw new Error(
+      generic ?? payload.error ?? payload.message ?? res.statusText ?? `Request failed: ${res.status}`,
+    );
+  }
+
+  return payload as DiscoverRelatedProfilesResponse;
 }
 
 // ── Runs ───────────────────────────────────────────────────────────────────────
@@ -96,6 +143,17 @@ export const api = {
       request<JobProfileDetail>('POST', `/api/v1/jobs/${id}/refresh-recruitee`, {}),
     upsert: (id: string, body: UpsertJobBody) => request<{ success: boolean }>('PUT', `/api/v1/jobs/${id}`, body),
     audit: (id: string) => request<JobAuditEntry[]>('GET', `/api/v1/jobs/${id}/audit`),
+    relatedProfiles: (id: string) =>
+      request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
+    discoverRelatedProfiles: (
+      id: string,
+      body?: { linkedin_urls?: string[]; limit?: number; search_country?: string },
+    ) => discoverRelatedProfilesRequest(id, body),
+    deleteRelatedProfile: (jobId: string, profileId: string) =>
+      request<{ success: boolean }>(
+        'DELETE',
+        `/api/v1/jobs/${jobId}/related-profiles/${profileId}`,
+      ),
   },
 
   recruitee: {
@@ -238,6 +296,34 @@ export interface JobAuditEntry {
   warned: boolean;
   kind: 'job' | 'criteria' | 'run' | 'override' | 'sync' | 'other';
   runId: string | null;
+}
+
+export interface RelatedProfileRow {
+  id: string;
+  job_id: string;
+  name: string;
+  title: string | null;
+  company: string | null;
+  location: string | null;
+  linkedin_url: string | null;
+  headline: string | null;
+  profile_summary: string | null;
+  alignment_stars: 1 | 2 | 3 | 4 | 5 | null;
+  alignment_rationale: string | null;
+  source: string;
+  discovered_at: string;
+  created_at: string;
+}
+
+export interface DiscoverRelatedProfilesResponse {
+  discovery_id: string;
+  profiles_found: number;
+  search_query: string;
+  urls_found: number;
+  search_provider: string;
+  location_query?: string | null;
+  location_scope?: string | null;
+  profiles: RelatedProfileRow[];
 }
 
 export interface UpsertJobBody {

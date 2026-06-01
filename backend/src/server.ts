@@ -10,6 +10,7 @@ import { cvRoutes } from './routes/cv.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { recruiteeRoutes } from './routes/recruitee.js';
 import { settingsRoutes } from './routes/settings.js';
+import { relatedProfilesRoutes } from './routes/related-profiles.js';
 import { runRetentionCleanup } from './services/retention.js';
 import { runScheduledRecruiteeJobSync } from './services/recruitee-sync.js';
 
@@ -43,6 +44,7 @@ await server.register(cvRoutes, { prefix: API_PREFIX });
 await server.register(jobsRoutes, { prefix: API_PREFIX });
 await server.register(recruiteeRoutes, { prefix: API_PREFIX });
 await server.register(settingsRoutes, { prefix: API_PREFIX });
+await server.register(relatedProfilesRoutes, { prefix: API_PREFIX });
 
 // Health check — no auth required
 server.get('/health', async () => ({ status: 'ok' }));

@@ -9,7 +9,7 @@
 }
 
 html {
-  font-family: 'Roboto', sans-serif;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
 }
 
 body {
@@ -17,9 +17,11 @@ body {
   font-family: inherit;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--shell-bg, var(--bg));
+  color: var(--ink);
 }
 
-/* Form controls and buttons use system font by default; force Roboto */
 button,
 input,
 select,
@@ -30,21 +32,19 @@ optgroup,
 }
 
 #root {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
-/* TopBar dropdown item hover (profile menu + notification list) */
-.topbar-dropdown-item {
-  transition: background-color 0.15s ease;
+.shell-dropdown-item:hover {
+  background: var(--bg-sunk);
 }
-.topbar-dropdown-item:hover {
-  background-color: #F3F4F6 !important;
+
+.shell-dropdown-item--danger:hover {
+  background: var(--bad-soft) !important;
+  color: var(--bad-ink) !important;
 }
-.topbar-dropdown-item.topbar-dropdown-item--signout:hover {
-  background-color: #DC2626 !important;
-  color: #fff !important;
-}
-.topbar-dropdown-item.topbar-dropdown-item--signout:hover svg {
-  stroke: #fff !important;
-  color: #fff !important;
+
+.shell-dropdown-item--danger:hover svg {
+  stroke: var(--bad-ink) !important;
+  color: var(--bad-ink) !important;
 }

@@ -12,6 +12,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 const WIDTH_EPSILON = 16;
+const DEFAULT_MAX_PAGE_WIDTH = 640;
 
 async function paintPage(page, cssWidth) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -96,7 +97,19 @@ function applyHighlights(container, layouts, highlightQuote, highlightKind, high
   return firstBand;
 }
 
-export function CvViewer({ candidateId, candidateName, highlightQuote, highlightKind, highlightLabel }) {
+export function CvViewer({
+  candidateId,
+  candidateName,
+  highlightQuote,
+  highlightKind,
+  highlightLabel,
+  /** Load CV from Recruitee ATS vs screened candidate storage */
+  cvSource = 'candidate',
+  /** Fills parent (e.g. drawer/modal) — hides duplicate toolbar row */
+  embedded = false,
+  /** Cap rendered page width so PDFs stay readable in wide containers */
+  maxPageWidth = DEFAULT_MAX_PAGE_WIDTH,
+}) {
   const [pdfUrl, setPdfUrl] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -123,8 +136,12 @@ export function CvViewer({ candidateId, candidateName, highlightQuote, highlight
     lastWidthRef.current = 0;
     if (pagesRef.current) pagesRef.current.replaceChildren();
 
-    api.candidates
-      .fetchCvBlobUrl(candidateId)
+    const loadCv =
+      cvSource === 'recruitee'
+        ? api.recruitee.fetchCv(candidateId).then((blob) => URL.createObjectURL(blob))
+        : api.candidates.fetchCvBlobUrl(candidateId);
+
+    loadCv
       .then((url) => {
         if (revoked) {
           URL.revokeObjectURL(url);
@@ -145,14 +162,17 @@ export function CvViewer({ candidateId, candidateName, highlightQuote, highlight
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       pdfDocRef.current = null;
     };
-  }, [candidateId]);
+  }, [candidateId, cvSource]);
 
   const renderAllPages = React.useCallback(async () => {
     const container = pagesRef.current;
     const pdf = pdfDocRef.current;
     if (!container || !pdf) return;
 
-    const cssWidth = Math.max(container.clientWidth - 4, 280);
+    const cssWidth = Math.min(
+      Math.max(container.clientWidth - 4, 280),
+      maxPageWidth ?? DEFAULT_MAX_PAGE_WIDTH,
+    );
     if (
       renderingRef.current
       || (lastWidthRef.current > 0 && Math.abs(cssWidth - lastWidthRef.current) < WIDTH_EPSILON)
@@ -227,7 +247,7 @@ export function CvViewer({ candidateId, candidateName, highlightQuote, highlight
         setRendering(false);
       }
     }
-  }, []);
+  }, [maxPageWidth]);
 
   React.useEffect(() => {
     if (!pdfUrl) return undefined;
@@ -296,7 +316,8 @@ export function CvViewer({ candidateId, candidateName, highlightQuote, highlight
   const busy = loading || rendering;
 
   return (
-    <div className="cv-viewer">
+    <div className={`cv-viewer${embedded ? ' cv-viewer--embedded' : ''}`}>
+      {!embedded && (
       <div className="cv-viewer__head">
         <span className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
           CV{pageCount > 0 ? ` · ${pageCount} page${pageCount === 1 ? '' : 's'}` : ''}
@@ -319,6 +340,7 @@ export function CvViewer({ candidateId, candidateName, highlightQuote, highlight
           )}
         </div>
       </div>
+      )}
 
       <div className="cv-viewer__stage">
         <div

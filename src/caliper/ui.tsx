@@ -1,5 +1,5 @@
 // @ts-nocheck
-/** Caliper UI primitives (Tailwind + caliper.css). */
+/** Caliper UI primitives (Tailwind + caliper.css design tokens). */
 import React from 'react'
 
 /* ----- Icons (single source) ----------------------------------------- */
@@ -39,6 +39,7 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
     case 'bell':       return <svg {...p}><path d="M6 16V11a6 6 0 0 1 12 0v5l2 3H4z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>;
     case 'trash':      return <svg {...p}><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>;
     case 'sparkle':    return <svg {...p}><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/><path d="m5.5 5.5 3 3m7 7 3 3m0-13-3 3m-7 7-3 3"/></svg>;
+    case 'external':   return <svg {...p}><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7h-7"/><path d="M3 10v11h11"/></svg>;
     case 'doc':        return <svg {...p}><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>;
     case 'flag':       return <svg {...p}><path d="M5 21V4h12l-2 4 2 4H5"/></svg>;
     default: return null;
@@ -47,20 +48,20 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
 
 /* ----- Button -------------------------------------------------------- */
 const BTN_BASE =
-  'inline-flex items-center justify-center gap-2 rounded-lg border font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--brand-primary)_40%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 disabled:pointer-events-none disabled:opacity-40';
+  'inline-flex items-center justify-center gap-2 rounded-lg border font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--brand-primary)_40%,transparent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] disabled:pointer-events-none disabled:opacity-40';
 
 const Btn = ({ variant = 'default', size, children, icon, iconRight, ...rest }) => {
   let variantCls =
-    'border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50';
+    'border-[var(--line)] bg-[var(--surface)] text-[var(--ink)] shadow-[var(--shadow-1)] hover:bg-[var(--bg-sunk)]';
   if (variant === 'primary') {
     variantCls =
-      'border-[var(--brand-primary)] bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-sm hover:bg-[var(--brand-primary-hover)]';
+      'border-[var(--brand-primary)] bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-[var(--shadow-1)] hover:bg-[var(--brand-primary-hover)]';
   } else if (variant === 'ghost') {
     variantCls =
-      'border-transparent bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900';
+      'border-transparent bg-transparent text-[var(--muted)] hover:bg-[var(--bg-sunk)] hover:text-[var(--ink)]';
   } else if (variant === 'danger-ghost') {
     variantCls =
-      'border-transparent bg-transparent text-red-700 hover:bg-red-50';
+      'border-transparent bg-transparent text-[var(--bad-ink)] hover:bg-[var(--bad-soft)]';
   }
   let sizeCls = 'h-8 px-3.5 text-[12.5px]';
   if (size === 'sm') sizeCls = 'h-[26px] rounded-md px-2.5 text-[11.5px] gap-1.5';
@@ -78,7 +79,7 @@ const Btn = ({ variant = 'default', size, children, icon, iconRight, ...rest }) 
 const IconBtn = ({ name, size = 14, ...rest }) => (
   <button
     type="button"
-    className="inline-grid h-7 w-7 place-items-center rounded-lg border border-transparent text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+    className="inline-grid h-7 w-7 place-items-center rounded-lg border border-transparent text-[var(--muted)] transition-colors hover:bg-[var(--bg-sunk)] hover:text-[var(--ink)]"
     {...rest}
   >
     <Icon name={name} size={size}/>
@@ -87,12 +88,12 @@ const IconBtn = ({ name, size = 14, ...rest }) => (
 
 /* ----- Badge / Chip -------------------------------------------------- */
 const BADGE_TONE_CLASSES = {
-  default: 'border-transparent bg-slate-100 text-slate-700',
-  ok: 'border-transparent bg-emerald-50 text-emerald-800',
-  warn: 'border-transparent bg-amber-50 text-amber-800',
-  bad: 'border-transparent bg-red-50 text-red-800',
-  info: 'border-transparent bg-sky-50 text-sky-800',
-  ghost: 'border border-slate-200 bg-transparent text-slate-600',
+  default: 'border-transparent bg-[var(--bg-sunk)] text-[var(--ink-soft)]',
+  ok: 'border-transparent bg-[var(--ok-soft)] text-[var(--ok-ink)]',
+  warn: 'border-transparent bg-[var(--warn-soft)] text-[var(--warn-ink)]',
+  bad: 'border-transparent bg-[var(--bad-soft)] text-[var(--bad-ink)]',
+  info: 'border-transparent bg-[var(--info-soft)] text-[var(--info)]',
+  ghost: 'border border-[var(--line)] bg-transparent text-[var(--muted)]',
   solid: 'border-transparent bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)]',
 };
 
@@ -149,7 +150,6 @@ const Confidence = ({ level }) => (
 /* ----- Score bar variants ------------------------------------------- */
 const SCORE_BAR_MAX = 100;
 const ScoreBar = ({ score, must, nice, flag, variant = 'stacked' }) => {
-  // each must = 14, nice = 5, flag penalty = 8 (rough sample weighting for the visual)
   const okPct   = Math.min(70, (must || 0) * 14);
   const warnPct = Math.min(20, (nice || 0) * 5);
   const badPct  = Math.min(20, (flag || 0) * 8);
@@ -189,7 +189,7 @@ const ScoreBar = ({ score, must, nice, flag, variant = 'stacked' }) => {
 /* ----- Segmented control -------------------------------------------- */
 const Segmented = ({ value, onChange, options }) => (
   <div
-    className="inline-flex max-w-full shrink-0 flex-nowrap items-stretch gap-0.5 rounded-lg border border-slate-200 bg-slate-100/90 p-0.5 shadow-inner"
+    className="inline-flex max-w-full shrink-0 flex-nowrap items-stretch gap-0.5 rounded-lg border border-[var(--line)] bg-[var(--bg-sunk)] p-0.5 shadow-inner"
     role="group"
   >
     {options.map(o => (
@@ -198,8 +198,8 @@ const Segmented = ({ value, onChange, options }) => (
         type="button"
         className={`rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors ${
           value === o.value
-            ? 'bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-sm'
-            : 'border border-transparent text-slate-500 hover:text-slate-800'
+            ? 'bg-[var(--brand-primary)] text-[var(--brand-primary-contrast)] shadow-[var(--shadow-1)]'
+            : 'border border-transparent text-[var(--muted)] hover:text-[var(--ink-soft)]'
         }`}
         aria-pressed={value === o.value}
         onClick={() => onChange(o.value)}
@@ -218,11 +218,11 @@ const Toggle = ({ on, onChange }) => (
     aria-checked={!!on}
     onClick={() => onChange(!on)}
     className={`relative h-[18px] w-8 shrink-0 rounded-full border-0 p-0 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_srgb,var(--brand-primary)_40%,transparent)] focus-visible:ring-offset-2 ${
-      on ? 'bg-[var(--brand-primary)]' : 'bg-slate-300'
+      on ? 'bg-[var(--brand-primary)]' : 'bg-[var(--faint)]'
     }`}
   >
     <span
-      className={`absolute left-0.5 top-0.5 block h-3.5 w-3.5 rounded-full bg-white shadow-md ring-1 ring-slate-900/10 transition-transform ${
+      className={`absolute left-0.5 top-0.5 block h-3.5 w-3.5 rounded-full bg-[var(--surface)] shadow-md ring-1 ring-[color-mix(in_srgb,var(--ink)_8%,transparent)] transition-transform ${
         on ? 'translate-x-[14px]' : 'translate-x-0'
       }`}
     />
@@ -232,19 +232,19 @@ const Toggle = ({ on, onChange }) => (
 /* ----- Field --------------------------------------------------------- */
 const Field = ({ label, hint, children }) => (
   <div className="flex flex-col gap-1.5">
-    {label && <div className="text-xs font-medium text-slate-700">{label}</div>}
+    {label && <div className="text-xs font-medium text-[var(--ink-soft)]">{label}</div>}
     {children}
-    {hint && <p className="text-[11.5px] leading-snug text-slate-500">{hint}</p>}
+    {hint && <p className="text-[11.5px] leading-snug text-[var(--muted)]">{hint}</p>}
   </div>
 );
 
 /* ----- Topbar crumbs ------------------------------------------------- */
 const Crumbs = ({ items }) => (
-  <nav className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-slate-500">
+  <nav className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--subtle)]">
     {items.map((it, i) => (
       <React.Fragment key={i}>
-        {i > 0 && <span className="text-slate-300" aria-hidden>/</span>}
-        <span className={i === items.length - 1 ? 'text-slate-900' : ''}>{it}</span>
+        {i > 0 && <span className="text-[var(--faint)]" aria-hidden>/</span>}
+        <span className={i === items.length - 1 ? 'text-[var(--ink)]' : ''}>{it}</span>
       </React.Fragment>
     ))}
   </nav>

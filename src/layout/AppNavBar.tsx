@@ -25,8 +25,7 @@ function formatNotificationTime(ts: number) {
 
 const NAV_SLIDE_TRANSITION = 'left 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1)'
 
-function navLinkStyle(isActive: boolean, slidingIndicator = false, activeBg?: string): CSSProperties {
-  const pillBg = activeBg ?? assets.brandLogoColor
+function navLinkStyle(isActive: boolean, slidingIndicator = false): CSSProperties {
   return {
     display: 'inline-flex',
     alignItems: 'center',
@@ -36,9 +35,9 @@ function navLinkStyle(isActive: boolean, slidingIndicator = false, activeBg?: st
     textDecoration: 'none',
     fontSize: '0.8125rem',
     fontWeight: isActive ? 600 : 500,
-    color: isActive ? '#FFFFFF' : 'rgba(255,255,255,0.65)',
-    background: slidingIndicator ? 'transparent' : isActive ? pillBg : 'transparent',
-    transition: slidingIndicator ? 'color 0.2s ease' : 'background 0.12s, color 0.12s',
+    color: isActive ? 'var(--shell-nav-link-active)' : 'var(--shell-nav-link)',
+    background: 'transparent',
+    transition: slidingIndicator ? 'color 0.2s ease' : 'color 0.15s ease',
     whiteSpace: 'nowrap',
     position: slidingIndicator ? 'relative' : undefined,
     zIndex: slidingIndicator ? 1 : undefined,
@@ -71,21 +70,6 @@ function NotificationBellDropdown() {
 
   useEffect(() => () => clearCloseTimeout(), [])
 
-  const panelStyle: CSSProperties = {
-    position: 'absolute',
-    top: '100%',
-    right: 0,
-    marginTop: '0.25rem',
-    width: '20rem',
-    maxHeight: '22rem',
-    overflowY: 'auto',
-    background: '#fff',
-    border: '0.0625rem solid #E8ECF0',
-    borderRadius: '0.5rem',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    zIndex: 1000,
-  }
-
   return (
     <div
       style={{ position: 'relative' }}
@@ -102,27 +86,13 @@ function NotificationBellDropdown() {
     >
       <button
         type="button"
-        style={{
-          position: 'relative',
-          width: '2rem',
-          height: '2rem',
-          borderRadius: '0.4375rem',
-          border: '0.0625rem solid rgba(255,255,255,0.2)',
-          background: 'rgba(255,255,255,0.1)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
+        className="shell-icon-btn"
         aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
         aria-expanded={open}
       >
         <Bell
           size={14}
-          color={iconHovered || open ? '#fff' : 'rgba(255,255,255,0.75)'}
-          strokeWidth={iconHovered || open ? 2.5 : 1.75}
-          fill={iconHovered || open ? 'rgba(255,255,255,0.9)' : 'none'}
+          strokeWidth={iconHovered || open ? 2.25 : 1.75}
         />
         {unreadCount > 0 && (
           <span
@@ -141,17 +111,9 @@ function NotificationBellDropdown() {
         )}
       </button>
       {open && settings.notifications && (
-        <div style={panelStyle} role="dialog" aria-label="Notifications">
-          <div
-            style={{
-              padding: '0.5rem 0.75rem',
-              borderBottom: '0.0625rem solid #E8ECF0',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>Notifications</span>
+        <div className="shell-dropdown shell-dropdown--notifications" role="dialog" aria-label="Notifications">
+          <div className="shell-dropdown__head">
+            <span className="shell-dropdown__title">Notifications</span>
             {unreadCount > 0 && (
               <button
                 type="button"
@@ -179,19 +141,8 @@ function NotificationBellDropdown() {
                 <button
                   key={n.id}
                   type="button"
-                  className="topbar-dropdown-item"
+                  className={`shell-dropdown-item shell-dropdown-item--block${n.read ? '' : ' shell-dropdown-item--unread'}`}
                   onClick={() => markAsRead(n.id)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: '0.625rem 0.75rem',
-                    border: 'none',
-                    background: n.read ? 'transparent' : '#F9FAFB',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    fontSize: '0.8125rem',
-                    borderBottom: '0.0625rem solid #F3F4F6',
-                  }}
                 >
                   <span style={{ fontWeight: 600, color: '#111827' }}>{n.title}</span>
                   {n.message && (
@@ -207,8 +158,8 @@ function NotificationBellDropdown() {
         </div>
       )}
       {open && !settings.notifications && (
-        <div style={panelStyle} role="dialog" aria-label="Notifications">
-          <div style={{ padding: '1rem 0.75rem', fontSize: '0.8125rem', color: '#6B7280', textAlign: 'center' }}>
+        <div className="shell-dropdown shell-dropdown--notifications" role="dialog" aria-label="Notifications">
+          <div style={{ padding: '1rem 0.875rem', fontSize: '0.8125rem', color: 'var(--muted)', textAlign: 'center' }}>
             In-app notifications are off. Turn them on in Settings.
           </div>
         </div>
@@ -222,13 +173,11 @@ function ProfileDropdown({
   profileSubtext,
   onSignOut,
   isMobile,
-  onDark,
 }: {
   userName?: string
   profileSubtext?: string
   onSignOut?: () => void
   isMobile?: boolean
-  onDark?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
@@ -256,62 +205,6 @@ function ProfileDropdown({
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open, isMobile])
 
-  const triggerStyle: CSSProperties = onDark
-    ? {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.4375rem',
-        cursor: 'pointer',
-        padding: '0.1875rem 0.5rem 0.1875rem 0.1875rem',
-        borderRadius: '0.5rem',
-        border: '0.0625rem solid rgba(255,255,255,0.2)',
-        background: 'rgba(255,255,255,0.1)',
-        height: '2rem',
-      }
-    : {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.4375rem',
-        cursor: 'pointer',
-        padding: '0.1875rem 0.5rem 0.1875rem 0.1875rem',
-        borderRadius: '0.5rem',
-        border: '0.0625rem solid #E8ECF0',
-        background: '#fff',
-        height: '2rem',
-      }
-
-  const panelStyle: CSSProperties = {
-    position: 'absolute',
-    top: '100%',
-    right: 0,
-    marginTop: '0.25rem',
-    minWidth: '12rem',
-    background: '#fff',
-    border: '0.0625rem solid #E8ECF0',
-    borderRadius: '0.5rem',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-    zIndex: 1000,
-    overflow: 'hidden',
-  }
-
-  const itemStyle: CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    width: '100%',
-    padding: '0.5rem 0.75rem',
-    border: 'none',
-    background: 'none',
-    fontSize: '0.8125rem',
-    color: '#374151',
-    cursor: 'pointer',
-    textAlign: 'left',
-  }
-
-  const avatarBg = onDark ? 'rgba(255,255,255,0.2)' : 'var(--brand-primary)'
-  const avatarColor = onDark ? '#fff' : 'var(--brand-primary-contrast)'
-  const nameColor = onDark ? '#fff' : '#1F2937'
-
   return (
     <div
       ref={containerRef}
@@ -329,67 +222,49 @@ function ProfileDropdown({
     >
       <button
         type="button"
+        className="shell-profile-trigger"
         onClick={isMobile ? () => setOpen((o) => !o) : undefined}
-        style={triggerStyle}
         aria-label="Profile menu"
         aria-expanded={open}
       >
-        <div
-          style={{
-            width: '1.625rem',
-            height: '1.625rem',
-            borderRadius: '0.375rem',
-            background: avatarBg,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '0.625rem',
-            fontWeight: 700,
-            color: avatarColor,
-            flexShrink: 0,
-          }}
-        >
+        <div className="shell-profile-trigger__avatar">
           {userName ? userName.slice(0, 2).toUpperCase() : '?'}
         </div>
         {!isMobile && userName != null && (
-          <span style={{ fontSize: '0.75rem', fontWeight: 500, color: nameColor, whiteSpace: 'nowrap' }}>
-            {userName}
-          </span>
+          <span className="shell-profile-trigger__name">{userName}</span>
         )}
         {!isMobile && (
           <ChevronDown
             size={12}
-            color={onDark ? 'rgba(255,255,255,0.6)' : '#9CA3AF'}
             strokeWidth={2}
-            style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none' }}
+            style={{ flexShrink: 0, color: 'var(--subtle)', transform: open ? 'rotate(180deg)' : 'none' }}
           />
         )}
       </button>
       {open && (
-        <div style={panelStyle} role="menu" aria-label="Profile menu">
-          <div style={{ padding: '0.625rem 0.75rem', borderBottom: '0.0625rem solid #E8ECF0' }}>
-            <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{userName ?? 'User'}</div>
+        <div className="shell-dropdown shell-dropdown--profile" role="menu" aria-label="Profile menu">
+          <div className="shell-dropdown__head">
+            <div className="shell-dropdown__title">{userName ?? 'User'}</div>
             {profileSubtext && (
-              <div style={{ fontSize: '0.75rem', color: '#6B7280', marginTop: '0.125rem' }}>{profileSubtext}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.125rem' }}>{profileSubtext}</div>
             )}
           </div>
-          <button type="button" className="topbar-dropdown-item" style={itemStyle} onClick={() => { setOpen(false); navigate('/profile') }} role="menuitem">
-            <User size={14} color="#6B7280" strokeWidth={2} />
+          <button type="button" className="shell-dropdown-item" onClick={() => { setOpen(false); navigate('/profile') }} role="menuitem">
+            <User size={14} color="var(--muted)" strokeWidth={2} />
             Profile
           </button>
-          <button type="button" className="topbar-dropdown-item" style={itemStyle} onClick={() => { setOpen(false); navigate('/settings') }} role="menuitem">
-            <Settings size={14} color="#6B7280" strokeWidth={2} />
+          <button type="button" className="shell-dropdown-item" onClick={() => { setOpen(false); navigate('/settings') }} role="menuitem">
+            <Settings size={14} color="var(--muted)" strokeWidth={2} />
             Settings
           </button>
-          <div style={{ height: '0.0625rem', background: '#E8ECF0', margin: '0.25rem 0' }} />
+          <div style={{ height: 1, background: 'var(--line-soft)', margin: '0.25rem 0' }} />
           <button
             type="button"
-            className="topbar-dropdown-item topbar-dropdown-item--signout"
-            style={{ ...itemStyle, color: '#DC2626' }}
+            className="shell-dropdown-item shell-dropdown-item--danger"
             onClick={() => { setOpen(false); setShowSignOutConfirm(true) }}
             role="menuitem"
           >
-            <LogOut size={14} color="#DC2626" strokeWidth={2} />
+            <LogOut size={14} strokeWidth={2} />
             Sign out
           </button>
         </div>
@@ -461,36 +336,16 @@ function NavDropdown({
         <ChevronDown size={14} style={{ opacity: 0.7 }} />
       </button>
       {open && item.children && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: '0.25rem',
-            minWidth: '10rem',
-            background: '#fff',
-            borderRadius: '0.5rem',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-            padding: '0.375rem',
-            zIndex: 100,
-          }}
-        >
+        <div className="shell-dropdown shell-nav-submenu">
           {item.children.map((child) => (
             <NavLink
               key={child.path}
               to={child.path}
               end
               onClick={() => { setOpen(false); onNavigate?.() }}
-              style={({ isActive }) => ({
-                display: 'block',
-                padding: '0.5rem 0.75rem',
-                borderRadius: '0.375rem',
-                textDecoration: 'none',
-                fontSize: '0.8125rem',
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--brand-primary)' : '#374151',
-                background: isActive ? 'var(--brand-primary-soft)' : 'transparent',
-              })}
+              className={({ isActive }) =>
+                `shell-dropdown-item${isActive ? ' shell-dropdown-item--active' : ''}`
+              }
             >
               {child.label}
             </NavLink>
@@ -503,10 +358,8 @@ function NavDropdown({
 
 function DesktopSlidingNav({
   items,
-  activePillColor,
 }: {
   items: NavItem[]
-  activePillColor: string
 }) {
   const location = useLocation()
   const pathname = location.pathname
@@ -550,29 +403,14 @@ function DesktopSlidingNav({
   }
 
   return (
-    <nav
-      ref={navRef}
-      style={{
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.125rem',
-        flexWrap: 'nowrap',
-      }}
-    >
+    <nav ref={navRef} className="shell-nav">
       <div
         aria-hidden
+        className="shell-nav__indicator"
         style={{
-          position: 'absolute',
-          top: 0,
-          bottom: 0,
           left: indicator.left,
           width: indicator.width,
-          borderRadius: '0.5rem',
-          background: activePillColor,
-          transition: NAV_SLIDE_TRANSITION,
           opacity: indicator.ready ? 1 : 0,
-          pointerEvents: 'none',
         }}
       />
       {items.map((item) => {
@@ -600,14 +438,12 @@ function DesktopSlidingNav({
 function HorizontalNav({
   navItems,
   bottomNavItem,
-  activePillColor,
   isMobile,
   mobileOpen,
   onMobileClose,
 }: {
   navItems: NavItem[]
   bottomNavItem?: NavItem
-  activePillColor: string
   isMobile?: boolean
   mobileOpen?: boolean
   onMobileClose?: () => void
@@ -627,7 +463,7 @@ function HorizontalNav({
         to={path}
         end={end ?? path === '/'}
         onClick={onMobileClose}
-        style={({ isActive }) => navLinkStyle(isActive, slidingIndicator, activePillColor)}
+        style={({ isActive }) => navLinkStyle(isActive, false)}
       >
         <Icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />
         {label}
@@ -640,56 +476,24 @@ function HorizontalNav({
       <>
         <div
           onClick={onMobileClose}
+          className="app-shell-mobile-overlay"
           style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 49,
             opacity: mobileOpen ? 1 : 0,
             pointerEvents: mobileOpen ? 'auto' : 'none',
-            transition: 'opacity 0.22s',
           }}
         />
         <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            background: 'var(--brand-primary-dark, #1e1b4b)',
-            zIndex: 50,
-            padding: '0.75rem 1rem 1rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.25rem',
-            transform: mobileOpen ? 'translateY(0)' : 'translateY(-100%)',
-            transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-            boxShadow: mobileOpen ? '0 0.5rem 1.5rem rgba(0,0,0,0.3)' : 'none',
-            maxHeight: '80vh',
-            overflowY: 'auto',
-          }}
+          className="app-shell-mobile-drawer"
+          style={{ transform: mobileOpen ? 'translateY(0)' : 'translateY(-100%)' }}
         >
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.25rem' }}>
-            <button
-              type="button"
-              onClick={onMobileClose}
-              style={{
-                width: '1.75rem',
-                height: '1.75rem',
-                borderRadius: '0.4375rem',
-                border: '0.0625rem solid rgba(255,255,255,0.14)',
-                background: 'rgba(255,255,255,0.07)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                color: 'rgba(255,255,255,0.7)',
-              }}
-              aria-label="Close menu"
-            >
-              <X size={14} strokeWidth={2.5} />
-            </button>
-          </div>
+          <button
+            type="button"
+            className="app-shell-mobile-drawer__close"
+            onClick={onMobileClose}
+            aria-label="Close menu"
+          >
+            <X size={14} strokeWidth={2.5} />
+          </button>
           {items.map((item) => (
             <div key={item.path} style={{ display: 'flex', flexDirection: 'column', gap: '0.0625rem' }}>
               {renderLink(item, false)}
@@ -700,7 +504,7 @@ function HorizontalNav({
                   end
                   onClick={onMobileClose}
                   style={({ isActive }) => ({
-                    ...navLinkStyle(isActive, false, activePillColor),
+                    ...navLinkStyle(isActive, false),
                     marginLeft: '1.25rem',
                     fontSize: '0.75rem',
                   })}
@@ -715,7 +519,7 @@ function HorizontalNav({
     )
   }
 
-  return <DesktopSlidingNav items={items} activePillColor={activePillColor} />
+  return <DesktopSlidingNav items={items} />
 }
 
 export function AppNavBar({
@@ -743,32 +547,15 @@ export function AppNavBar({
   const brandBlock = (
     <button
       type="button"
+      className="app-shell-brand"
       onClick={() => {
         navigate('/')
         setMobileOpen(false)
       }}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.625rem',
-        border: 'none',
-        background: 'transparent',
-        cursor: 'pointer',
-        padding: 0,
-        flexShrink: 0,
-      }}
     >
       <div
-        style={{
-          background: logoUrl ? 'transparent' : logoColor,
-          borderRadius: '0.625rem',
-          width: '2rem',
-          height: '2rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
+        className="app-shell-brand__mark"
+        style={{ background: logoUrl ? 'transparent' : logoColor }}
       >
         {logoUrl ? (
           <img src={logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
@@ -777,124 +564,45 @@ export function AppNavBar({
         )}
       </div>
       {!isMobile && (
-        <div style={{ textAlign: 'left' }}>
-          <div style={{ color: '#FFFFFF', fontSize: '0.9375rem', fontWeight: 700, lineHeight: 1.2, whiteSpace: 'nowrap' }}>
-            {name}
-          </div>
-          {subtitle && (
-            <div
-              style={{
-                color: 'rgba(255,255,255,0.38)',
-                fontSize: '0.5625rem',
-                letterSpacing: '0.1em',
-                textTransform: 'uppercase',
-                marginTop: '0.0625rem',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {subtitle}
-            </div>
-          )}
+        <div className="app-shell-brand__text">
+          <div className="app-shell-brand__name">{name}</div>
+          {subtitle && <div className="app-shell-brand__subtitle">{subtitle}</div>}
         </div>
       )}
     </button>
   )
 
   return (
-    <header
-      style={{
-        position: 'relative',
-        flexShrink: 0,
-        height: isMobile ? '3.25rem' : '3.5rem',
-        display: 'flex',
-        alignItems: 'center',
-        padding: isMobile ? '0 0.75rem' : '0 1rem',
-        gap: isMobile ? '0.5rem' : '1rem',
-        zIndex: 40,
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          flex: isMobile ? 1 : '1 1 0',
-          minWidth: 0,
-        }}
-      >
+    <header className={`app-shell-nav${isMobile ? ' app-shell-nav--mobile' : ''}`}>
+      <div className="app-shell-nav__left">
       {isMobile && (
         <button
           type="button"
+          className="app-shell-mobile-menu-btn"
           onClick={() => setMobileOpen(true)}
-          style={{
-            width: '2.125rem',
-            height: '2.125rem',
-            borderRadius: '0.5rem',
-            border: '0.0625rem solid rgba(255,255,255,0.2)',
-            background: 'rgba(255,255,255,0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
           aria-label="Open menu"
         >
-          <Menu size={16} color="#fff" strokeWidth={2} />
+          <Menu size={16} strokeWidth={2} />
         </button>
       )}
       {brandBlock}
       </div>
       {!isMobile && (
-        <div
-          style={{
-            position: 'absolute',
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            display: 'flex',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-          }}
-        >
-          <div style={{ pointerEvents: 'auto' }}>
+        <div className="app-shell-nav__center">
+          <div className="app-shell-nav__center-inner">
             <HorizontalNav
               navItems={navItems}
               bottomNavItem={bottomNavItem}
-              activePillColor={logoColor}
             />
           </div>
         </div>
       )}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          flex: isMobile ? undefined : '1 1 0',
-          justifyContent: 'flex-end',
-          minWidth: 0,
-        }}
-      >
+      <div className="app-shell-nav__right">
       {bottomContent}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
         {languageLabel != null && onLanguageClick && (
-          <button
-            type="button"
-            onClick={onLanguageClick}
-            style={{
-              height: '2rem',
-              padding: '0 0.625rem',
-              borderRadius: '0.4375rem',
-              border: '0.0625rem solid rgba(255,255,255,0.2)',
-              background: 'rgba(255,255,255,0.1)',
-              fontSize: '0.6875rem',
-              fontWeight: 600,
-              color: '#fff',
-              cursor: 'pointer',
-            }}
-          >
-            🌐 {languageLabel}
+          <button type="button" className="shell-icon-btn" onClick={onLanguageClick} style={{ width: 'auto', padding: '0 0.625rem', fontSize: '0.6875rem', fontWeight: 600 }}>
+            {languageLabel}
           </button>
         )}
         {rightSlot ?? (
@@ -905,7 +613,6 @@ export function AppNavBar({
               profileSubtext={profileSubtext}
               onSignOut={onSignOut}
               isMobile={isMobile}
-              onDark
             />
           </>
         )}
@@ -915,7 +622,6 @@ export function AppNavBar({
         <HorizontalNav
           navItems={navItems}
           bottomNavItem={bottomNavItem}
-          activePillColor={logoColor}
           isMobile
           mobileOpen={mobileOpen}
           onMobileClose={() => setMobileOpen(false)}

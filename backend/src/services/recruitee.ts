@@ -3,6 +3,11 @@ import type { RecruiteeJob, RecruiteeApplicant } from '../types/index.js';
 const TIMEOUT_MS = 10_000;
 const ATS_HOST = 'api.recruitee.com';
 
+/** Dev only: corporate VPN/proxy SSL inspection (self-signed cert in chain). */
+if (process.env.RECRUITEE_TLS_INSECURE === 'true') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
 export type RecruiteeConfig = {
   /** e.g. https://api.recruitee.com/c/nextventures */
   apiRoot: string;
