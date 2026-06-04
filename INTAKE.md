@@ -1,14 +1,23 @@
 # Caliper CV Screening — Infrastructure intake
 
 **GitLab:** https://gitlab.nextventures.io/qpt/caliper-cv-screening  
-**Branch with application code:** `import/caliper-codebase` (merge request pending to `main`)
+**Merge request:** https://gitlab.nextventures.io/qpt/caliper-cv-screening/-/merge_requests/1 (`import/caliper-codebase` → `main`)
+
+**Reference standards reviewed:** NEXT Ventures AI Security Standard v1.0 (Dec 2025); platform SSO/security docs (https://sso.fundednext.com/docs)
 
 ---
 
 ## Application summary
 
-Internal recruiting tool: recruiters upload or import CVs, run AI-assisted screening against job criteria, and optionally discover related LinkedIn profiles.  
-Stack: React (Vite) frontend, Fastify API, PostgreSQL (RDS), S3 for CV PDFs.
+Internal recruiting tool: recruiters upload or import CVs, run AI-assisted screening against job criteria, and optionally discover related LinkedIn profiles.
+
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | React 18, TypeScript, Vite 6 (static build served by nginx) |
+| **Backend** | Node.js 20, Fastify 5, TypeScript |
+| **Database** | PostgreSQL (RDS) |
+| **Object storage** | S3 (CV PDFs only) |
+| **Auth** | Amazon Cognito + Google federated IdP |
 
 ---
 
@@ -18,7 +27,33 @@ Stack: React (Vite) frontend, Fastify API, PostgreSQL (RDS), S3 for CV PDFs.
 |------|-------------|---------|
 | **Business owner** | Aleza Hasan — Head of Talent Acquisition, Talent Acquisition, Global HR | aleza.sharmin@nextventures.io |
 | **Technical owner** | Api Singha — Manager I, HR Analytics, Global HR | api@nextventures.io |
-| **Escalation** | Suhried Datta / platform team | [platform contact] |
+
+---
+
+## Volume & sensitivity
+
+| Metric | Estimate | Notes |
+|--------|----------|--------|
+| **Active users** | 5–25 recruiters | QPT / Global HR hiring |
+| **Concurrent users** | 1–5 typical | Low concurrency internal app |
+| **CVs screened / month** | 50–500 | Depends on hiring volume |
+| **Peak uploads per run** | Up to ~50 CVs per screening run | 10 MB max per PDF |
+| **S3 storage growth** | ~1–5 GB / year (order of magnitude) | PDFs; deleted per retention (below) |
+| **API traffic** | Low | Internal tool, not public internet-facing |
+| **Availability target** | 24/7 (business hours critical; off-hours best effort) |
+| **Data sensitivity** | **Restricted / PII** — candidate CVs, names, contact-related fields, screening outcomes |
+
+---
+
+## Architecture & runtime (EKS/ECS-ready)
+
+| Item | Answer |
+|------|--------|
+| **Containerization** | `backend/Dockerfile` (API), root `Dockerfile` (frontend → nginx). See `DEPLOYMENT.md` and `docker-compose.yml` for local build/run. |
+| **Stateless** | **Yes.** API containers hold no local file storage; CV files in S3; sessions via Cognito JWT; all config via environment variables / Secrets Manager. |
+| **Health checks** | `GET /health` on backend; nginx serves frontend on port 80. |
+| **Migrations** | One-off job: `node migrate.js` against RDS before/after deploy (see `backend/migrate.js`). |
+| **CI** | GitLab CI includes SAST / secret detection (`.gitlab-ci.yml`). |
 
 ---
 
@@ -26,24 +61,12 @@ Stack: React (Vite) frontend, Fastify API, PostgreSQL (RDS), S3 for CV PDFs.
 
 | Item | Answer |
 |------|--------|
-| **Sign-in** | Google Sign-In only (per platform guidance) |
-| **Not in scope** | AWS Cognito as long-term auth platform; corporate SAML — *current codebase still uses Cognito as OAuth broker until migrated to direct Google OAuth* |
-| **Who can access** | Company email domains only: `nextventures.io`, `wearenext.io`, `fn.com` (configurable via `ALLOWED_EMAIL_DOMAINS`) |
-| **Authorization** | Workspace-scoped RBAC: `admin`, `recruiter`, `viewer` |
-
----
-
-## Volume (estimates — adjust if you have real numbers)
-
-| Metric | Estimate | Notes |
-|--------|----------|--------|
-| **Active users** | 5–25 recruiters | QPT / internal hiring team |
-| **Concurrent users** | 1–5 typical | Low concurrency internal app |
-| **CVs screened / month** | 50–500 | Depends on hiring volume |
-| **Peak uploads per run** | Up to ~50 CVs per screening run | 10 MB max per PDF |
-| **S3 storage growth** | ~1–5 GB / year (order of magnitude) | PDFs; deleted per retention (below) |
-| **API traffic** | Low | Internal tool, not public internet-facing |
-| **Availability target** | Business hours / best effort | [Confirm with Tech: 99.x% if required] |
+| **Sign-in** | **Amazon Cognito** User Pool with **Google** as federated identity provider (Hosted UI / OAuth) |
+| **Corporate IdP** | Not required for initial launch; open to platform guidance if corporate SSO is preferred later |
+| **Who can access** | Company email domains only: `nextventures.io`, `wearenext.io`, `fn.com` (`ALLOWED_EMAIL_DOMAINS`) |
+| **Authorization** | Workspace-scoped RBAC: `admin`, `recruiter`, `viewer` — enforced on backend |
+| **Callback / sign-out URLs** | To be finalized with platform team per environment (staging + prod) on **organizational Cloudflare** domain |
+| **Attribute mapping** | Verified **email** required on ID token; name optional |
 
 ---
 
@@ -59,56 +82,107 @@ Stack: React (Vite) frontend, Fastify API, PostgreSQL (RDS), S3 for CV PDFs.
 | **Professional profiles** | LinkedIn URLs, public profile snippets | PostgreSQL / external search APIs | Related-profile discovery |
 | **Audit** | User actions, IP (if logged) | PostgreSQL `audit_log` | Security / compliance |
 
-CVs and candidate records are **confidential HR data** (PII). Treat as **internal / restricted**.
+CVs and candidate records are **confidential HR data (PII)**. Treat as **internal / restricted**.
 
-### What is sent to third parties
+### Third-party AI / integrations (enterprise keys only in production)
 
 | Provider | Data shared | Purpose |
 |----------|-------------|---------|
-| **Anthropic / OpenAI** (optional, workspace-configured) | CV text excerpts, job criteria, prompts | AI scoring & summaries |
-| **Recruitee** (optional) | Applicant/job metadata per integration | Job & applicant sync |
-| **Exa / Serper / Nubela** (optional) | Search queries derived from candidate context | LinkedIn URL discovery |
+| **Anthropic / OpenAI** (workspace-configured) | CV excerpts, job criteria, prompts | AI scoring, criteria generation, summaries |
+| **Recruitee** (optional) | Applicant/job metadata | Job & applicant sync |
+| **Exa / Serper / Nubela** (optional) | Search queries derived from job context | LinkedIn URL discovery |
 
-Workspace API keys for LLM/ATS providers are **encrypted at rest** (AES-256-GCM, `ENCRYPTION_MASTER_KEY`).
+Workspace API keys are **encrypted at rest** in RDS (AES-256-GCM, `ENCRYPTION_MASTER_KEY`). Production keys supplied via **Secrets Manager** — never in repo.
 
-### What we do **not** intend to store long-term
+### Retention (automated)
 
-- Raw CV files in S3 beyond configured retention (default **90 days**).
-- Screening runs beyond evaluation retention (default **730 days**); runs with recruiter overrides are retained.
+| Data | Default retention | Mechanism |
+|------|-------------------|-----------|
+| **CV files (S3)** | 90 days | `runRetentionCleanup` deletes objects and clears DB paths |
+| **Screening runs & evaluations** | 730 days | Configurable per workspace; runs with recruiter overrides retained |
+| **Configurable** | 30 / 90 / 180 / 365 days (CV); 180 / 365 / 730 (evaluations) | `workspace_settings` |
 
 ---
 
-## PII policy (retention, access, deletion)
+## PII policy (access & deletion)
 
 | Policy | Implementation |
 |--------|----------------|
-| **Access control** | JWT auth; all data scoped by `workspace_id`; S3 keys validated per workspace |
-| **CV file retention** | Default **90 days**, then S3 object deleted and DB path cleared; configurable per workspace (30 / 90 / 180 / 365 days) |
-| **Evaluation retention** | Default **730 days**, then screening run + results deleted; configurable (180 / 365 / 730) or disabled |
-| **Automated cleanup** | Scheduled job on backend (`runRetentionCleanup`) |
-| **Encryption in transit** | HTTPS for API and frontend; TLS to RDS |
-| **Encryption at rest** | RDS and S3 per AWS defaults; API keys encrypted in DB |
-| **Right to erasure** | [Confirm process with HR/legal — manual DB/S3 delete or ticket to tech owner] |
-| **Logging** | No CV content in production error responses; stack traces suppressed in prod |
-| **Training / model improvement** | CV content sent only to configured LLM APIs for scoring; **no** use of candidate data for model training (standard API terms) |
+| **Access control** | Cognito JWT + workspace isolation; S3 keys validated per workspace on every upload/download |
+| **Encryption in transit** | TLS (HTTPS, RDS TLS) |
+| **Encryption at rest** | RDS + S3 per AWS defaults; API keys encrypted in application DB |
+| **S3 access** | Private bucket only; no public access (per platform standard) |
+| **RDS** | Private subnet; credentials in Secrets Manager only |
+| **Right to erasure** | HR/Talent Acquisition requests via business owner → technical owner coordinates deletion of workspace-scoped RDS rows and S3 objects; audit trail retained per policy |
+| **Logging** | No CV content in production API error responses; stack traces suppressed in prod |
+| **Model training** | No use of candidate data for model training; LLM calls use provider API terms only |
 
 ---
 
-## Deployment artifacts (for platform team)
+## Security & compliance (AI Security Standard alignment)
+
+| Control | Status |
+|---------|--------|
+| **No secrets in Git** | `.env` gitignored; examples only in `.env.example` |
+| **Secrets at runtime** | Expect `DATABASE_URL`, `ENCRYPTION_MASTER_KEY`, Cognito, S3, LLM keys via **Secrets Manager** / platform pipeline |
+| **Input validation** | API validates uploads, criteria, workspace paths; parameterized SQL via postgres.js |
+| **Least privilege** | Workspace-scoped data; RBAC on mutating routes |
+| **Pre-deploy review** | Subject to platform security review + GitLab SAST/secret detection |
+| **Post-deploy** | Quarterly access/logging review per platform cadence (aligned with AI Security Standard §4.4) |
+
+---
+
+## Operational readiness
+
+### Environments & promotion
+
+| Environment | Purpose | Promotion |
+|-------------|---------|-----------|
+| **dev** | Local / developer (`docker compose`, `npm run dev`) | — |
+| **staging** | UAT with anonymized or test data where possible | MR → deploy staging → smoke test |
+| **production** | Live HR screening | Approved promotion from staging via platform CI/CD (**dev → staging → production**) |
+
+No direct-to-production deployments. No personal cloud/VPS hosting.
+
+### Logging, monitoring & alerting
+
+| Item | Expectation |
+|------|-------------|
+| **Application logs** | Fastify structured logs (stdout); suitable for CloudWatch / platform log aggregation |
+| **Health** | `GET /health` for liveness/readiness probes |
+| **Audit** | User actions recorded in `audit_log` (screening, overrides, criteria changes) |
+| **Alerting** | To be configured by platform team (API 5xx, health check failures, RDS/S3 connectivity) |
+
+### Rough cost expectation
+
+| Resource | Sizing (initial) |
+|----------|------------------|
+| **EKS/ECS** | Small footprint — 2 services (frontend + API), low traffic |
+| **RDS** | Small Postgres instance (single workspace, &lt;25 users) |
+| **S3** | Low volume (~1–5 GB/year); lifecycle aligned with 90-day CV retention |
+| **Cognito** | Low MAU (internal recruiters only) |
+| **LLM APIs** | Usage-based; optional per workspace (Anthropic/OpenAI) |
+
+**Overall:** low-cost internal tool; scale driven mainly by CV volume and LLM usage.
+
+---
+
+## Deployment artifacts (platform team)
 
 | Item | Location |
 |------|----------|
-| **Source** | GitLab repo above |
-| **Docker** | `backend/Dockerfile`, root `Dockerfile` (frontend), `docker-compose.yml` |
+| **Source** | GitLab repo (link above) |
+| **Docker** | `backend/Dockerfile`, root `Dockerfile`, `docker-compose.yml` |
 | **Deploy guide** | `DEPLOYMENT.md` |
 | **DB migrations** | `backend/migrate.js` + `backend/migrate-*.sql` |
 
-**Runtime dependencies (managed by platform — not a shopping list from dev):** PostgreSQL, S3 bucket, Google OAuth app (post-Cognito migration), secrets for DB/encryption/S3, optional LLM keys.
+**Platform provisions (not supplied by app team):** RDS, private S3, Cognito pool + Google IdP, Secrets Manager entries, IAM roles for workloads, Cloudflare DNS/TLS, CI/CD to EKS/ECS, monitoring/alerting.
 
 ---
 
-## Notes for Tech
+## Notes for platform team
 
-- Please merge `import/caliper-codebase` → `main` when approved.
-- Intake reflects **intended** auth: Google only; Cognito removal is planned follow-up work.
-- Volume figures are estimates — Aleza Hasan (aleza.sharmin@nextventures.io) or Api Singha (api@nextventures.io) can supply firm numbers if required.
+- Please merge MR !1 when approved so `main` matches application code.
+- We will not embed credentials or connection strings in the repository; ready for vault-injected env vars.
+- Callback URLs and Cognito app client settings will be provided when staging/prod hostnames are assigned on Cloudflare.
+- Volume figures remain estimates — Aleza Hasan or Api Singha can refine with firm hiring forecasts if needed.
