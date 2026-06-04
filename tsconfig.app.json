@@ -22,13 +22,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"],
-  "exclude": [
-    "src/lib/supabase.ts",
-    "src/lib/devDummyAuth.ts",
-    "src/env.ts",
-    "src/types/auth.ts",
-    "src/pages/SignUp.tsx",
-    "src/pages/ForgotPassword.tsx"
-  ]
+  "include": ["src"]
 }

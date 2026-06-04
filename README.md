@@ -153,7 +153,7 @@ New users without a row in `user_roles` are auto-provisioned into `DEFAULT_WORKS
 
 ### `npm install` fails with `SELF_SIGNED_CERT_IN_CHAIN`
 
-Corporate VPN or SSL inspection may intercept npm. This repo may include a folder-level `.npmrc` with `strict-ssl=false`. Prefer installing your company root CA and using `npm config set cafile /path/to/ca.pem`.
+Corporate VPN or SSL inspection may intercept npm (`SELF_SIGNED_CERT_IN_CHAIN`). Prefer installing your company root CA and using `npm config set cafile /path/to/ca.pem` instead of disabling TLS verification.
 
 ### Backend exits immediately on start
 

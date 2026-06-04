@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_SUPABASE_URL?: string
-  readonly VITE_SUPABASE_ANON_KEY?: string
-  /** Set to `1` in dev to skip Supabase and use a local dummy session */
-  readonly VITE_DEV_DUMMY_AUTH?: string
+  readonly VITE_COGNITO_USER_POOL_ID: string
+  readonly VITE_COGNITO_CLIENT_ID: string
+  readonly VITE_COGNITO_DOMAIN: string
+  readonly VITE_API_URL?: string
 }
 
 interface ImportMeta {
