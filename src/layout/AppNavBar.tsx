@@ -23,8 +23,6 @@ function formatNotificationTime(ts: number) {
   return new Date(ts).toLocaleDateString()
 }
 
-const NAV_SLIDE_TRANSITION = 'left 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1)'
-
 function navLinkStyle(isActive: boolean, slidingIndicator = false): CSSProperties {
   return {
     display: 'inline-flex',
@@ -452,7 +450,7 @@ function HorizontalNav({
   const pathname = location.pathname
   const items = bottomNavItem ? [...navItems, bottomNavItem] : navItems
 
-  const renderLink = (item: NavItem, slidingIndicator = false) => {
+  const renderLink = (item: NavItem, _slidingIndicator = false) => {
     if (item.children?.length) {
       return <NavDropdown key={item.path} item={item} pathname={pathname} onNavigate={onMobileClose} />
     }

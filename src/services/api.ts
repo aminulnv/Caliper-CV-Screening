@@ -142,6 +142,8 @@ export const api = {
     refreshFromRecruitee: (id: string) =>
       request<JobProfileDetail>('POST', `/api/v1/jobs/${id}/refresh-recruitee`, {}),
     upsert: (id: string, body: UpsertJobBody) => request<{ success: boolean }>('PUT', `/api/v1/jobs/${id}`, body),
+    generateCriteria: (id: string, body?: GenerateCriteriaBody) =>
+      request<GenerateCriteriaResponse>('POST', `/api/v1/jobs/${id}/generate-criteria`, body ?? {}),
     audit: (id: string) => request<JobAuditEntry[]>('GET', `/api/v1/jobs/${id}/audit`),
     relatedProfiles: (id: string) =>
       request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
@@ -342,6 +344,25 @@ export interface UpsertJobBody {
   posted_on?: string;
   screening_model?: string | null;
   criteria?: CriterionItem[];
+}
+
+export interface GenerateCriteriaBody {
+  model_id?: string;
+  description?: string;
+}
+
+export interface GeneratedCriterionItem {
+  name: string;
+  weight: number;
+}
+
+export interface GenerateCriteriaResponse {
+  must_have: GeneratedCriterionItem[];
+  nice_to_have: GeneratedCriterionItem[];
+  red_flags: GeneratedCriterionItem[];
+  skipped_count: number;
+  model_used: string;
+  model_substituted?: boolean;
 }
 
 export interface CreateRunBody {

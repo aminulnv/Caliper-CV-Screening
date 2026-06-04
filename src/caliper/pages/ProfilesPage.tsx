@@ -1251,12 +1251,39 @@ function buildCriteriaPayload(mh, nh, rf) {
   ];
 }
 
+function isRecruiteePlaceholderDescription(description) {
+  const t = String(description || '').trim();
+  if (!t) return true;
+  if (!t.startsWith('Synced from Recruitee') && !t.startsWith('Imported from Recruitee')) {
+    return false;
+  }
+  // Stub text from import/sync — not a real JD
+  return t.length < 500 || !/\n{2,}/.test(t) && t.length < 900;
+}
+
+function isUsableJobDescription(description) {
+  const t = String(description || '').trim();
+  if (t.length < 80) return false;
+  return !isRecruiteePlaceholderDescription(t);
+}
+
+function mapGeneratedCriteriaItems(items) {
+  return (items || []).map((c) => ({
+    id: newCriterionId(),
+    name: c.name,
+    weight: c.weight,
+    biased: getBiasWarning(c.name),
+  }));
+}
+
 function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, profile) {
   if (profile.source === 'recruitee' && profile.sourceRef) {
     prefetchRecruiteeApplicants(profile.sourceRef);
   }
   setRunSheetProfileId(null);
-  setEditorInitialTab(null);
+  const lists = getCriteriaListsForProfile(profile);
+  const criteriaCount = lists.must.length + lists.nice.length + lists.flag.length;
+  setEditorInitialTab(criteriaCount === 0 ? 'criteria' : null);
   setSelectedId(profile.id);
 }
 
@@ -1281,7 +1308,10 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
   );
   const [saveState, setSaveState] = React.useState({ status: 'idle', message: '' });
   const criteriaDirtyRef = React.useRef(false);
+  const generatingCriteriaRef = React.useRef(false);
+  const lastAutoCriteriaFingerprintRef = React.useRef('');
   const totalCriteria = mh.length + nh.length + rf.length;
+  const [criteriaGenState, setCriteriaGenState] = React.useState({ status: 'idle', message: '' });
 
   const markCriteriaDirty = React.useCallback(() => {
     criteriaDirtyRef.current = true;
@@ -1289,7 +1319,87 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
 
   React.useEffect(() => {
     criteriaDirtyRef.current = false;
+    generatingCriteriaRef.current = false;
+    lastAutoCriteriaFingerprintRef.current = '';
+    setCriteriaGenState({ status: 'idle', message: '' });
   }, [initialProfile.id]);
+
+  const applyGeneratedCriteria = React.useCallback((data) => {
+    const nextMh = mapGeneratedCriteriaItems(data.must_have);
+    const nextNh = mapGeneratedCriteriaItems(data.nice_to_have);
+    const nextRf = mapGeneratedCriteriaItems(data.red_flags);
+    markCriteriaDirty();
+    setMHState(nextMh);
+    setNHState(nextNh);
+    setRFState(nextRf);
+    profile.mustHave = nextMh;
+    profile.niceToHave = nextNh;
+    profile.redFlags = nextRf;
+  }, [profile, markCriteriaDirty]);
+
+  const runGenerateCriteria = React.useCallback(async (mode = 'manual') => {
+    if (isHero) return;
+    if (!isUsableJobDescription(desc)) {
+      const msg = isRecruiteePlaceholderDescription(desc)
+        ? 'Job description is still the Recruitee placeholder. Open Overview, wait for sync, or paste the full JD, then try again.'
+        : 'Paste the full job description on the Overview tab first (at least a short paragraph).';
+      setCriteriaGenState({ status: 'error', message: msg });
+      return;
+    }
+    if (mode === 'manual' && totalCriteria > 0) {
+      const ok = window.confirm(
+        'Replace current criteria with new AI-generated ones from the job description?',
+      );
+      if (!ok) return;
+    }
+    setCriteriaGenState({
+      status: 'loading',
+      message: mode === 'auto' ? 'Generating criteria from job description…' : 'Generating criteria…',
+    });
+    generatingCriteriaRef.current = true;
+    try {
+      const data = await api.jobs.generateCriteria(profile.id, {
+        description: desc,
+        model_id: screeningModel,
+      });
+      applyGeneratedCriteria(data);
+      const count = data.must_have.length + data.nice_to_have.length + data.red_flags.length;
+      const skipped =
+        data.skipped_count > 0 ? ` ${data.skipped_count} line(s) skipped (policy).` : '';
+      setCriteriaGenState({
+        status: 'done',
+        message: `Generated ${count} criteria.${skipped} Review and click Save.`,
+      });
+    } catch (err) {
+      setCriteriaGenState({
+        status: 'error',
+        message: err?.message ?? 'Could not generate criteria.',
+      });
+    } finally {
+      generatingCriteriaRef.current = false;
+    }
+  }, [
+    isHero,
+    desc,
+    profile,
+    screeningModel,
+    totalCriteria,
+    applyGeneratedCriteria,
+  ]);
+
+  React.useEffect(() => {
+    if (isHero || detailRefreshing) return;
+    if (totalCriteria > 0) return;
+    if (!isUsableJobDescription(desc)) return;
+    if (criteriaDirtyRef.current) return;
+    if (generatingCriteriaRef.current) return;
+
+    const fingerprint = `${profile.id}:${desc.length}`;
+    if (lastAutoCriteriaFingerprintRef.current === fingerprint) return;
+    lastAutoCriteriaFingerprintRef.current = fingerprint;
+
+    runGenerateCriteria('auto');
+  }, [profile.id, isHero, detailRefreshing, totalCriteria, desc, runGenerateCriteria]);
 
   React.useEffect(() => {
     setProfile(initialProfile);
@@ -1303,11 +1413,12 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
     const applyJob = (job: Record<string, unknown>) => {
       const shaped = shapeJobRow(job);
       setProfile(shaped);
-      if (!criteriaDirtyRef.current) {
+      const nextDesc = shaped.description || '';
+      setDescState((prev) => (prev === nextDesc ? prev : nextDesc));
+      if (!generatingCriteriaRef.current && !criteriaDirtyRef.current) {
         setMHState(cloneCriteriaItems(shaped.mustHave));
         setNHState(cloneCriteriaItems(shaped.niceToHave));
         setRFState(cloneCriteriaItems(shaped.redFlags));
-        setDescState(shaped.description || '');
         setScreeningModel(shaped.screeningModel || 'claude-sonnet-4-6');
       }
     };
@@ -1345,7 +1456,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
   }, [workspaceSettings, profile.screeningModel]);
 
   React.useLayoutEffect(() => {
-    if (criteriaDirtyRef.current) return;
+    if (criteriaDirtyRef.current || generatingCriteriaRef.current) return;
     const mh0 = cloneCriteriaItems(profile.mustHave);
     const nh0 = cloneCriteriaItems(profile.niceToHave);
     const rf0 = cloneCriteriaItems(profile.redFlags);
@@ -1492,6 +1603,12 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
         isHero={isHero}
         go={go}
         onOpenRunSheet={onOpenRunSheet}
+        criteriaGenState={criteriaGenState}
+        onGenerateCriteria={() => {
+          lastAutoCriteriaFingerprintRef.current = '';
+          runGenerateCriteria('manual');
+        }}
+        desc={desc}
       />
     </div>
   );
@@ -1501,7 +1618,7 @@ function ProfileTabs({
   profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF,
   runsToShow, showBias, setShowBias, totalCriteria,
   workspaceSettings, screeningModel, setScreeningModel, onSaveProfile, saveState, isHero,
-  go, onOpenRunSheet,
+  go, onOpenRunSheet, criteriaGenState, onGenerateCriteria,
 }) {
   const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
   React.useLayoutEffect(() => {
@@ -1621,6 +1738,9 @@ function ProfileTabs({
           onSave={onSaveProfile}
           saveState={saveState}
           isHero={isHero}
+          criteriaGenState={criteriaGenState}
+          onGenerateCriteria={onGenerateCriteria}
+          hasUsableDescription={isUsableJobDescription(desc)}
         />
       )}
       {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet}/>}
@@ -1892,8 +2012,10 @@ function ScreeningModelPicker({ modelId, onChange, settings }) {
 function CriteriaPane({
   mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias,
   workspaceSettings, screeningModel, setScreeningModel, onSave, saveState, isHero,
+  criteriaGenState, onGenerateCriteria, hasUsableDescription,
 }) {
   const [biasPending, setBiasPending] = React.useState(null);
+  const generating = criteriaGenState?.status === 'loading';
 
   const addBiasedCriterion = () => {
     if (!biasPending) return;
@@ -1912,6 +2034,38 @@ function CriteriaPane({
 
   return (
     <div className="col" style={{ gap: 16 }}>
+      {!isHero && (
+        <div className="callout" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ flex: '1 1 220px', fontSize: 13 }}>
+            {hasUsableDescription
+              ? 'Criteria can be generated from the job description on the Overview tab. Open a job with no saved criteria to auto-generate.'
+              : 'Paste the full job description on Overview, then generate criteria here.'}
+            {criteriaGenState?.message && (
+              <div
+                style={{
+                  marginTop: 6,
+                  color:
+                    criteriaGenState.status === 'error'
+                      ? 'var(--bad)'
+                      : criteriaGenState.status === 'loading'
+                        ? 'var(--muted)'
+                        : 'var(--ok-ink, green)',
+                }}
+              >
+                {criteriaGenState.message}
+              </div>
+            )}
+          </div>
+          <Btn
+            variant="default"
+            icon="sparkle"
+            disabled={generating || !hasUsableDescription}
+            onClick={() => onGenerateCriteria && onGenerateCriteria()}
+          >
+            {generating ? 'Generating…' : 'Generate from job description'}
+          </Btn>
+        </div>
+      )}
       <ScreeningModelPicker
         modelId={screeningModel}
         onChange={setScreeningModel}

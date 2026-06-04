@@ -8,6 +8,9 @@ import { fetchRecruiteeOfferMeta } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
 import { validateCriteriaPayload } from '../services/criteria-validation.js';
 import { syncJobCriteria } from '../services/job-criteria.js';
+import { generateCriteriaFromJobDescription } from '../services/criteria-generation.js';
+import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
+import { pickRunnableModel } from '../services/screening-model.js';
 
 async function fetchJobDetail(workspaceId: string, jobId: string) {
   const [job] = await sql`
@@ -94,7 +97,9 @@ export async function jobsRoutes(app: FastifyInstance) {
 
         const currentDesc = (existing.description as string | null) ?? '';
         const isPlaceholder =
-          !currentDesc || currentDesc.startsWith('Synced from Recruitee');
+          !currentDesc
+          || currentDesc.startsWith('Synced from Recruitee')
+          || currentDesc.startsWith('Imported from Recruitee');
         const nextDescription =
           meta.description?.trim() && isPlaceholder
             ? meta.description.trim()
@@ -129,6 +134,72 @@ export async function jobsRoutes(app: FastifyInstance) {
       const job = await fetchJobDetail(req.workspaceId, jobId);
       if (!job) return reply.status(404).send({ error: 'Job not found' });
       return job;
+    },
+  );
+
+  app.post<{
+    Params: { id: string };
+    Body: { model_id?: string; description?: string };
+  }>(
+    '/jobs/:id/generate-criteria',
+    { preHandler: requireRole('recruiter') },
+    async (req, reply) => {
+      const jobId = req.params.id;
+      const [job] = await sql`
+        SELECT id, name, description, screening_model
+        FROM job_profiles
+        WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+      `;
+      if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+      const description =
+        (req.body.description?.trim() || (job.description as string | null)?.trim() || '');
+      if (!description) {
+        return reply.status(400).send({
+          error: 'Job description is required. Paste the full JD on the Overview tab first.',
+        });
+      }
+
+      const settings = await getWorkspaceSettings(req.workspaceId);
+      const keys = await getWorkspaceKeys(req.workspaceId);
+      const preferred =
+        req.body.model_id?.trim()
+        || ((job.screeningModel ?? job.screening_model) as string | null)
+        || settings.default_model;
+      const pick = pickRunnableModel(preferred, settings.allowed_models, keys);
+
+      try {
+        const generated = await generateCriteriaFromJobDescription(
+          String(job.name),
+          description,
+          pick.modelId,
+          keys,
+        );
+
+        await writeAuditLog({
+          req,
+          action: 'job.criteria_generated',
+          entityType: 'job',
+          entityId: jobId,
+          payload: {
+            job_id: jobId,
+            model_used: pick.modelId,
+            must_count: generated.must_have.length,
+            nice_count: generated.nice_to_have.length,
+            flag_count: generated.red_flags.length,
+            skipped_count: generated.skipped_count,
+          },
+        });
+
+        return {
+          ...generated,
+          model_used: pick.modelId,
+          model_substituted: pick.substituted,
+        };
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return reply.status(400).send({ error: message });
+      }
     },
   );
 

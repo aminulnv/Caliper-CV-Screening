@@ -143,6 +143,20 @@ New users without a row in `user_roles` are auto-provisioned into `DEFAULT_WORKS
 | `npm run build` | backend | Compile TypeScript |
 | `npm start` | backend | Run compiled server |
 
+## Docker deployment
+
+Container images and production deploy steps are documented in **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
+
+Quick start:
+
+```bash
+cp .env.example .env && cp backend/.env.example backend/.env
+# Edit both files, then:
+docker compose up --build
+```
+
+Frontend: http://localhost:8080 · API health: http://localhost:3001/health
+
 ## Security notes
 
 - CV storage paths are validated on upload, parse, run creation, and download — clients cannot access another workspace's S3 keys.

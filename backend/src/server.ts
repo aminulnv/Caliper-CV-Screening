@@ -21,7 +21,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
 const server = Fastify({ logger: true });
 
 await server.register(cors, {
-  origin: [CORS_ORIGIN, 'http://localhost:5174', 'http://localhost:5173'],
+  origin: [CORS_ORIGIN, 'http://localhost:5174', 'http://localhost:5173', 'http://localhost:8080'],
   credentials: true,
 });
 await server.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB max

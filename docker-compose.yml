@@ -1,0 +1,58 @@
+# Local / staging stack. Copy .env.example files and fill secrets before running.
+#   cp .env.example .env
+#   cp backend/.env.example backend/.env
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Docker frontend runs on :8080 — must match Cognito callback URL in AWS
+      CORS_ORIGIN: http://localhost:8080
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
+        VITE_COGNITO_USER_POOL_ID: ${VITE_COGNITO_USER_POOL_ID}
+        VITE_COGNITO_CLIENT_ID: ${VITE_COGNITO_CLIENT_ID}
+        VITE_COGNITO_DOMAIN: ${VITE_COGNITO_DOMAIN}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # One-off migration job (run after backend image is built):
+  #   docker compose run --rm migrate
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    command: ["node", "migrate.js"]
+    profiles:
+      - tools
