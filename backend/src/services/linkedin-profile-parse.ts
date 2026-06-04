@@ -227,3 +227,23 @@ export function mergeRoleCompany(
 
   return { role, company };
 }
+
+/** Full Exa payload for AI scoring (structured header + raw page excerpts). */
+export function buildFullExaProfileSummary(
+  rawText: string | undefined,
+  fields: { role?: string; company?: string; location?: string },
+): string {
+  const header: string[] = [];
+  const role = sanitizeRoleTitle(fields.role);
+  const company = sanitizeCompany(fields.company);
+  const location = normalizeLocation(fields.location);
+
+  if (role && company) header.push(`Current role: ${role} at ${company}`);
+  else if (role) header.push(`Current role: ${role}`);
+  if (location) header.push(`Location: ${location}`);
+
+  const body = rawText ? cleanHighlightText(rawText) : '';
+  const combined = [...header, body].filter(Boolean).join('\n\n').trim();
+
+  return combined.slice(0, 12_000) || 'Found via LinkedIn search.';
+}

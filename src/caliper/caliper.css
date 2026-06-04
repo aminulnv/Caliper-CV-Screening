@@ -1626,6 +1626,48 @@ button.wiz__step {
 
 .related-profiles-toolbar__head {
   min-height: 52px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.related-profiles-toolbar__model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.related-profiles-toolbar__model-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--subtle);
+  white-space: nowrap;
+}
+.related-profiles-toolbar__model-select {
+  height: 32px;
+  min-width: 168px;
+  max-width: 220px;
+  font-size: 12px;
+}
+.related-profiles-toolbar__model-hint {
+  font-size: 10.5px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.related-profiles-toolbar__model-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 .related-profiles-toolbar__title-group {
   display: flex;

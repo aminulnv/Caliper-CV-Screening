@@ -50,7 +50,7 @@ async function request<T>(
 
 async function discoverRelatedProfilesRequest(
   jobId: string,
-  body?: { linkedin_urls?: string[]; limit?: number; search_country?: string },
+  body?: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string },
 ): Promise<DiscoverRelatedProfilesResponse> {
   const headers: Record<string, string> = {
     ...(await getAuthHeader()),
@@ -147,7 +147,7 @@ export const api = {
       request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
     discoverRelatedProfiles: (
       id: string,
-      body?: { linkedin_urls?: string[]; limit?: number; search_country?: string },
+      body?: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string },
     ) => discoverRelatedProfilesRequest(id, body),
     deleteRelatedProfile: (jobId: string, profileId: string) =>
       request<{ success: boolean }>(
@@ -323,6 +323,12 @@ export interface DiscoverRelatedProfilesResponse {
   search_provider: string;
   location_query?: string | null;
   location_scope?: string | null;
+  seniority_level?: string | null;
+  model_id?: string;
+  model_substituted?: boolean;
+  exa_profiles?: number;
+  nubela_profiles?: number;
+  auto_scored?: boolean;
   profiles: RelatedProfileRow[];
 }
 

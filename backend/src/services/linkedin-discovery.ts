@@ -1,8 +1,8 @@
 /**
  * LinkedIn related-profile discovery.
  *
- * Pipeline: JD → AI keywords → Exa or Serper search → list LinkedIn profile URLs
- * Optional: Nubela enrich + AI score when RELATED_PROFILES_AUTO_SCORE=true
+ * Pipeline: JD → AI keywords → Exa or Serper search → profile text from Exa
+ * → optional Nubela enrich when Exa fields are thin → AI star scoring (when enabled)
  */
 
 import type { WorkspaceKeys } from './model-router.js';
@@ -25,6 +25,7 @@ import {
   locationScopeLabel,
   NeedsCountryError,
 } from '../lib/search-location.js';
+import type { SeniorityBand } from './seniority-match.js';
 import {
   normalizeLinkedInProfileUrl,
   parseSerperApiKeys,
@@ -58,6 +59,8 @@ export interface DiscoveredProfile {
   profileSummary: string;
   workExperience: ProfileExperience[];
   education: ProfileEducation[];
+  /** Where structured profile fields came from. */
+  dataSource: 'exa' | 'nubela' | 'search' | 'manual' | 'mock';
 }
 
 export interface DiscoveryOptions {
@@ -78,12 +81,37 @@ export interface DiscoveryResult {
   searchProvider: string;
   locationQuery?: string;
   locationScope?: string | null;
+  seniorityBand?: SeniorityBand;
 }
 
 const NUBELA_LINKEDIN = 'https://nubela.co/proxycurl/api/v2/linkedin';
 
 function nubelaApiKey(): string | undefined {
   return process.env.NUBELA_API_KEY?.trim() || process.env.PROXYCURL_API_KEY?.trim();
+}
+
+function nubelaFallbackEnabled(): boolean {
+  return process.env.NUBELA_FALLBACK !== 'false';
+}
+
+/** True when Exa/search payload is too thin to trust for display or AI scoring. */
+export function exaProfileNeedsNubelaFallback(
+  profile: Pick<DiscoveredProfile, 'title' | 'company' | 'profileSummary'>,
+  hit?: Pick<LinkedInSearchHit, 'profileText' | 'roleTitle'>,
+): boolean {
+  const summary = profile.profileSummary?.trim() ?? '';
+  const hasTitle = Boolean(profile.title?.trim());
+  const hasCompany = Boolean(profile.company?.trim());
+
+  if (summary.length < 120 || /^Found via LinkedIn search/i.test(summary)) return true;
+  if (!hasTitle && !hasCompany) return true;
+
+  const rawLen = hit?.profileText?.trim().length ?? 0;
+  if (rawLen > 200 && (!hasTitle || !hasCompany)) return true;
+
+  if (hit?.profileText && !hit.roleTitle && !hasTitle) return true;
+
+  return false;
 }
 
 function linkedInSlugFromUrl(url: string): string {
@@ -109,9 +137,12 @@ function headlineFromSerperTitle(title: string): string | undefined {
   return headlineFromPageTitle(title);
 }
 
-function profileFromLinkedInUrl(
+function profileFromSearchHit(
   url: string,
-  hit?: Pick<LinkedInSearchHit, 'searchTitle' | 'snippet' | 'company' | 'location' | 'roleTitle'>,
+  hit?: Pick<
+    LinkedInSearchHit,
+    'searchTitle' | 'snippet' | 'company' | 'location' | 'roleTitle' | 'profileText'
+  >,
 ): DiscoveredProfile {
   const slug = linkedInSlugFromUrl(url);
   const name = (hit?.searchTitle && nameFromSerperTitle(hit.searchTitle)) || nameFromSlug(slug);
@@ -120,6 +151,11 @@ function profileFromLinkedInUrl(
     sanitizeRoleTitle(hit?.searchTitle ? headlineFromSerperTitle(hit.searchTitle) : undefined);
   const company = sanitizeCompany(hit?.company);
   const location = normalizeLocation(hit?.location);
+  const profileSummary =
+    hit?.profileText?.trim() ||
+    hit?.snippet?.trim() ||
+    'Found via LinkedIn search.';
+
   return {
     name,
     title: headline,
@@ -129,7 +165,8 @@ function profileFromLinkedInUrl(
     linkedinUrl: url,
     workExperience: [],
     education: [],
-    profileSummary: hit?.snippet?.trim() || 'Found via LinkedIn search.',
+    profileSummary,
+    dataSource: hit?.profileText ? 'exa' : 'search',
   };
 }
 
@@ -238,6 +275,7 @@ function profileFromLinkedInData(data: Record<string, unknown>, url: string): Di
     workExperience,
     education,
     profileSummary: buildProfileSummary(data, workExperience, education),
+    dataSource: 'nubela',
   };
 }
 
@@ -281,6 +319,7 @@ function mockProfiles(jobTitle: string, jobDescription: string, limit: number): 
     ]
       .filter(Boolean)
       .join(' '),
+    dataSource: 'mock' as const,
   }));
 }
 
@@ -342,6 +381,11 @@ async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number)
   params.locationQuery = applySearchCountry(resolvedLocation, opts.searchCountry);
   const locationScope = locationScopeLabel(params.locationQuery, opts.searchCountry);
 
+  const seniorityBand: SeniorityBand = {
+    level: params.seniorityLevel ?? 'matching the stated job level',
+    exclude: params.seniorityExclude ?? [],
+  };
+
   const { hits, searchProvider, searchQuery } = await searchForProfiles(params, limit);
 
   if (hits.length === 0) {
@@ -351,17 +395,23 @@ async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number)
   }
 
   const nubelaKey = nubelaApiKey();
+  const useNubelaFallback = Boolean(nubelaKey) && nubelaFallbackEnabled();
   const profiles: DiscoveredProfile[] = [];
 
   for (const hit of hits) {
-    if (nubelaKey) {
-      const enriched = await fetchLinkedInProfile(hit.url, nubelaKey);
+    let profile = profileFromSearchHit(hit.url, hit);
+
+    if (useNubelaFallback && exaProfileNeedsNubelaFallback(profile, hit)) {
+      const enriched = await fetchLinkedInProfile(hit.url, nubelaKey!);
       if (enriched) {
-        profiles.push(enriched);
-        continue;
+        console.info(
+          `[discovery] Nubela fallback for ${hit.url} (Exa fields: title=${Boolean(profile.title)}, company=${Boolean(profile.company)}, summary=${profile.profileSummary.length} chars)`,
+        );
+        profile = enriched;
       }
     }
-    profiles.push(profileFromLinkedInUrl(hit.url, hit));
+
+    profiles.push(profile);
   }
 
   return {
@@ -371,6 +421,7 @@ async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number)
     searchProvider,
     locationQuery: params.locationQuery,
     locationScope,
+    seniorityBand,
   };
 }
 
@@ -381,7 +432,10 @@ export async function discoverSimilarProfiles(opts: DiscoveryOptions): Promise<D
   const manualUrls = [...new Set((opts.linkedinUrls ?? []).map(normalizeLinkedInProfileUrl).filter(Boolean))] as string[];
 
   if (manualUrls.length > 0) {
-    const profiles = manualUrls.slice(0, limit).map((url) => profileFromLinkedInUrl(url));
+    const profiles = manualUrls.slice(0, limit).map((url) => ({
+      ...profileFromSearchHit(url),
+      dataSource: 'manual' as const,
+    }));
     return { profiles, searchQuery: '(manual LinkedIn URLs)', urlsFound: manualUrls.length, searchProvider: 'manual' };
   }
 

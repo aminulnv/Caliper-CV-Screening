@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { storage } from '../services/storage.js';
+import { isWorkspaceStoragePath } from '../lib/storage-path.js';
 import { parsePdfBuffer } from '../services/cv-parser.js';
 import { randomUUID } from 'crypto';
 
@@ -42,7 +43,7 @@ export async function cvRoutes(app: FastifyInstance) {
       if (!path) return reply.status(400).send({ error: 'path is required' });
 
       // Ensure path belongs to this workspace
-      if (!path.startsWith(`${req.workspaceId}/`)) {
+      if (!isWorkspaceStoragePath(path, req.workspaceId)) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 

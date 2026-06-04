@@ -1651,6 +1651,8 @@ function ProfileTabs({
           jobName={profile.name}
           hasDescription={Boolean(desc?.trim())}
           isHero={isHero}
+          workspaceSettings={workspaceSettings}
+          screeningModel={screeningModel}
         />
       )}
     </>

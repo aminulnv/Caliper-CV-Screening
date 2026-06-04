@@ -8,9 +8,30 @@ import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js
 import { parsePdfBuffer } from '../services/cv-parser.js';
 import { storage } from '../services/storage.js';
 import { randomUUID } from 'crypto';
-import type { Criterion, ScoringRequest } from '../types/index.js';
+import type { Criterion, ScoringRequest, CriterionResult } from '../types/index.js';
 import { countJobCriteria } from '../services/job-criteria.js';
 import { mapCriterionRows, pickRunnableModel } from '../services/screening-model.js';
+import { isWorkspaceStoragePath } from '../lib/storage-path.js';
+
+const MAX_CV_SOURCES_PER_RUN = 50;
+
+function validateCvSources(
+  cvSources: Array<{ type: string; path?: string; name?: string }>,
+  workspaceId: string,
+): string | null {
+  if (cvSources.length > MAX_CV_SOURCES_PER_RUN) {
+    return `Maximum ${MAX_CV_SOURCES_PER_RUN} CVs per run`;
+  }
+  for (const source of cvSources) {
+    if (source.type === 'storage') {
+      if (!source.path?.trim()) return 'Storage CV source requires a path';
+      if (!isWorkspaceStoragePath(source.path, workspaceId)) {
+        return 'Forbidden';
+      }
+    }
+  }
+  return null;
+}
 
 export async function runsRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate);
@@ -74,6 +95,14 @@ export async function runsRoutes(app: FastifyInstance) {
       const { job_id, model_id, cv_sources } = req.body;
       if (!job_id || !cv_sources?.length) {
         return reply.status(400).send({ error: 'job_id and cv_sources are required' });
+      }
+
+      const cvSourceError = validateCvSources(cv_sources, req.workspaceId);
+      if (cvSourceError === 'Forbidden') {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+      if (cvSourceError) {
+        return reply.status(400).send({ error: cvSourceError });
       }
 
       const [job] = await sql`
@@ -188,6 +217,9 @@ async function processRun(
     let recruiteeId: string | null = null;
 
     if (source.type === 'storage' && source.path) {
+      if (!isWorkspaceStoragePath(source.path, workspaceId)) {
+        throw new Error(`Forbidden storage path: ${source.path}`);
+      }
       pdfBuffer = await storage.download(source.path);
       storagePath = source.path;
     } else if (source.type === 'recruitee' && source.cv_url) {
@@ -244,7 +276,7 @@ async function processRun(
     `;
 
     if (candidateRow && scoringResult?.criteria_results?.length) {
-      const evals = scoringResult.criteria_results.map((cr: Record<string, unknown>) => ({
+      const evals = scoringResult.criteria_results.map((cr: CriterionResult) => ({
         candidate_id: candidateRow.id,
         criterion_id: cr.criterion_id,
         met: cr.met,

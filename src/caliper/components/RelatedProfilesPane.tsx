@@ -4,6 +4,13 @@ import { Btn, Icon, IconBtn, Badge } from '@/caliper/ui'
 import { api, NeedsCountryError, type RelatedProfileRow } from '@/services/api'
 import { COUNTRY_NAMES, GLOBAL_SEARCH, GLOBAL_SEARCH_LABEL } from '@/lib/countries'
 import {
+  SCREENING_MODELS,
+  isProviderConfigured,
+  labelForModel,
+  providerForModel,
+  resolveRunnableModel,
+} from '@/lib/screening-models'
+import {
   displayBackground,
   displayCompany,
   displayLocation,
@@ -93,6 +100,55 @@ function buildIntroText(count: number, jobName: string, scope: string | null) {
   return `${count} LinkedIn profile${count === 1 ? '' : 's'} matched to ${jobName}${locPart}.`
 }
 
+function configuredModels(settings) {
+  if (!settings) return SCREENING_MODELS
+  return SCREENING_MODELS.filter((m) => isProviderConfigured(m.provider, settings))
+}
+
+function RelatedProfilesModelSelect({ modelId, onChange, settings, disabled }) {
+  const models = configuredModels(settings)
+  const runnable = resolveRunnableModel(modelId, settings?.allowed_models, settings)
+  const provider = providerForModel(modelId)
+
+  return (
+    <div className="related-profiles-toolbar__model">
+      <label className="related-profiles-toolbar__model-label" htmlFor="related-profiles-ai-model">
+        AI model
+      </label>
+      <select
+        id="related-profiles-ai-model"
+        className="sel related-profiles-toolbar__model-select"
+        value={modelId}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled || models.length === 0}
+        title="Model used to derive search terms and score JD fit"
+      >
+        {models.length === 0 ? (
+          <option value={modelId}>No API key configured</option>
+        ) : (
+          models.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))
+        )}
+      </select>
+      {runnable.error && (
+        <span className="related-profiles-toolbar__model-warn" title={runnable.error}>!</span>
+      )}
+      {runnable.substituted && !runnable.error && (
+        <span className="related-profiles-toolbar__model-hint muted" title={`Will run as ${labelForModel(runnable.modelId)}`}>
+          → {labelForModel(runnable.modelId)}
+        </span>
+      )}
+      {provider === 'claude' && !isProviderConfigured('claude', settings) && (
+        <span className="related-profiles-toolbar__model-hint muted">Add Anthropic key</span>
+      )}
+      {provider === 'openai' && !isProviderConfigured('openai', settings) && (
+        <span className="related-profiles-toolbar__model-hint muted">Add OpenAI key</span>
+      )}
+    </div>
+  )
+}
+
 function RelatedProfilesLoading() {
   return (
     <div className="card related-profiles-loading" aria-busy="true" aria-label="Loading related profiles">
@@ -109,7 +165,17 @@ function RelatedProfilesLoading() {
   )
 }
 
-export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) {
+export function RelatedProfilesPane({
+  jobId,
+  jobName,
+  hasDescription,
+  isHero,
+  workspaceSettings,
+  screeningModel,
+}) {
+  const defaultModelId =
+    screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6'
+  const [modelId, setModelId] = React.useState(defaultModelId)
   const [profiles, setProfiles] = React.useState<RelatedProfileRow[]>([])
   const [loading, setLoading] = React.useState(true)
   const [discovering, setDiscovering] = React.useState(false)
@@ -117,6 +183,7 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
   const [lastSearchQuery, setLastSearchQuery] = React.useState<string | null>(null)
   const [lastSearchProvider, setLastSearchProvider] = React.useState<string | null>(null)
   const [lastLocationScope, setLastLocationScope] = React.useState<string | null>(null)
+  const [lastSeniorityLevel, setLastSeniorityLevel] = React.useState<string | null>(null)
   const [showCountryPicker, setShowCountryPicker] = React.useState(false)
   const [selectedCountry, setSelectedCountry] = React.useState(GLOBAL_SEARCH)
 
@@ -136,6 +203,10 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
 
   React.useEffect(() => { load() }, [load])
 
+  React.useEffect(() => {
+    setModelId(screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6')
+  }, [screeningModel, workspaceSettings?.default_model, jobId])
+
   const runDiscover = async (searchCountry?: string) => {
     if (!hasDescription) return
     setDiscovering(true)
@@ -143,6 +214,7 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
     try {
       const res = await api.jobs.discoverRelatedProfiles(jobId, {
         limit: 10,
+        model_id: modelId,
         ...(searchCountry ? { search_country: searchCountry } : {}),
       })
       setShowCountryPicker(false)
@@ -150,6 +222,7 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
       setLastSearchQuery(res.search_query)
       setLastSearchProvider(res.search_provider)
       setLastLocationScope(res.location_scope ?? res.location_query ?? null)
+      setLastSeniorityLevel(res.seniority_level ?? null)
     } catch (e) {
       if (e instanceof NeedsCountryError) {
         setShowCountryPicker(true)
@@ -207,6 +280,12 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
             )}
           </div>
           <div className="spacer"/>
+          <RelatedProfilesModelSelect
+            modelId={modelId}
+            onChange={setModelId}
+            settings={workspaceSettings}
+            disabled={discovering}
+          />
           <Btn
             variant="primary"
             icon="sparkle"
@@ -273,6 +352,11 @@ export function RelatedProfilesPane({ jobId, jobName, hasDescription, isHero }) 
                 )}
                 {displayLocation && (
                   <span className="related-profiles-meta__pill">{displayLocation}</span>
+                )}
+                {lastSeniorityLevel && (
+                  <span className="related-profiles-meta__pill" title="Target seniority band for this search">
+                    {lastSeniorityLevel}
+                  </span>
                 )}
               </div>
             </div>

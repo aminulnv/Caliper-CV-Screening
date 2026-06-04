@@ -5,6 +5,7 @@
 
 import type { DiscoverySearchParams } from './discovery-params.js';
 import {
+  buildFullExaProfileSummary,
   buildProfileSnippet,
   extractRoleCompanyFromText,
   headlineFromPageTitle,
@@ -32,10 +33,16 @@ export function buildExaPeopleSearchQuery(params: DiscoverySearchParams): string
   const role = params.roleTitle.trim();
   const skills = params.keywords.slice(0, 4).filter(Boolean);
   const location = params.locationQuery?.trim();
+  const seniority = params.seniorityLevel?.trim();
+  const exclude = params.seniorityExclude?.slice(0, 5).filter(Boolean) ?? [];
 
-  const parts: string[] = [`${role} professionals`];
+  const subject = seniority ? `${seniority} ${role}` : `${role} professionals`;
+  const parts: string[] = [subject];
   if (skills.length) parts.push(`with experience in ${skills.join(', ')}`);
   if (location) parts.push(`in ${location}`);
+  if (exclude.length) {
+    parts.push(`not ${exclude.join(', ')} level`);
+  }
   parts.push('on LinkedIn');
 
   return parts.join(' ').replace(/\s+/g, ' ').trim();
@@ -120,6 +127,11 @@ function mapExaResult(row: Record<string, unknown>): LinkedInSearchHit | null {
     searchTitle: pageTitle ?? entityFields.searchTitle,
     roleTitle,
     snippet: buildProfileSnippet(combinedText, { role: roleTitle, company, location }),
+    profileText: buildFullExaProfileSummary(combinedText, {
+      role: roleTitle,
+      company,
+      location,
+    }),
     company,
     location,
   };
@@ -151,7 +163,7 @@ export async function searchLinkedInProfilesWithExa(
       numResults,
       contents: {
         highlights: { numSentences: 4, highlightsPerUrl: 4 },
-        text: { maxCharacters: 2000 },
+        text: { maxCharacters: 4000 },
       },
     }),
   });

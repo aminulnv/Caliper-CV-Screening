@@ -16,6 +16,8 @@ const REGION = process.env.AWS_REGION ?? 'ap-south-1';
 const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID!;
 const ISSUER = `https://cognito-idp.${REGION}.amazonaws.com/${USER_POOL_ID}`;
 
+const DEFAULT_USER_ROLE: UserRole = 'recruiter';
+
 const ALLOWED_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'nextventures.io,wearenext.io,fn.com')
   .split(',')
   .map((d) => d.trim().toLowerCase())
@@ -108,10 +110,16 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
       }
       await sql`
         INSERT INTO user_roles (user_id, workspace_id, role)
-        VALUES (${sub}, ${defaultWorkspaceId}, 'admin')
+        VALUES (${sub}, ${defaultWorkspaceId}, ${DEFAULT_USER_ROLE})
         ON CONFLICT DO NOTHING
       `;
-      roleRow = { workspaceId: defaultWorkspaceId, role: 'admin' };
+      [roleRow] = await sql`
+        SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
+      `;
+      if (!roleRow) {
+        reply.status(403).send({ error: 'Could not assign workspace role' });
+        return;
+      }
     }
 
     const workspaceId = roleRow.workspaceId ?? roleRow.workspace_id;

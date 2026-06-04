@@ -6,6 +6,7 @@ import { sql } from '../services/db.js';
 import { storage } from '../services/storage.js';
 import { fetchRecruiteeCandidateCv } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
+import { isWorkspaceStoragePath } from '../lib/storage-path.js';
 
 export async function candidatesRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate);
@@ -74,7 +75,7 @@ export async function candidatesRoutes(app: FastifyInstance) {
     let filename: string;
 
     if (storagePath) {
-      if (!storagePath.startsWith(`${req.workspaceId}/`)) {
+      if (!isWorkspaceStoragePath(storagePath, req.workspaceId)) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
       pdf = await storage.download(storagePath);

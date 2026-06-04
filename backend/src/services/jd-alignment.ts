@@ -2,10 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { WorkspaceKeys } from './model-router.js';
 import type { ProfileEducation, ProfileExperience } from './linkedin-discovery.js';
+import type { SeniorityBand } from './seniority-match.js';
 
 export interface JdAlignmentInput {
   jobTitle: string;
   jobDescription: string;
+  seniorityBand?: SeniorityBand;
   profile: {
     name: string;
     title?: string | null;
@@ -26,6 +28,16 @@ export interface JdAlignmentResult {
 
 const SYSTEM_PROMPT = `You evaluate how well a professional profile aligns with a job description.
 Focus on work history, education, seniority, domain skills, and location when present.
+Profile text may come from LinkedIn search excerpts (Exa) or structured work history — use whatever evidence is available.
+
+Seniority matching (critical — apply before assigning 4–5 stars):
+- Infer the target seniority band from job_title, target_seniority, and the job description (years required, IC vs leadership).
+- Penalize seniority mismatches heavily even when domain skills match:
+  • Overqualified (Principal, Director, VP, Group/Head-of for a mid-level or non-lead IC role): cap at 3 stars; usually 2–3.
+  • Underqualified (junior/intern for a senior role): cap at 2 stars.
+- 5 stars requires aligned seniority AND skills. Strong skills alone are NOT enough if the candidate is clearly too senior or too junior.
+- State seniority mismatch explicitly in rationale when it lowers the score.
+
 Return ONLY valid JSON with this schema:
 {
   "stars": 1 | 2 | 3 | 4 | 5,
@@ -33,19 +45,21 @@ Return ONLY valid JSON with this schema:
 }
 
 Rating scale:
-1 = poor fit — major gaps vs the role
-2 = weak fit — some overlap but important requirements missing
-3 = partial fit — reasonable overlap with notable gaps
-4 = strong fit — most requirements met, minor gaps only
-5 = excellent fit — highly aligned experience, skills, and seniority
+1 = poor fit — major gaps vs the role (skills or seniority)
+2 = weak fit — some overlap but important requirements or seniority missing
+3 = partial fit — reasonable skill overlap but notable gaps or seniority mismatch
+4 = strong fit — most requirements met at the right level, minor gaps only
+5 = excellent fit — highly aligned experience, skills, AND seniority
 
 Be realistic and evidence-based. Weight recent work experience most heavily. Do not inflate scores without support in the profile.`;
 
 function buildUserMessage(input: JdAlignmentInput): string {
-  const { profile, jobTitle, jobDescription } = input;
+  const { profile, jobTitle, jobDescription, seniorityBand } = input;
   return JSON.stringify({
     job_title: jobTitle,
     job_description: jobDescription.slice(0, 12_000),
+    target_seniority: seniorityBand?.level ?? null,
+    avoid_titles_indicating_overqualification: seniorityBand?.exclude ?? [],
     candidate: {
       name: profile.name,
       title: profile.title ?? null,

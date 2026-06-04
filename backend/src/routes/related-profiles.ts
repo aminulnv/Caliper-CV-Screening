@@ -5,6 +5,7 @@ import { writeAuditLog } from '../middleware/audit.js';
 import { sql } from '../services/db.js';
 import { discoverSimilarProfiles, NeedsCountryError } from '../services/linkedin-discovery.js';
 import { scoreJdAlignment } from '../services/jd-alignment.js';
+import { capStarsForSeniorityMismatch } from '../services/seniority-match.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
 
@@ -82,7 +83,7 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
 
   app.post<{
     Params: { id: string };
-    Body: { linkedin_urls?: string[]; limit?: number; search_country?: string };
+    Body: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string };
   }>(
     '/jobs/:id/related-profiles/discover',
     { preHandler: requireRole('recruiter') },
@@ -104,9 +105,13 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
 
       const settings = await getWorkspaceSettings(req.workspaceId);
       const keys = await getWorkspaceKeys(req.workspaceId);
+      const bodyModel = req.body?.model_id?.trim();
       const preferredModel =
-        (job.screeningModel as string | null) || settings.default_model || 'claude-sonnet-4-6';
-      const { modelId } = pickRunnableModel(preferredModel, settings.allowed_models, keys);
+        bodyModel ||
+        (job.screeningModel as string | null) ||
+        settings.default_model ||
+        'claude-sonnet-4-6';
+      const { modelId, substituted } = pickRunnableModel(preferredModel, settings.allowed_models, keys);
 
       const [discovery] = await sql`
         INSERT INTO related_profile_discoveries (job_id, workspace_id, status, started_at)
@@ -115,8 +120,15 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
       `;
 
       try {
-        const { profiles: discovered, searchQuery, urlsFound, searchProvider, locationQuery, locationScope } =
-          await discoverSimilarProfiles({
+        const {
+          profiles: discovered,
+          searchQuery,
+          urlsFound,
+          searchProvider,
+          locationQuery,
+          locationScope,
+          seniorityBand,
+        } = await discoverSimilarProfiles({
             jobTitle: job.name as string,
             jobDescription: description,
             linkedinUrls: req.body?.linkedin_urls,
@@ -127,9 +139,13 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
           });
 
         let saved = 0;
-        const autoScore = process.env.RELATED_PROFILES_AUTO_SCORE === 'true';
+        const autoScore = process.env.RELATED_PROFILES_AUTO_SCORE !== 'false';
+        let exaSourceCount = 0;
+        let nubelaSourceCount = 0;
 
         for (const profile of discovered) {
+          if (profile.dataSource === 'nubela') nubelaSourceCount += 1;
+          else if (profile.dataSource === 'exa') exaSourceCount += 1;
           let stars: number | null = null;
           let rationale: string | null = null;
 
@@ -138,6 +154,7 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
               {
                 jobTitle: job.name as string,
                 jobDescription: description,
+                seniorityBand,
                 profile: {
                   name: profile.name,
                   title: profile.title,
@@ -152,8 +169,17 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
               },
               keys,
             );
-            stars = alignment.stars;
-            rationale = alignment.rationale;
+            const capped = capStarsForSeniorityMismatch(
+              alignment.stars,
+              job.name as string,
+              profile.title ?? profile.headline,
+              seniorityBand ?? { level: '', exclude: [] },
+            );
+            stars = capped;
+            rationale =
+              capped < alignment.stars
+                ? `${alignment.rationale} (Score capped for seniority mismatch vs target band.)`
+                : alignment.rationale;
           }
 
           await sql`
@@ -201,6 +227,12 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
             search_provider: searchProvider,
             location_query: locationQuery ?? null,
             location_scope: locationScope ?? null,
+            seniority_level: seniorityBand?.level ?? null,
+            exa_profiles: exaSourceCount,
+            nubela_profiles: nubelaSourceCount,
+            auto_scored: autoScore,
+            model_id: modelId,
+            model_substituted: substituted,
           },
         });
 
@@ -221,6 +253,12 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
           search_provider: searchProvider,
           location_query: locationQuery ?? null,
           location_scope: locationScope ?? null,
+          seniority_level: seniorityBand?.level ?? null,
+          exa_profiles: exaSourceCount,
+          nubela_profiles: nubelaSourceCount,
+          auto_scored: autoScore,
+          model_id: modelId,
+          model_substituted: substituted,
           profiles: profiles.map((row) => formatRelatedProfile(row as Record<string, unknown>)),
         };
       } catch (err) {

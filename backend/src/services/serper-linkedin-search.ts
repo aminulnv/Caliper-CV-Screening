@@ -95,6 +95,8 @@ export interface LinkedInSearchHit {
   location?: string;
   /** Parsed current role when available (e.g. from Exa highlights). */
   roleTitle?: string;
+  /** Full Exa highlights + page text — used for AI JD alignment scoring. */
+  profileText?: string;
 }
 
 async function searchWithSerperKey(

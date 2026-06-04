@@ -1,11 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { WorkspaceKeys } from './model-router.js';
+import { inferSeniorityBand, mergeSeniorityBand } from './seniority-match.js';
 
 export interface DiscoverySearchParams {
   roleTitle: string;
   keywords: string[];
   locationQuery?: string;
+  seniorityLevel?: string;
+  seniorityExclude?: string[];
 }
 
 export interface ExtractDiscoveryParamsInput {
@@ -15,20 +18,25 @@ export interface ExtractDiscoveryParamsInput {
   keys: WorkspaceKeys;
 }
 
-const SYSTEM_PROMPT = `You extract LinkedIn search parameters from a job description for finding candidate profiles on LinkedIn via Google.
+const SYSTEM_PROMPT = `You extract LinkedIn search parameters from a job description for finding candidate profiles on LinkedIn.
 Return ONLY valid JSON with this schema:
 {
-  "role_title": "string — target job title as it appears on LinkedIn",
+  "role_title": "string — target job title as it appears on LinkedIn (include Senior/Lead/Director only if the JD is that level)",
   "keywords": ["string", ...], // 3-6 skill/domain/industry terms from the JD (not the role title repeated)
-  "location_query": "string or null" // city/region/country for search, e.g. "Amsterdam Netherlands"; null if remote/unspecified
+  "location_query": "string or null", // city/region/country; null if remote/unspecified
+  "seniority_level": "string — target seniority band in plain English, e.g. mid-level individual contributor, senior IC, director level",
+  "seniority_exclude": ["string", ...] // LinkedIn title words indicating OVERqualification, e.g. Principal, Director, VP when hiring a mid-level PM
 }
 
 Rules:
-- role_title should be how the role appears on LinkedIn (e.g. "Talent Acquisition Manager").
-- keywords: concrete skills, domains, tools, seniority hints (e.g. "B2B SaaS", "stakeholder management", "ATS").
+- role_title must match the level in the posting. Do NOT upgrade to Principal/Director/Senior unless the JD explicitly requires it.
+- For a plain "Product Manager" or "Analyst" without Senior/Director/Principal in the title, assume mid-level IC — exclude Principal, Director, VP, Group, Head of from results.
+- seniority_level: infer from title, years of experience required, grade/level fields, and leadership vs IC language.
+- seniority_exclude: 3-6 terms that would indicate candidates too senior for this role (empty array only for executive searches).
+- keywords: concrete skills, domains, tools — not seniority words already in role_title.
 - location_query: only when the JD clearly states a location; do not invent one.
 - For recruitment notices with a "Location:" field, use city + country only (e.g. "Dhaka Bangladesh"), not the full street address.
-- Keep keywords short — they will be combined into a Google query.`;
+- Keep keywords short — they will be combined into a search query.`;
 
 function buildUserMessage(input: ExtractDiscoveryParamsInput): string {
   return JSON.stringify({
@@ -42,7 +50,7 @@ function parseKeywords(raw: unknown): string[] {
   return [...new Set(raw.map((k) => (typeof k === 'string' ? k.trim() : '')).filter(Boolean))].slice(0, 6);
 }
 
-function parseDiscoveryParams(raw: string, jobTitle: string): DiscoverySearchParams {
+function parseDiscoveryParams(raw: string, jobTitle: string, jobDescription: string): DiscoverySearchParams {
   try {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON');
@@ -52,6 +60,13 @@ function parseDiscoveryParams(raw: string, jobTitle: string): DiscoverySearchPar
         ? parsed.role_title.trim()
         : jobTitle.trim() || 'Professional';
 
+    const seniority = mergeSeniorityBand(
+      typeof parsed.seniority_level === 'string' ? parsed.seniority_level : undefined,
+      parsed.seniority_exclude,
+      jobTitle,
+      jobDescription,
+    );
+
     return {
       roleTitle,
       keywords: parseKeywords(parsed.keywords),
@@ -59,9 +74,17 @@ function parseDiscoveryParams(raw: string, jobTitle: string): DiscoverySearchPar
         typeof parsed.location_query === 'string' && parsed.location_query.trim()
           ? parsed.location_query.trim()
           : undefined,
+      seniorityLevel: seniority.level,
+      seniorityExclude: seniority.exclude,
     };
   } catch {
-    return { roleTitle: jobTitle.trim() || 'Professional', keywords: [] };
+    const fallback = inferSeniorityBand(jobTitle, jobDescription);
+    return {
+      roleTitle: jobTitle.trim() || 'Professional',
+      keywords: [],
+      seniorityLevel: fallback.level,
+      seniorityExclude: fallback.exclude,
+    };
   }
 }
 
@@ -215,7 +238,7 @@ async function extractClaude(input: ExtractDiscoveryParamsInput, apiKey: string)
     messages: [{ role: 'user', content: buildUserMessage(input) }],
   });
   const raw = response.content[0].type === 'text' ? response.content[0].text : '';
-  return parseDiscoveryParams(raw, input.jobTitle);
+  return parseDiscoveryParams(raw, input.jobTitle, input.jobDescription);
 }
 
 async function extractOpenAI(input: ExtractDiscoveryParamsInput, apiKey: string): Promise<DiscoverySearchParams> {
@@ -230,7 +253,7 @@ async function extractOpenAI(input: ExtractDiscoveryParamsInput, apiKey: string)
     ],
   });
   const raw = response.choices[0]?.message?.content ?? '';
-  return parseDiscoveryParams(raw, input.jobTitle);
+  return parseDiscoveryParams(raw, input.jobTitle, input.jobDescription);
 }
 
 export async function extractDiscoveryParams(

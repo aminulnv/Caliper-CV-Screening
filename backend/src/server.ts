@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './config/env.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -16,15 +17,6 @@ import { runScheduledRecruiteeJobSync } from './services/recruitee-sync.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
-
-if (!process.env.DATABASE_URL) {
-  console.error('Missing required env: DATABASE_URL');
-  process.exit(1);
-}
-if (!process.env.ENCRYPTION_MASTER_KEY) {
-  console.error('Missing required env: ENCRYPTION_MASTER_KEY');
-  process.exit(1);
-}
 
 const server = Fastify({ logger: true });
 
