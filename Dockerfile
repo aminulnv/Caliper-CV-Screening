@@ -10,6 +10,7 @@ RUN npm install --no-audit --no-fund
 COPY index.html vite.config.ts tsconfig.json tsconfig.app.json postcss.config.js tailwind.config.js ./
 COPY public ./public
 COPY src ./src
+COPY scripts/copy-pdf-worker.mjs ./scripts/copy-pdf-worker.mjs
 
 ARG VITE_GOOGLE_CLIENT_ID
 ARG VITE_API_URL=http://localhost:3001

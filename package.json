@@ -4,10 +4,11 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/copy-pdf-worker.mjs",
     "dev": "vite",
     "dev:backend": "npm run dev --prefix backend",
     "migrate": "npm run migrate --prefix backend",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/copy-pdf-worker.mjs && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

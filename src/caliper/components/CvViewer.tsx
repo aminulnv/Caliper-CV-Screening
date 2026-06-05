@@ -1,7 +1,6 @@
 // @ts-nocheck
 import React from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { Icon } from '@/caliper/ui'
 import { api } from '@/services/api'
 import {
@@ -9,7 +8,8 @@ import {
   findQuoteHighlights,
 } from '@/lib/cv-pdf-highlight'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+// Stable public path — hashed Vite assets fail in prod when nginx serves .mjs as octet-stream.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`
 
 const WIDTH_EPSILON = 16;
 const DEFAULT_MAX_PAGE_WIDTH = 640;
