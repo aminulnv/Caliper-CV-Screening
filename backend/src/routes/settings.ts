@@ -3,6 +3,10 @@ import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { sql } from '../services/db.js';
+import {
+  getPlatformRecruiteeBaseUrl,
+  isPlatformRecruiteeConfigured,
+} from '../config/recruitee.js';
 import { encryptKey } from '../services/key-manager.js';
 import { fetchRecruiteeJobs } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
@@ -23,11 +27,16 @@ const SUPPORTED_MODELS = [
 
 /** Map DB row (camelCase from postgres.js) to API snake_case for the frontend. */
 function formatSettingsResponse(row: Record<string, unknown>, workspaceId: string) {
+  const platformRecruitee = isPlatformRecruiteeConfigured();
+  const recruiteeBaseUrl = platformRecruitee
+    ? getPlatformRecruiteeBaseUrl()
+    : ((row.recruiteeBaseUrl ?? row.recruitee_base_url ?? null) as string | null);
+
   return {
     workspace_id: (row.workspaceId ?? row.workspace_id ?? workspaceId) as string,
     default_model: (row.defaultModel ?? row.default_model ?? 'claude-sonnet-4-6') as string,
     allowed_models: (row.allowedModels ?? row.allowed_models ?? ['claude-sonnet-4-6']) as string[],
-    recruitee_base_url: (row.recruiteeBaseUrl ?? row.recruitee_base_url ?? null) as string | null,
+    recruitee_base_url: recruiteeBaseUrl,
     confidence_threshold: (row.confidenceThreshold ?? row.confidence_threshold ?? 60) as number,
     cv_retention_days: normalizeCvRetentionDays(
       (row.cvRetentionDays ?? row.cv_retention_days) as number,
@@ -37,7 +46,9 @@ function formatSettingsResponse(row: Record<string, unknown>, workspaceId: strin
     ),
     has_anthropic_key: Boolean(row.hasAnthropicKey ?? row.has_anthropic_key),
     has_openai_key: Boolean(row.hasOpenaiKey ?? row.has_openai_key),
-    has_recruitee_key: Boolean(row.hasRecruiteeKey ?? row.has_recruitee_key),
+    has_recruitee_key:
+      platformRecruitee || Boolean(row.hasRecruiteeKey ?? row.has_recruitee_key),
+    recruitee_managed_by_platform: platformRecruitee,
     supported_models: SUPPORTED_MODELS,
   };
 }
@@ -70,17 +81,19 @@ export async function settingsRoutes(app: FastifyInstance) {
       WHERE workspace_id = ${req.workspaceId}
     `;
     if (!row) {
+      const platformRecruitee = isPlatformRecruiteeConfigured();
       return {
         workspace_id: req.workspaceId,
         default_model: 'claude-sonnet-4-6',
         allowed_models: ['claude-sonnet-4-6'],
-        recruitee_base_url: null,
+        recruitee_base_url: platformRecruitee ? getPlatformRecruiteeBaseUrl() : null,
         confidence_threshold: 60,
         cv_retention_days: 90,
         evaluation_retention_days: 730,
         has_anthropic_key: false,
         has_openai_key: false,
-        has_recruitee_key: false,
+        has_recruitee_key: platformRecruitee,
+        recruitee_managed_by_platform: platformRecruitee,
         supported_models: SUPPORTED_MODELS,
       };
     }
@@ -114,6 +127,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       if (allowed_models?.some((m) => !SUPPORTED_MODELS.includes(m))) {
         return reply.status(400).send({ error: 'One or more unsupported models' });
+      }
+
+      if (
+        isPlatformRecruiteeConfigured() &&
+        (recruitee_base_url != null || recruitee_key)
+      ) {
+        return reply.status(400).send({
+          error: 'Recruitee is configured by the platform. Contact your administrator to change it.',
+        });
       }
 
       // Build dynamic SET clause

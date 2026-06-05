@@ -1,5 +1,10 @@
+import {
+  getPlatformRecruiteeApiKey,
+  getPlatformRecruiteeBaseUrl,
+  isPlatformRecruiteeConfigured,
+} from '../config/recruitee.js';
 import { sql } from './db.js';
-import { decryptKey } from './key-manager.js';
+import { decryptKey, encryptKey } from './key-manager.js';
 import type { WorkspaceKeys } from './model-router.js';
 import type { WorkspaceSettings } from '../types/index.js';
 
@@ -57,6 +62,12 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
 export async function getRecruiteeCredentials(
   workspaceId: string,
 ): Promise<{ baseUrl: string; apiKey: string }> {
+  const platformUrl = getPlatformRecruiteeBaseUrl();
+  const platformKey = getPlatformRecruiteeApiKey();
+  if (platformUrl && platformKey) {
+    return { baseUrl: platformUrl, apiKey: platformKey };
+  }
+
   const [row] = await sql`
     SELECT recruitee_base_url, recruitee_key_enc
     FROM workspace_settings
@@ -69,4 +80,23 @@ export async function getRecruiteeCredentials(
     baseUrl: row.recruiteeBaseUrl as string,
     apiKey: decryptKey(row.recruiteeKeyEnc as string),
   };
+}
+
+/** Mirror platform Recruitee env into workspace_settings for UI indicators and legacy queries. */
+export async function ensurePlatformRecruiteeInWorkspace(): Promise<void> {
+  if (!isPlatformRecruiteeConfigured()) return;
+
+  const workspaceId = process.env.DEFAULT_WORKSPACE_ID?.trim();
+  const baseUrl = getPlatformRecruiteeBaseUrl();
+  const apiKey = getPlatformRecruiteeApiKey();
+  if (!workspaceId || !baseUrl || !apiKey) return;
+
+  await sql`
+    INSERT INTO workspace_settings (workspace_id, recruitee_base_url, recruitee_key_enc)
+    VALUES (${workspaceId}, ${baseUrl}, ${encryptKey(apiKey)})
+    ON CONFLICT (workspace_id) DO UPDATE SET
+      recruitee_base_url = EXCLUDED.recruitee_base_url,
+      recruitee_key_enc = EXCLUDED.recruitee_key_enc,
+      updated_at = NOW()
+  `;
 }

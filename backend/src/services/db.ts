@@ -13,6 +13,7 @@ function resolveSsl():
     process.env.DATABASE_SSL === 'true' ||
     databaseUrl.includes('rds.amazonaws.com');
   if (!needsTls && process.env.NODE_ENV !== 'production') return false;
+  if (process.env.DATABASE_TLS_INSECURE === 'true') return { rejectUnauthorized: false };
   return { rejectUnauthorized: process.env.NODE_ENV === 'production' };
 }
 

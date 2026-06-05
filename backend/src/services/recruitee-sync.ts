@@ -1,3 +1,4 @@
+import { isPlatformRecruiteeConfigured } from '../config/recruitee.js';
 import { sql } from './db.js';
 import { writeAuditLogDirect } from '../middleware/audit.js';
 import { fetchRecruiteeJobs } from './recruitee.js';
@@ -25,6 +26,11 @@ function defaultDescription(title: string, dept: string | null): string {
 }
 
 async function workspacesWithRecruitee(): Promise<string[]> {
+  if (isPlatformRecruiteeConfigured()) {
+    const defaultWorkspaceId = process.env.DEFAULT_WORKSPACE_ID?.trim();
+    if (defaultWorkspaceId) return [defaultWorkspaceId];
+  }
+
   const rows = await sql`
     SELECT workspace_id FROM workspace_settings
     WHERE recruitee_base_url IS NOT NULL AND recruitee_key_enc IS NOT NULL

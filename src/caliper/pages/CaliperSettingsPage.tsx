@@ -169,55 +169,82 @@ function SettingsPage() {
 
       <Section
         title="Recruitee integration"
-        sub="Caliper pulls open positions and applicants directly from your Recruitee account."
+        sub={
+          settings?.recruitee_managed_by_platform
+            ? 'Connected to your company Recruitee account. Credentials are managed by the platform team.'
+            : 'Caliper pulls open positions and applicants directly from your Recruitee account.'
+        }
       >
         <div className="col" style={{ gap: 14 }}>
-          <Field
-            label="API base URL"
-            hint="From Recruitee → Settings → Apps and plugins → API tokens (company ID is on that page)."
-          >
-            <input
-              className="inp inp--mono"
-              value={recruiteeUrl}
-              onChange={(e) => setRecruiteeUrl(e.target.value)}
-              placeholder="https://api.recruitee.com/c/your-company-id"
-            />
-          </Field>
-          <Field
-            label="API key"
-            hint={settings?.has_recruitee_key ? 'Key stored · enter a new key to replace it.' : 'No key stored.'}
-          >
-            <input
-              className="inp inp--mono"
-              type="password"
-              placeholder={settings?.has_recruitee_key ? '••••••••••••••••••••••••••' : 'rec_live_…'}
-              value={recruiteeKey}
-              onChange={(e) => setRecruiteeKey(e.target.value)}
-              autoComplete="off"
-            />
-          </Field>
-          <div className="row" style={{ gap: 10, marginTop: 2 }}>
-            <Btn
-              variant="primary"
-              disabled={saving}
-              onClick={() => {
-                const body = {};
-                if (recruiteeUrl) body.recruitee_base_url = recruiteeUrl;
-                if (recruiteeKey.trim()) body.recruitee_key = recruiteeKey;
-                if (Object.keys(body).length) { save(body); setRecruiteeKey(''); }
-              }}
-            >
-              Save
-            </Btn>
-            <Btn icon="check" variant="ghost" disabled={testingRecruitee} onClick={testRecruitee}>
-              {testingRecruitee ? 'Testing…' : 'Test connection'}
-            </Btn>
-            {recruiteeTestResult && (
-              <Badge tone={recruiteeTestResult.ok ? 'ok' : 'warn'} dot>
-                {recruiteeTestResult.text}
-              </Badge>
-            )}
-          </div>
+          {settings?.recruitee_managed_by_platform ? (
+            <>
+              <div className="callout" style={{ marginBottom: 0 }}>
+                <Badge tone="ok" dot>Platform connected</Badge>
+                <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+                  API endpoint: <code>{settings.recruitee_base_url ?? '—'}</code>
+                </div>
+              </div>
+              <div className="row" style={{ gap: 10, marginTop: 2 }}>
+                <Btn icon="check" variant="ghost" disabled={testingRecruitee} onClick={testRecruitee}>
+                  {testingRecruitee ? 'Testing…' : 'Test connection'}
+                </Btn>
+                {recruiteeTestResult && (
+                  <Badge tone={recruiteeTestResult.ok ? 'ok' : 'warn'} dot>
+                    {recruiteeTestResult.text}
+                  </Badge>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <Field
+                label="API base URL"
+                hint="From Recruitee → Settings → Apps and plugins → API tokens (company ID is on that page)."
+              >
+                <input
+                  className="inp inp--mono"
+                  value={recruiteeUrl}
+                  onChange={(e) => setRecruiteeUrl(e.target.value)}
+                  placeholder="https://api.recruitee.com/c/your-company-id"
+                />
+              </Field>
+              <Field
+                label="API key"
+                hint={settings?.has_recruitee_key ? 'Key stored · enter a new key to replace it.' : 'No key stored.'}
+              >
+                <input
+                  className="inp inp--mono"
+                  type="password"
+                  placeholder={settings?.has_recruitee_key ? '••••••••••••••••••••••••••' : 'rec_live_…'}
+                  value={recruiteeKey}
+                  onChange={(e) => setRecruiteeKey(e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
+              <div className="row" style={{ gap: 10, marginTop: 2 }}>
+                <Btn
+                  variant="primary"
+                  disabled={saving}
+                  onClick={() => {
+                    const body = {};
+                    if (recruiteeUrl) body.recruitee_base_url = recruiteeUrl;
+                    if (recruiteeKey.trim()) body.recruitee_key = recruiteeKey;
+                    if (Object.keys(body).length) { save(body); setRecruiteeKey(''); }
+                  }}
+                >
+                  Save
+                </Btn>
+                <Btn icon="check" variant="ghost" disabled={testingRecruitee} onClick={testRecruitee}>
+                  {testingRecruitee ? 'Testing…' : 'Test connection'}
+                </Btn>
+                {recruiteeTestResult && (
+                  <Badge tone={recruiteeTestResult.ok ? 'ok' : 'warn'} dot>
+                    {recruiteeTestResult.text}
+                  </Badge>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </Section>
 

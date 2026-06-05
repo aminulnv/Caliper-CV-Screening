@@ -401,6 +401,7 @@ export interface WorkspaceSettings {
   has_anthropic_key: boolean;
   has_openai_key: boolean;
   has_recruitee_key: boolean;
+  recruitee_managed_by_platform?: boolean;
   supported_models: string[];
 }
 

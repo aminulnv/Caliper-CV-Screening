@@ -14,6 +14,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { relatedProfilesRoutes } from './routes/related-profiles.js';
 import { runRetentionCleanup } from './services/retention.js';
 import { runScheduledRecruiteeJobSync } from './services/recruitee-sync.js';
+import { ensurePlatformRecruiteeInWorkspace } from './services/workspace.js';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:5173';
@@ -83,6 +84,7 @@ function scheduleRecruiteeJobSync(): void {
 }
 
 try {
+  await ensurePlatformRecruiteeInWorkspace();
   await server.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`Caliper backend running on port ${PORT}`);
   if (RETENTION_ENABLED) {
