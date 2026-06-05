@@ -246,7 +246,12 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
         const sel = rowSel;
         cvSources = rows
           .filter((r, i) => sel[i] && r.cv_url)
-          .map((r) => ({ type: 'recruitee', applicant_id: r.id, cv_url: r.cv_url, name: r.name }));
+          .map((r) => ({
+            type: 'recruitee',
+            applicant_id: r.id,
+            cv_url: r.cv_url.startsWith('http') ? r.cv_url : `recruitee-applicant:${r.id}`,
+            name: r.name,
+          }));
       }
       if (runCancelRef.current) { setRunProcessing(null); return; }
       setRunProcessing({ label: 'Starting screening run…', progress: 85 });
@@ -426,7 +431,7 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
                   {recruiteeLoading ? (
                     <div className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>Loading applicants from Recruitee…</div>
                   ) : rows.length === 0 ? (
-                    <div className="callout">No applicants with CVs found in Recruitee for this position.</div>
+                    <div className="callout">No applicants found in Recruitee for this position.</div>
                   ) : (
                     <>
                       <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -2372,18 +2377,14 @@ function JobCandidatesPane({
                     <td className="muted">{a.location || '—'}</td>
                     <td className="muted" style={{ fontSize: 12 }}>{a.status || '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      {a.cv_url ? (
-                        <Btn
-                          size="sm"
-                          variant="ghost"
-                          icon="eye"
-                          onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
-                        >
-                          View
-                        </Btn>
-                      ) : (
-                        <Badge tone="warn">No CV</Badge>
-                      )}
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        icon="eye"
+                        onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
+                      >
+                        View
+                      </Btn>
                     </td>
                   </tr>
                 ))}

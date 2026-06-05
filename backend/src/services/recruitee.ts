@@ -7,6 +7,9 @@ const ATS_HOST = 'api.recruitee.com';
 const APPLICANTS_PAGE_SIZE = 500;
 /** Recruitee list/search caps; avoid loading unbounded rows into the UI. */
 const APPLICANTS_MAX_FETCH = 2_000;
+/** Detail fetches are expensive — enrich location + CV for the first batch only. */
+const APPLICANTS_DETAIL_ENRICH_MAX = 300;
+const APPLICANTS_DETAIL_CONCURRENCY = 10;
 
 /** Sentinel cv_url — real PDF is fetched by candidate id during screening. */
 export const RECRUITEE_APPLICANT_CV_SENTINEL = 'recruitee-applicant';
@@ -271,20 +274,23 @@ async function fetchOfferStageMap(
 }
 
 async function fetchLocationMap(
-  apiRoot: string,
+  apiRoots: string[],
   apiKey: string,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  try {
-    const data = (await recruiteeGet(apiRoot, apiKey, '/locations')) as {
-      locations?: LocationRow[];
-    };
-    for (const loc of data.locations ?? []) {
-      if (loc.id == null) continue;
-      map.set(String(loc.id), formatRecruiteeLocation(loc));
+  for (const apiRoot of apiRoots) {
+    try {
+      const data = (await recruiteeGet(apiRoot, apiKey, '/locations')) as {
+        locations?: LocationRow[];
+      };
+      for (const loc of data.locations ?? []) {
+        if (loc.id == null) continue;
+        map.set(String(loc.id), formatRecruiteeLocation(loc));
+      }
+      if (map.size > 0) break;
+    } catch {
+      // Try the next API root (slug vs numeric company id).
     }
-  } catch {
-    // Location labels are optional.
   }
   return map;
 }
@@ -298,8 +304,66 @@ function formatRecruiteeLocation(loc: LocationRow): string {
 
 function pickAddressFromFields(fields?: CandidateFieldRow[]): string | null {
   const addressField = fields?.find((f) => f.kind === 'address');
-  const text = addressField?.values?.find((v) => v.text?.trim())?.text?.trim();
-  return text || null;
+  for (const value of addressField?.values ?? []) {
+    const text = value.text?.trim();
+    if (text) return text;
+    const cityCountry = [value.city, value.country_code].filter(Boolean).join(', ');
+    if (cityCountry) return cityCountry;
+  }
+  return null;
+}
+
+function resolveCandidateLocation(
+  candidate: CandidateRow,
+  offerId: string,
+  locationById: Map<string, string>,
+): string | null {
+  const placement = placementForOffer(candidate, offerId);
+  let location: string | null = candidate.city?.trim() ?? null;
+  const locationId = placement?.location_ids?.[0];
+  if (locationId != null) {
+    location = locationById.get(String(locationId)) ?? location;
+  }
+  if (!location) {
+    location = pickAddressFromFields(candidate.fields);
+  }
+  return location || null;
+}
+
+async function enrichRecruiteeApplicant(
+  candidateRoot: string,
+  apiKey: string,
+  candidate: CandidateRow,
+  offerId: string,
+  stageById: Map<string, string>,
+  locationById: Map<string, string>,
+): Promise<RecruiteeApplicant> {
+  const fallback = mapListCandidateToApplicant(candidate, offerId, stageById, locationById);
+  try {
+    const data = (await recruiteeGet(candidateRoot, apiKey, `/candidates/${candidate.id}`)) as {
+      candidate?: CandidateRow;
+    };
+    const detail: CandidateRow = { ...candidate, ...(data.candidate ?? {}) };
+    const placement = placementForOffer(detail, offerId);
+    const stageId = placement?.stage_id;
+    return {
+      id: String(detail.id),
+      name: detail.name!,
+      location: resolveCandidateLocation(detail, offerId, locationById),
+      cv_url: resolveCvUrlFromRow(detail),
+      status:
+        placement?.stage_name
+        ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/** CV source for screening runs when list/detail omits a direct URL. */
+export function recruiteeApplicantCvSource(applicant: Pick<RecruiteeApplicant, 'id' | 'cv_url'>): string {
+  if (applicant.cv_url?.startsWith('http')) return applicant.cv_url;
+  return `${RECRUITEE_APPLICANT_CV_SENTINEL}:${applicant.id}`;
 }
 
 function resolveCvUrlFromRow(candidate: CandidateRow): string | null {
@@ -348,20 +412,12 @@ function mapListCandidateToApplicant(
 ): RecruiteeApplicant {
   const placement = placementForOffer(candidate, offerId);
   const stageId = placement?.stage_id;
-  let location: string | null = candidate.city?.trim() ?? null;
-  const locationId = placement?.location_ids?.[0];
-  if (locationId != null) {
-    location = locationById.get(String(locationId)) ?? location;
-  }
-  if (!location) {
-    location = pickAddressFromFields(candidate.fields) ?? location;
-  }
 
   return {
     id: String(candidate.id),
     name: candidate.name!,
-    location,
-    cv_url: `${RECRUITEE_APPLICANT_CV_SENTINEL}:${candidate.id}`,
+    location: resolveCandidateLocation(candidate, offerId, locationById),
+    cv_url: null,
     status:
       placement?.stage_name
       ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
@@ -379,7 +435,7 @@ export async function fetchRecruiteeApplicants(
 
   const [stageById, locationById] = await Promise.all([
     fetchOfferStageMap(slugApiRoot, apiKey, jobId),
-    fetchLocationMap(slugApiRoot, apiKey),
+    fetchLocationMap([slugApiRoot, candidateRoot], apiKey),
   ]);
 
   const candidates: CandidateRow[] = [];
@@ -401,9 +457,25 @@ export async function fetchRecruiteeApplicants(
     offset += page.length;
   }
 
-  return candidates
-    .filter((c) => c.id && c.name)
-    .map((c) => mapListCandidateToApplicant(c, jobId, stageById, locationById));
+  const filtered = candidates.filter((c) => c.id && c.name);
+  if (filtered.length === 0) return [];
+
+  const enrichCount = Math.min(filtered.length, APPLICANTS_DETAIL_ENRICH_MAX);
+  const toEnrich = filtered.slice(0, enrichCount);
+  const remainder = filtered.slice(enrichCount);
+
+  const enriched = await mapWithConcurrency(
+    toEnrich,
+    APPLICANTS_DETAIL_CONCURRENCY,
+    async (candidate) =>
+      enrichRecruiteeApplicant(candidateRoot, apiKey, candidate, jobId, stageById, locationById),
+  );
+
+  const rest = remainder.map((candidate) =>
+    mapListCandidateToApplicant(candidate, jobId, stageById, locationById),
+  );
+
+  return [...enriched, ...rest];
 }
 
 export async function fetchRecruiteeCandidateCv(

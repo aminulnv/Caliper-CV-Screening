@@ -12,7 +12,7 @@ const memory = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<RecruiteeApplicant[]>>();
 
 function storageKey(sourceRef: string): string {
-  return `caliper:applicants:v1:${sourceRef}`;
+  return `caliper:applicants:v3:${sourceRef}`;
 }
 
 function readStorage(sourceRef: string): CacheEntry | null {
