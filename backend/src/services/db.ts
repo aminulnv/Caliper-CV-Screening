@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import postgres from 'postgres';
+import { resolveDatabaseUrl } from '../config/database-url.js';
 
-if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+const databaseUrl = resolveDatabaseUrl();
 
 /** RDS rejects non-TLS connections even from local dev (pg_hba "no encryption"). */
 function resolveSsl():
@@ -10,12 +11,12 @@ function resolveSsl():
   if (process.env.DATABASE_SSL === 'false') return false;
   const needsTls =
     process.env.DATABASE_SSL === 'true' ||
-    process.env.DATABASE_URL!.includes('rds.amazonaws.com');
+    databaseUrl.includes('rds.amazonaws.com');
   if (!needsTls && process.env.NODE_ENV !== 'production') return false;
   return { rejectUnauthorized: process.env.NODE_ENV === 'production' };
 }
 
-export const sql = postgres(process.env.DATABASE_URL, {
+export const sql = postgres(databaseUrl, {
   ssl: resolveSsl(),
   max: 20,
   idle_timeout: 30,

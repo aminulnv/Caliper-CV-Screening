@@ -1,5 +1,6 @@
+import { resolveDatabaseUrl } from './database-url.js';
+
 const REQUIRED = [
-  'DATABASE_URL',
   'ENCRYPTION_MASTER_KEY',
   'GOOGLE_CLIENT_ID',
   'S3_BUCKET',
@@ -10,7 +11,31 @@ function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
+function hasDatabaseConfig(): boolean {
+  if (process.env.DATABASE_URL?.trim()) return true;
+  return Boolean(
+    process.env.DB_HOST?.trim() &&
+      process.env.DB_USERNAME?.trim() &&
+      process.env.DB_PASSWORD?.trim() &&
+      process.env.DB_NAME?.trim(),
+  );
+}
+
 export function validateEnv(): void {
+  if (!hasDatabaseConfig()) {
+    console.error(
+      'Missing database config: set DATABASE_URL or DB_HOST, DB_USERNAME, DB_PASSWORD, and DB_NAME',
+    );
+    process.exit(1);
+  }
+
+  try {
+    resolveDatabaseUrl();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   const missing = REQUIRED.filter((key) => !process.env[key]?.trim());
   if (missing.length > 0) {
     console.error(`Missing required environment variables: ${missing.join(', ')}`);

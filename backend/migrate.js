@@ -8,21 +8,38 @@ config();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
-  console.error('Missing DATABASE_URL. Set it in backend/.env before running migrations.');
-  process.exit(1);
+function resolveDatabaseUrl() {
+  const direct = process.env.DATABASE_URL?.trim();
+  if (direct) return direct;
+
+  const host = process.env.DB_HOST?.trim();
+  const port = process.env.DB_PORT?.trim() || '5432';
+  const user = process.env.DB_USERNAME?.trim();
+  const password = process.env.DB_PASSWORD ?? '';
+  const database = process.env.DB_NAME?.trim();
+
+  if (!host || !user || !database || !password.trim()) {
+    console.error(
+      'Missing database config. Set DATABASE_URL or DB_HOST, DB_USERNAME, DB_PASSWORD, and DB_NAME in backend/.env.',
+    );
+    process.exit(1);
+  }
+
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
 }
+
+const databaseUrl = resolveDatabaseUrl();
 
 function resolveSsl() {
   if (process.env.DATABASE_SSL === 'false') return false;
   const needsTls =
     process.env.DATABASE_SSL === 'true' ||
-    process.env.DATABASE_URL.includes('rds.amazonaws.com');
+    databaseUrl.includes('rds.amazonaws.com');
   if (!needsTls && process.env.NODE_ENV !== 'production') return false;
   return { rejectUnauthorized: process.env.NODE_ENV === 'production' };
 }
 
-const sql = postgres(process.env.DATABASE_URL, {
+const sql = postgres(databaseUrl, {
   ssl: resolveSsl(),
   max: 1,
 });
