@@ -1,53 +1,53 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
-import { fetchAuthSession, fetchUserAttributes } from 'aws-amplify/auth'
-import { signOutUser } from '@/lib/auth'
-
-type AuthUser = { email: string; name: string; sub: string }
+import { googleLogout } from '@react-oauth/google'
+import {
+  getStoredIdToken,
+  parseUserFromToken,
+  setIdToken,
+  clearIdToken,
+  signOutUser,
+  type AuthTokenUser,
+} from '@/lib/auth'
 
 type AuthContextValue = {
-  user: AuthUser | null
+  user: AuthTokenUser | null
   loading: boolean
   displayName: string
+  signIn: (idToken: string) => void
   signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function loadUserFromStorage(): AuthTokenUser | null {
+  const token = getStoredIdToken()
+  if (!token) return null
+  return parseUserFromToken(token)
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null)
+  const [user, setUser] = useState<AuthTokenUser | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchAuthSession()
-      .then(async (session) => {
-        if (!session.tokens?.idToken) { setLoading(false); return; }
-        try {
-          const attrs = await fetchUserAttributes()
-          setUser({
-            sub: attrs.sub ?? '',
-            email: attrs.email ?? '',
-            name: attrs.name ?? attrs.email ?? '',
-          })
-        } catch {
-          const payload = session.tokens.idToken.payload as Record<string, unknown>
-          setUser({
-            sub: (payload.sub as string) ?? '',
-            email: (payload.email as string) ?? '',
-            name: (payload.name as string) ?? (payload.email as string) ?? '',
-          })
-        }
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    setUser(loadUserFromStorage())
+    setLoading(false)
+  }, [])
+
+  const signIn = useCallback((idToken: string) => {
+    setIdToken(idToken)
+    setUser(parseUserFromToken(idToken))
   }, [])
 
   const signOut = useCallback(async () => {
     await signOutUser()
+    googleLogout()
+    clearIdToken()
     setUser(null)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, loading, displayName: user?.name ?? '', signOut }}>
+    <AuthContext.Provider value={{ user, loading, displayName: user?.name ?? '', signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   )

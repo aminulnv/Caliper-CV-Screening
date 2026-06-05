@@ -14,7 +14,6 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Docker frontend runs on :8080 — must match Cognito callback URL in AWS
       CORS_ORIGIN: http://localhost:8080
     healthcheck:
       test:
@@ -35,9 +34,7 @@ services:
       dockerfile: Dockerfile
       args:
         NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
-        VITE_COGNITO_USER_POOL_ID: ${VITE_COGNITO_USER_POOL_ID}
-        VITE_COGNITO_CLIENT_ID: ${VITE_COGNITO_CLIENT_ID}
-        VITE_COGNITO_DOMAIN: ${VITE_COGNITO_DOMAIN}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
     ports:
       - "8080:80"

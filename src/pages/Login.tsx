@@ -1,5 +1,6 @@
 import { useState, useCallback, type CSSProperties } from 'react'
-import { signInWithGoogle } from '@/lib/auth'
+import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
+import { useAuth } from '@/contexts/AuthContext'
 import { assets, getBackgroundStyle } from '@/config/assets'
 
 const AUTH_PANEL_CSS = `.auth-card input::placeholder { color: var(--subtle); }
@@ -18,18 +19,26 @@ function GoogleIcon() {
 }
 
 export default function Login() {
+  const { signIn } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const handleGoogleSignIn = useCallback(async () => {
-    setError(null)
-    setSubmitting(true)
-    try {
-      await signInWithGoogle()
-    } catch (err) {
-      setSubmitting(false)
-      setError(err instanceof Error ? err.message : 'Could not start sign-in. Please try again.')
-    }
+  const handleGoogleSuccess = useCallback(
+    (response: CredentialResponse) => {
+      setError(null)
+      if (!response.credential) {
+        setSubmitting(false)
+        setError('Google did not return a sign-in token. Please try again.')
+        return
+      }
+      signIn(response.credential)
+    },
+    [signIn],
+  )
+
+  const handleGoogleError = useCallback(() => {
+    setSubmitting(false)
+    setError('Could not sign in with Google. Please try again.')
   }, [])
 
   return (
@@ -53,19 +62,35 @@ export default function Login() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={submitting}
-            style={{
-              ...styles.googleButton,
-              opacity: submitting ? 0.7 : 1,
-              cursor: submitting ? 'wait' : 'pointer',
-            }}
-          >
-            <GoogleIcon />
-            {submitting ? 'Redirecting to Google…' : 'Sign in with Google'}
-          </button>
+          <div style={styles.googleButtonWrap}>
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-hidden
+              style={{
+                ...styles.googleButton,
+                opacity: submitting ? 0.7 : 1,
+                pointerEvents: 'none',
+              }}
+            >
+              <GoogleIcon />
+              {submitting ? 'Signing in…' : 'Sign in with Google'}
+            </button>
+            <div
+              style={styles.googleLoginOverlay}
+              onPointerDown={() => setSubmitting(true)}
+            >
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
+                useOneTap={false}
+                theme="outline"
+                size="large"
+                text="signin_with"
+                width="320"
+              />
+            </div>
+          </div>
 
           <p style={styles.hint}>Use your @nextventures.io or other approved company email.</p>
         </div>
@@ -166,6 +191,11 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 'var(--radius, 8px)',
     fontSize: '0.8125rem',
   },
+  googleButtonWrap: {
+    position: 'relative',
+    width: '100%',
+    minHeight: '44px',
+  },
   googleButton: {
     display: 'flex',
     alignItems: 'center',
@@ -180,6 +210,13 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '0.9375rem',
     fontWeight: 600,
     boxShadow: 'var(--shadow-1)',
+  },
+  googleLoginOverlay: {
+    position: 'absolute',
+    inset: 0,
+    opacity: 0.01,
+    overflow: 'hidden',
+    cursor: 'pointer',
   },
   hint: {
     margin: '1.25rem 0 0',

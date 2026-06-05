@@ -12,9 +12,8 @@ declare module 'fastify' {
   }
 }
 
-const REGION = process.env.AWS_REGION ?? 'ap-south-1';
-const USER_POOL_ID = process.env.COGNITO_USER_POOL_ID!;
-const ISSUER = `https://cognito-idp.${REGION}.amazonaws.com/${USER_POOL_ID}`;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
+const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 
 const DEFAULT_USER_ROLE: UserRole = 'recruiter';
 
@@ -23,34 +22,35 @@ const ALLOWED_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'nextventures.io,w
   .map((d) => d.trim().toLowerCase())
   .filter(Boolean);
 
-// Cached JWKS fetcher — jose handles cache + rotation automatically
-const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks.json`));
-
-function looksLikeEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-/** Cognito ID tokens may omit `email`; federated usernames are often not emails. */
-function resolveEmailFromPayload(payload: Record<string, unknown>): string | undefined {
-  const candidates = [
-    payload.email,
-    payload['custom:email'],
-    payload.preferred_username,
-    payload['cognito:username'],
-  ];
-
-  for (const value of candidates) {
-    if (typeof value === 'string' && looksLikeEmail(value)) {
-      return value.toLowerCase();
-    }
-  }
-
-  return undefined;
-}
+const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 
 function isAllowedEmail(email: string): boolean {
   const domain = email.split('@')[1]?.toLowerCase();
   return ALLOWED_DOMAINS.includes(domain ?? '');
+}
+
+async function migrateUserSub(oldSub: string, newSub: string, email: string, name: string): Promise<void> {
+  if (oldSub === newSub) return;
+
+  const tempEmail = `${email}.__sub_migrate__`;
+
+  await sql.begin(async (tx) => {
+    // New `sub` must exist in `users` before FKs can point at it; email is unique so use a temp address first.
+    await tx`
+      INSERT INTO users (sub, email, name)
+      VALUES (${newSub}, ${tempEmail}, ${name})
+      ON CONFLICT (sub) DO UPDATE SET name = EXCLUDED.name, last_seen_at = NOW()
+    `;
+    await tx`UPDATE user_roles SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
+    await tx`UPDATE job_profiles SET created_by = ${newSub} WHERE created_by = ${oldSub}`;
+    await tx`UPDATE screening_runs SET owner_id = ${newSub} WHERE owner_id = ${oldSub}`;
+    await tx`UPDATE candidate_evaluations SET overridden_by = ${newSub} WHERE overridden_by = ${oldSub}`;
+    await tx`UPDATE audit_log SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
+    await tx`DELETE FROM users WHERE sub = ${oldSub}`;
+    await tx`
+      UPDATE users SET email = ${email}, name = ${name}, last_seen_at = NOW() WHERE sub = ${newSub}
+    `;
+  });
 }
 
 export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -64,7 +64,10 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
 
   let payload: Record<string, unknown>;
   try {
-    const result = await jwtVerify(token, JWKS, { issuer: ISSUER });
+    const result = await jwtVerify(token, JWKS, {
+      issuer: GOOGLE_ISSUERS,
+      audience: GOOGLE_CLIENT_ID,
+    });
     payload = result.payload as Record<string, unknown>;
   } catch (err) {
     console.log('[auth] JWT verify failed:', err);
@@ -73,12 +76,12 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
   }
 
   const sub = payload.sub as string;
-  const email = resolveEmailFromPayload(payload);
+  const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : undefined;
+  const emailVerified = payload.email_verified;
 
-  if (!sub || !email) {
+  if (!sub || !email || emailVerified !== true) {
     reply.status(401).send({
-      error:
-        'Sign-in token is missing a verified email. Sign out, sign in again with Google, or contact an admin to fix Cognito email mapping.',
+      error: 'Sign-in token is missing a verified email. Sign out and sign in again with Google.',
     });
     return;
   }
@@ -91,12 +94,23 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
     return;
   }
 
+  const name =
+    (typeof payload.name === 'string' && payload.name) ||
+    (typeof payload.given_name === 'string' && payload.given_name) ||
+    email;
+
   try {
-    await sql`
-      INSERT INTO users (sub, email, name)
-      VALUES (${sub}, ${email}, ${(payload.name as string) ?? email})
-      ON CONFLICT (sub) DO UPDATE SET email = EXCLUDED.email, last_seen_at = NOW()
-    `;
+    const [existingByEmail] = await sql`SELECT sub FROM users WHERE email = ${email} LIMIT 1`;
+
+    if (existingByEmail && existingByEmail.sub !== sub) {
+      await migrateUserSub(existingByEmail.sub as string, sub, email, name);
+    } else {
+      await sql`
+        INSERT INTO users (sub, email, name)
+        VALUES (${sub}, ${email}, ${name})
+        ON CONFLICT (sub) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, last_seen_at = NOW()
+      `;
+    }
 
     let [roleRow] = await sql`
       SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1

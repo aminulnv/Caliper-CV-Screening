@@ -1,6 +1,6 @@
 -- RDS-compatible schema (no Supabase auth.users dependency)
 
--- Users table (populated by Cognito JWT middleware on first login)
+-- Users table (populated by Google OAuth JWT middleware on first login)
 create table if not exists users (
   sub text primary key,
   email text not null unique,

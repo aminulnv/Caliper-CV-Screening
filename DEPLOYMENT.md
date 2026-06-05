@@ -6,10 +6,10 @@ Container images and runtime notes for **Caliper CV Screening** (React/Vite fron
 
 | Service | Image | Port | Role |
 |---------|-------|------|------|
-| **frontend** | Root `Dockerfile` (nginx) | 80 | Static SPA; Cognito/Google OAuth in browser |
+| **frontend** | Root `Dockerfile` (nginx) | 80 | Static SPA; Google OAuth in browser |
 | **backend** | `backend/Dockerfile` | 3001 | REST API `/api/v1`, health at `/health` |
 
-External dependencies (not in Compose): **PostgreSQL (RDS)**, **S3** for CV PDFs, **Cognito** (Google federated sign-in today), optional **Anthropic/OpenAI/Recruitee/Exa** API keys.
+External dependencies (not in Compose): **PostgreSQL (RDS)**, **S3** for CV PDFs, **Google OAuth client**, optional **Anthropic/OpenAI/Recruitee/Exa** API keys.
 
 ## Prerequisites
 
@@ -17,6 +17,7 @@ External dependencies (not in Compose): **PostgreSQL (RDS)**, **S3** for CV PDFs
 - Filled env files: `.env` (frontend build) and `backend/.env` (runtime)
 - RDS reachable from the host/network where the backend container runs
 - IAM or access keys for S3 (if not using instance/task role)
+- Google OAuth 2.0 Web client with authorized origins for each frontend URL
 
 Copy examples:
 
@@ -31,12 +32,10 @@ cp backend/.env.example backend/.env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `VITE_COGNITO_USER_POOL_ID` | Yes | Cognito user pool ID |
-| `VITE_COGNITO_CLIENT_ID` | Yes | Cognito app client ID |
-| `VITE_COGNITO_DOMAIN` | Yes | Hosted UI domain (no `https://`) |
+| `VITE_GOOGLE_CLIENT_ID` | Yes | Google OAuth Web client ID |
 | `VITE_API_URL` | Yes (prod) | Public API base URL, e.g. `https://api.example.com` |
 
-These are baked into the static bundle at **build** time. Rebuild the frontend image when the API URL or Cognito settings change.
+These are baked into the static bundle at **build** time. Rebuild the frontend image when the API URL or Google client ID changes.
 
 ### Backend (runtime — `backend/.env` or orchestrator secrets)
 
@@ -44,7 +43,7 @@ These are baked into the static bundle at **build** time. Rebuild the frontend i
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | Postgres connection string |
 | `ENCRYPTION_MASTER_KEY` | Yes | 64-char hex (32 bytes) |
-| `COGNITO_USER_POOL_ID` | Yes | Must match frontend pool |
+| `GOOGLE_CLIENT_ID` | Yes | Same as `VITE_GOOGLE_CLIENT_ID` (verifies ID token audience) |
 | `S3_BUCKET` | Yes | CV storage bucket |
 | `DEFAULT_WORKSPACE_ID` | Yes | UUID for new SSO users |
 | `CORS_ORIGIN` | Yes (prod) | Frontend origin, e.g. `https://caliper.example.com` |
@@ -70,11 +69,9 @@ From the repository root:
 # Backend
 docker build -t caliper-backend:latest ./backend
 
-# Frontend (pass Cognito + API URL for production)
+# Frontend (pass Google client ID + API URL for production)
 docker build -t caliper-frontend:latest \
-  --build-arg VITE_COGNITO_USER_POOL_ID=ap-south-1_XXXX \
-  --build-arg VITE_COGNITO_CLIENT_ID=your-client-id \
-  --build-arg VITE_COGNITO_DOMAIN=your-prefix.auth.ap-south-1.amazoncognito.com \
+  --build-arg VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com \
   --build-arg VITE_API_URL=https://api.your-domain.com \
   -f Dockerfile .
 ```
@@ -90,11 +87,11 @@ docker compose up --build
 
 3. Open **http://localhost:8080** (frontend). API: **http://localhost:3001/health**.
 
-**Sign-in on :8080:** In AWS Cognito → App client → Hosted UI, add callback and sign-out URLs:
+**Sign-in on :8080:** In Google Cloud Console → OAuth client → Authorized JavaScript origins, add:
 
-- `http://localhost:8080/`
+- `http://localhost:8080`
 
-(Dev with Vite on :5173 uses `http://localhost:5173/` — both can be listed.)
+(Dev with Vite on :5173 uses `http://localhost:5173` — list both.)
 
 ### Database migrations
 
@@ -117,7 +114,7 @@ Typical flow for your team’s GitLab + AWS setup:
 1. **Build** — CI job builds and pushes `caliper-backend` and `caliper-frontend` to your container registry.
 2. **Migrate** — One-off job or init container runs `node migrate.js` against RDS.
 3. **Deploy** — ECS/Kubernetes/EC2 runs backend with secrets from Parameter Store/Secrets Manager; frontend behind ALB/CDN on port 80.
-4. **Cognito** — Add production callback URLs: `https://<frontend-origin>/`.
+4. **Google OAuth** — Add production frontend origin to authorized JavaScript origins.
 5. **CORS** — Set `CORS_ORIGIN` to the production frontend URL.
 
 Do not commit `.env` files or tokens. Use GitLab CI variables for build args and runtime secrets.
@@ -130,10 +127,6 @@ Do not commit `.env` files or tokens. Use GitLab CI variables for build args and
 | `GET /` on frontend container | nginx serving `index.html` |
 
 Images include Docker `HEALTHCHECK` instructions for orchestrators that honor them.
-
-## Auth note (team policy)
-
-Sign-in is **Google** for users. The app currently uses **Cognito** as the OAuth broker; removing Cognito is a separate code change. Deployment docs and env vars still reference Cognito until that migration is done.
 
 ## Troubleshooting
 
@@ -155,6 +148,6 @@ Do not use `NPM_STRICT_SSL=false` in production CI unless your platform team app
 |-------|--------|
 | Backend exits on start | Missing/invalid env — see stderr from `validateEnv` |
 | Frontend blank / API errors | `VITE_API_URL` at build time must match reachable API URL |
-| 401 after login | `COGNITO_USER_POOL_ID` mismatch; email domain not in `ALLOWED_EMAIL_DOMAINS` |
+| 401 after login | `GOOGLE_CLIENT_ID` mismatch; email domain not in `ALLOWED_EMAIL_DOMAINS`; token expired |
 | Migration fails | `DATABASE_URL`, RDS security group, TLS (`DATABASE_SSL`) |
 | CORS errors in browser | `CORS_ORIGIN` must exactly match frontend URL |

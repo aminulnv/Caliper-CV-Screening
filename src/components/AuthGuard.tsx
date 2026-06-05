@@ -1,35 +1,20 @@
-import React from 'react';
-import { fetchAuthSession } from 'aws-amplify/auth';
-import Login from '@/pages/Login';
-
-type Status = 'checking' | 'authenticated' | 'unauthenticated';
+import { useAuth } from '@/contexts/AuthContext'
+import Login from '@/pages/Login'
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = React.useState<Status>('checking');
+  const { user, loading } = useAuth()
 
-  React.useEffect(() => {
-    fetchAuthSession()
-      .then((session) => {
-        if (session.tokens?.idToken) {
-          setStatus('authenticated');
-        } else {
-          setStatus('unauthenticated');
-        }
-      })
-      .catch(() => setStatus('unauthenticated'));
-  }, []);
-
-  if (status === 'checking') {
+  if (loading) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', height: '100vh', fontSize: 14, color: '#6b7280' }}>
         Loading…
       </div>
-    );
+    )
   }
 
-  if (status === 'unauthenticated') {
-    return <Login />;
+  if (!user) {
+    return <Login />
   }
 
-  return <>{children}</>;
+  return <>{children}</>
 }

@@ -1,19 +1,19 @@
 # Caliper CV Screening
 
-AI-assisted CV screening for recruiters: upload or pull CVs, score candidates against job criteria, and discover related LinkedIn profiles. The app is a **React + Vite** frontend with a **Fastify** backend on **AWS** (Cognito, RDS Postgres, S3).
+AI-assisted CV screening for recruiters: upload or pull CVs, score candidates against job criteria, and discover related LinkedIn profiles. The app is a **React + Vite** frontend with a **Fastify** backend on **AWS** (Google OAuth, RDS Postgres, S3).
 
 ## Architecture
 
 | Layer | Stack |
 |-------|--------|
-| Frontend | React 18, TypeScript, Vite, AWS Amplify (Cognito OAuth) |
-| Backend | Fastify on Node 18+, JWT validation via Cognito JWKS |
+| Frontend | React 18, TypeScript, Vite, Google OAuth (`@react-oauth/google`) |
+| Backend | Fastify on Node 18+, JWT validation via Google JWKS |
 | Database | PostgreSQL on AWS RDS |
 | Storage | S3 for uploaded CV PDFs (`{workspaceId}/…` keys) |
-| Auth | Amazon Cognito User Pool (Google SSO + domain allowlist) |
+| Auth | Google OAuth (company email domain allowlist) |
 
 ```
-Browser (5173)  →  Cognito (sign-in)  →  ID token
+Browser (5173)  →  Google (sign-in)  →  ID token
        ↓
 Fastify API (3001)  →  RDS Postgres
                    →  S3 (CV files)
@@ -26,13 +26,13 @@ Fastify API (3001)  →  RDS Postgres
 ```
 src/                    # Frontend (Vite)
   caliper/              # Product UI: runs, jobs, profiles, settings
-  lib/auth.ts           # Amplify + Cognito config
+  lib/auth.ts           # Google ID token storage
   contexts/AuthContext.tsx
 backend/
   src/
     server.ts           # Fastify entry
     config/env.ts       # Required env validation at startup
-    middleware/auth.ts    # Cognito JWT + workspace provisioning
+    middleware/auth.ts    # Google JWT + workspace provisioning
     routes/             # REST API (/api/v1/…)
   migrate.js            # RDS schema migrations
   migrate-*.sql
@@ -41,7 +41,8 @@ backend/
 ## Prerequisites
 
 - **Node 18+**
-- **AWS**: Cognito User Pool, RDS Postgres, S3 bucket
+- **AWS**: RDS Postgres, S3 bucket
+- **Google Cloud**: OAuth 2.0 Web client ID
 - Optional: Recruitee API key, Exa/Serper/Nubela keys for related profiles
 
 ## Quick start (local)
@@ -54,7 +55,7 @@ cp .env.example .env
 
 Set in `.env`:
 
-- `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`, `VITE_COGNITO_DOMAIN`
+- `VITE_GOOGLE_CLIENT_ID`
 - `VITE_API_URL=http://localhost:3001` (default if omitted)
 
 ### 2. Backend env
@@ -69,7 +70,7 @@ Required variables (validated at startup — the server exits if any are missing
 |----------|---------|
 | `DATABASE_URL` | RDS Postgres connection string |
 | `ENCRYPTION_MASTER_KEY` | 64-char hex key for workspace API key encryption |
-| `COGNITO_USER_POOL_ID` | Must match frontend pool |
+| `GOOGLE_CLIENT_ID` | Same value as `VITE_GOOGLE_CLIENT_ID` (verifies token audience) |
 | `S3_BUCKET` | CV storage bucket |
 | `DEFAULT_WORKSPACE_ID` | Workspace UUID for new SSO users (role: **recruiter**) |
 
@@ -109,18 +110,16 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Sign in with Google (or your Cognito provider). The backend validates the JWT, upserts the user, and assigns the default workspace if needed.
+Open `http://localhost:5173`. Sign in with Google. The backend validates the JWT, upserts the user, and assigns the default workspace if needed.
 
 Health check: `GET http://localhost:3001/health`
 
-## Cognito setup
+## Google OAuth setup
 
-1. Create a User Pool with a hosted UI domain.
-2. Add a Google (or other) identity provider.
-3. Create an app client (no secret for SPA); enable OAuth code flow.
-4. Callback / sign-out URLs: `http://localhost:5173/` (and production origin).
-5. Map `email` (and optionally `name`) to ID token claims — required for backend auth.
-6. Set `ALLOWED_EMAIL_DOMAINS` in backend `.env` (comma-separated, e.g. `nextventures.io`).
+1. In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials, create an **OAuth 2.0 Client ID** (Web application).
+2. **Authorized JavaScript origins:** `http://localhost:5173`, `http://localhost:8080`, and your production frontend URL.
+3. Copy the client ID into `.env` (`VITE_GOOGLE_CLIENT_ID`) and `backend/.env` (`GOOGLE_CLIENT_ID`).
+4. Set `ALLOWED_EMAIL_DOMAINS` in backend `.env` (comma-separated, e.g. `nextventures.io`).
 
 New users without a row in `user_roles` are auto-provisioned into `DEFAULT_WORKSPACE_ID` as **recruiter**, not admin.
 
@@ -128,7 +127,7 @@ New users without a row in `user_roles` are auto-provisioned into `DEFAULT_WORKS
 
 - **RDS**: Run `backend/migrate.js` once per environment after creating the database.
 - **S3**: Bucket policy should restrict access to the backend IAM role; object keys are scoped per workspace.
-- **Cognito**: Pool ID and region must match `AWS_REGION` on the backend (default `ap-south-1`).
+- **Google OAuth**: Restrict the OAuth consent screen to your Workspace org if required by security policy.
 
 ## Scripts
 

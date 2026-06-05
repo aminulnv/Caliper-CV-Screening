@@ -17,7 +17,7 @@ Internal recruiting tool: recruiters upload or import CVs, run AI-assisted scree
 | **Backend** | Node.js 20, Fastify 5, TypeScript |
 | **Database** | PostgreSQL (RDS) |
 | **Object storage** | S3 (CV PDFs only) |
-| **Auth** | Amazon Cognito + Google federated IdP |
+| **Auth** | Google OAuth (company email domain allowlist) |
 
 ---
 
@@ -50,7 +50,7 @@ Internal recruiting tool: recruiters upload or import CVs, run AI-assisted scree
 | Item | Answer |
 |------|--------|
 | **Containerization** | `backend/Dockerfile` (API), root `Dockerfile` (frontend → nginx). See `DEPLOYMENT.md` and `docker-compose.yml` for local build/run. |
-| **Stateless** | **Yes.** API containers hold no local file storage; CV files in S3; sessions via Cognito JWT; all config via environment variables / Secrets Manager. |
+| **Stateless** | **Yes.** API containers hold no local file storage; CV files in S3; sessions via Google ID token (browser); all config via environment variables / Secrets Manager. |
 | **Health checks** | `GET /health` on backend; nginx serves frontend on port 80. |
 | **Migrations** | One-off job: `node migrate.js` against RDS before/after deploy (see `backend/migrate.js`). |
 | **CI** | GitLab CI includes SAST / secret detection (`.gitlab-ci.yml`). |
@@ -61,11 +61,11 @@ Internal recruiting tool: recruiters upload or import CVs, run AI-assisted scree
 
 | Item | Answer |
 |------|--------|
-| **Sign-in** | **Amazon Cognito** User Pool with **Google** as federated identity provider (Hosted UI / OAuth) |
-| **Corporate IdP** | Not required for initial launch; open to platform guidance if corporate SSO is preferred later |
+| **Sign-in** | **Google OAuth** (Workspace / company accounts) |
+| **Corporate IdP** | Google Workspace; optional platform guidance if a different corporate SSO is required later |
 | **Who can access** | Company email domains only: `nextventures.io`, `wearenext.io`, `fn.com` (`ALLOWED_EMAIL_DOMAINS`) |
 | **Authorization** | Workspace-scoped RBAC: `admin`, `recruiter`, `viewer` — enforced on backend |
-| **Callback / sign-out URLs** | To be finalized with platform team per environment (staging + prod) on **organizational Cloudflare** domain |
+| **OAuth origins** | Platform team assigns staging/prod frontend URLs on **organizational Cloudflare**; we add them to Google OAuth authorized JavaScript origins |
 | **Attribute mapping** | Verified **email** required on ID token; name optional |
 
 ---
@@ -108,7 +108,7 @@ Workspace API keys are **encrypted at rest** in RDS (AES-256-GCM, `ENCRYPTION_MA
 
 | Policy | Implementation |
 |--------|----------------|
-| **Access control** | Cognito JWT + workspace isolation; S3 keys validated per workspace on every upload/download |
+| **Access control** | Google ID token (JWT) + workspace isolation; S3 keys validated per workspace on every upload/download |
 | **Encryption in transit** | TLS (HTTPS, RDS TLS) |
 | **Encryption at rest** | RDS + S3 per AWS defaults; API keys encrypted in application DB |
 | **S3 access** | Private bucket only; no public access (per platform standard) |
@@ -124,7 +124,7 @@ Workspace API keys are **encrypted at rest** in RDS (AES-256-GCM, `ENCRYPTION_MA
 | Control | Status |
 |---------|--------|
 | **No secrets in Git** | `.env` gitignored; examples only in `.env.example` |
-| **Secrets at runtime** | Expect `DATABASE_URL`, `ENCRYPTION_MASTER_KEY`, Cognito, S3, LLM keys via **Secrets Manager** / platform pipeline |
+| **Secrets at runtime** | Expect `DATABASE_URL`, `ENCRYPTION_MASTER_KEY`, `GOOGLE_CLIENT_ID`, S3, LLM keys via **Secrets Manager** / platform pipeline |
 | **Input validation** | API validates uploads, criteria, workspace paths; parameterized SQL via postgres.js |
 | **Least privilege** | Workspace-scoped data; RBAC on mutating routes |
 | **Pre-deploy review** | Subject to platform security review + GitLab SAST/secret detection |
@@ -160,7 +160,7 @@ No direct-to-production deployments. No personal cloud/VPS hosting.
 | **EKS/ECS** | Small footprint — 2 services (frontend + API), low traffic |
 | **RDS** | Small Postgres instance (single workspace, &lt;25 users) |
 | **S3** | Low volume (~1–5 GB/year); lifecycle aligned with 90-day CV retention |
-| **Cognito** | Low MAU (internal recruiters only) |
+| **Google OAuth** | Internal recruiters only (low MAU) |
 | **LLM APIs** | Usage-based; optional per workspace (Anthropic/OpenAI) |
 
 **Overall:** low-cost internal tool; scale driven mainly by CV volume and LLM usage.
@@ -176,7 +176,7 @@ No direct-to-production deployments. No personal cloud/VPS hosting.
 | **Deploy guide** | `DEPLOYMENT.md` |
 | **DB migrations** | `backend/migrate.js` + `backend/migrate-*.sql` |
 
-**Platform provisions (not supplied by app team):** RDS, private S3, Cognito pool + Google IdP, Secrets Manager entries, IAM roles for workloads, Cloudflare DNS/TLS, CI/CD to EKS/ECS, monitoring/alerting.
+**Platform provisions (not supplied by app team):** RDS, private S3, Google OAuth client (or Workspace integration), Secrets Manager entries, IAM roles for workloads, Cloudflare DNS/TLS, CI/CD to EKS/ECS, monitoring/alerting.
 
 ---
 
@@ -184,5 +184,5 @@ No direct-to-production deployments. No personal cloud/VPS hosting.
 
 - Please merge MR !1 when approved so `main` matches application code.
 - We will not embed credentials or connection strings in the repository; ready for vault-injected env vars.
-- Callback URLs and Cognito app client settings will be provided when staging/prod hostnames are assigned on Cloudflare.
+- Staging/prod frontend URLs will be added to Google OAuth authorized origins when hostnames are assigned on Cloudflare.
 - Volume figures remain estimates — Aleza Hasan or Api Singha can refine with firm hiring forecasts if needed.
