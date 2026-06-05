@@ -2327,10 +2327,24 @@ function JobCandidatesPane({
       {showRecruitee && (
         <>
           <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-            <strong>{recruiteeApps.length || profile.applicantsCount || 0}</strong> applicant
-            {(recruiteeApps.length || profile.applicantsCount || 0) === 1 ? '' : 's'} in Recruitee
-            {recruiteeLoading && ' · loading…'}
-            . Use <strong>Run screening</strong> to score CVs from this list.
+            {profile.applicantsCount != null && recruiteeApps.length > 0 && recruiteeApps.length < profile.applicantsCount
+              ? (
+                <>
+                  Showing <strong>{recruiteeApps.length}</strong> of{' '}
+                  <strong>{profile.applicantsCount}</strong> applicants in Recruitee
+                  {recruiteeLoading ? ' · loading…' : ' (first batch loaded for screening)'}
+                  .
+                </>
+              )
+              : (
+                <>
+                  <strong>{recruiteeApps.length || profile.applicantsCount || 0}</strong> applicant
+                  {(recruiteeApps.length || profile.applicantsCount || 0) === 1 ? '' : 's'} in Recruitee
+                  {recruiteeLoading && ' · loading…'}
+                  .
+                </>
+              )}
+            {' '}Use <strong>Run screening</strong> to score CVs from this list.
           </div>
           <div className="card">
             <table className="tbl">

@@ -1,7 +1,17 @@
+import { getPlatformRecruiteeNumericCompanyId } from '../config/recruitee.js';
 import type { RecruiteeJob, RecruiteeApplicant } from '../types/index.js';
 
 const TIMEOUT_MS = 10_000;
+const CANDIDATES_LIST_TIMEOUT_MS = 30_000;
 const ATS_HOST = 'api.recruitee.com';
+const APPLICANTS_PAGE_SIZE = 500;
+/** Recruitee list/search caps; avoid loading unbounded rows into the UI. */
+const APPLICANTS_MAX_FETCH = 2_000;
+
+/** Sentinel cv_url — real PDF is fetched by candidate id during screening. */
+export const RECRUITEE_APPLICANT_CV_SENTINEL = 'recruitee-applicant';
+
+let cachedNumericCompanyId: string | null = null;
 
 /** Dev only: corporate VPN/proxy SSL inspection (self-signed cert in chain). */
 if (process.env.RECRUITEE_TLS_INSECURE === 'true') {
@@ -15,6 +25,34 @@ export type RecruiteeConfig = {
 };
 
 /** Parse workspace recruitee_base_url into ATS API root + company id. */
+function candidatesApiRoot(numericCompanyId: string): string {
+  return `https://${ATS_HOST}/c/${numericCompanyId}`;
+}
+
+/**
+ * Candidate endpoints require the numeric company id in the path (subdomain slug returns 422).
+ * Offers/locations accept the careers subdomain slug.
+ */
+export async function resolveNumericCompanyId(
+  baseUrl: string,
+  apiKey: string,
+): Promise<string> {
+  const fromEnv = getPlatformRecruiteeNumericCompanyId();
+  if (fromEnv) return fromEnv;
+  if (cachedNumericCompanyId) return cachedNumericCompanyId;
+
+  const { apiRoot: slugRoot } = parseRecruiteeConfig(baseUrl);
+  const data = (await recruiteeGet(slugRoot, apiKey, '/search/new/candidates?limit=1')) as {
+    hits?: Array<{ company_id?: number }>;
+  };
+  const companyId = data.hits?.[0]?.company_id;
+  if (!companyId) {
+    throw new Error('Could not resolve Recruitee numeric company ID');
+  }
+  cachedNumericCompanyId = String(companyId);
+  return cachedNumericCompanyId;
+}
+
 export function parseRecruiteeConfig(baseUrl: string): RecruiteeConfig {
   const trimmed = baseUrl.trim().replace(/\/$/, '');
 
@@ -35,7 +73,12 @@ export function parseRecruiteeConfig(baseUrl: string): RecruiteeConfig {
   );
 }
 
-async function recruiteeGet(apiRoot: string, apiKey: string, path: string): Promise<unknown> {
+async function recruiteeGet(
+  apiRoot: string,
+  apiKey: string,
+  path: string,
+  timeoutMs = TIMEOUT_MS,
+): Promise<unknown> {
   const url = `${apiRoot.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
   const parsed = new URL(url);
@@ -47,7 +90,7 @@ async function recruiteeGet(apiRoot: string, apiKey: string, path: string): Prom
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -266,45 +309,6 @@ function resolveCvUrlFromRow(candidate: CandidateRow): string | null {
   return `https://${ATS_HOST}/${url.replace(/^\//, '')}`;
 }
 
-async function enrichRecruiteeCandidate(
-  apiRoot: string,
-  apiKey: string,
-  candidate: CandidateRow,
-  offerId: string,
-  stageById: Map<string, string>,
-  locationById: Map<string, string>,
-): Promise<RecruiteeApplicant> {
-  const data = (await recruiteeGet(apiRoot, apiKey, `/candidates/${candidate.id}`)) as {
-    candidate?: CandidateRow;
-  };
-  const detail: CandidateRow = { ...candidate, ...(data.candidate ?? {}) };
-  const placement = placementForOffer(detail, offerId);
-
-  let status: string | null = null;
-  if (placement?.stage_name) {
-    status = placement.stage_name;
-  } else if (placement?.stage_id != null) {
-    status = stageById.get(String(placement.stage_id)) ?? null;
-  }
-
-  let location: string | null = null;
-  const locationId = placement?.location_ids?.[0];
-  if (locationId != null) {
-    location = locationById.get(String(locationId)) ?? null;
-  }
-  if (!location) {
-    location = pickAddressFromFields(detail.fields) ?? detail.city?.trim() ?? null;
-  }
-
-  return {
-    id: String(detail.id),
-    name: detail.name!,
-    location,
-    cv_url: resolveCvUrlFromRow(detail),
-    status,
-  };
-}
-
 export async function fetchRecruiteeJobs(baseUrl: string, apiKey: string): Promise<RecruiteeJob[]> {
   const { apiRoot } = parseRecruiteeConfig(baseUrl);
   const data = await recruiteeGet(apiRoot, apiKey, '/offers?scope=active');
@@ -336,54 +340,70 @@ export async function fetchRecruiteeJobs(baseUrl: string, apiKey: string): Promi
   }));
 }
 
+function mapListCandidateToApplicant(
+  candidate: CandidateRow,
+  offerId: string,
+  stageById: Map<string, string>,
+  locationById: Map<string, string>,
+): RecruiteeApplicant {
+  const placement = placementForOffer(candidate, offerId);
+  const stageId = placement?.stage_id;
+  let location: string | null = candidate.city?.trim() ?? null;
+  const locationId = placement?.location_ids?.[0];
+  if (locationId != null) {
+    location = locationById.get(String(locationId)) ?? location;
+  }
+  if (!location) {
+    location = pickAddressFromFields(candidate.fields) ?? location;
+  }
+
+  return {
+    id: String(candidate.id),
+    name: candidate.name!,
+    location,
+    cv_url: `${RECRUITEE_APPLICANT_CV_SENTINEL}:${candidate.id}`,
+    status:
+      placement?.stage_name
+      ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
+  };
+}
+
 export async function fetchRecruiteeApplicants(
   baseUrl: string,
   apiKey: string,
   jobId: string,
 ): Promise<RecruiteeApplicant[]> {
-  const { apiRoot } = parseRecruiteeConfig(baseUrl);
-  const data = (await recruiteeGet(
-    apiRoot,
-    apiKey,
-    `/candidates?offer_id=${encodeURIComponent(jobId)}&limit=200`,
-  )) as { candidates?: CandidateRow[] };
+  const { apiRoot: slugApiRoot } = parseRecruiteeConfig(baseUrl);
+  const numericCompanyId = await resolveNumericCompanyId(baseUrl, apiKey);
+  const candidateRoot = candidatesApiRoot(numericCompanyId);
 
-  const candidates = data.candidates ?? [];
   const [stageById, locationById] = await Promise.all([
-    fetchOfferStageMap(apiRoot, apiKey, jobId),
-    fetchLocationMap(apiRoot, apiKey),
+    fetchOfferStageMap(slugApiRoot, apiKey, jobId),
+    fetchLocationMap(slugApiRoot, apiKey),
   ]);
 
-  const results = await mapWithConcurrency(
-    candidates.filter((c) => c.id && c.name),
-    6,
-    async (c) => {
-      try {
-        return await enrichRecruiteeCandidate(
-          apiRoot,
-          apiKey,
-          c,
-          jobId,
-          stageById,
-          locationById,
-        );
-      } catch {
-        const placement = placementForOffer(c, jobId);
-        const stageId = placement?.stage_id;
-        return {
-          id: String(c.id),
-          name: c.name!,
-          location: c.city ?? null,
-          cv_url: null,
-          status:
-            placement?.stage_name
-            ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
-        };
-      }
-    },
-  );
+  const candidates: CandidateRow[] = [];
+  let offset = 0;
 
-  return results;
+  while (candidates.length < APPLICANTS_MAX_FETCH) {
+    const limit = Math.min(APPLICANTS_PAGE_SIZE, APPLICANTS_MAX_FETCH - candidates.length);
+    const data = (await recruiteeGet(
+      candidateRoot,
+      apiKey,
+      `/candidates?offer_id=${encodeURIComponent(jobId)}&limit=${limit}&offset=${offset}`,
+      CANDIDATES_LIST_TIMEOUT_MS,
+    )) as { candidates?: CandidateRow[] };
+
+    const page = data.candidates ?? [];
+    if (page.length === 0) break;
+    candidates.push(...page);
+    if (page.length < limit) break;
+    offset += page.length;
+  }
+
+  return candidates
+    .filter((c) => c.id && c.name)
+    .map((c) => mapListCandidateToApplicant(c, jobId, stageById, locationById));
 }
 
 export async function fetchRecruiteeCandidateCv(
@@ -391,8 +411,8 @@ export async function fetchRecruiteeCandidateCv(
   apiKey: string,
   candidateId: string,
 ): Promise<{ buffer: Buffer; filename: string }> {
-  const { apiRoot } = parseRecruiteeConfig(baseUrl);
-  const data = (await recruiteeGet(apiRoot, apiKey, `/candidates/${candidateId}`)) as {
+  const candidateRoot = candidatesApiRoot(await resolveNumericCompanyId(baseUrl, apiKey));
+  const data = (await recruiteeGet(candidateRoot, apiKey, `/candidates/${candidateId}`)) as {
     candidate?: CandidateRow;
   };
   const detail = data.candidate;

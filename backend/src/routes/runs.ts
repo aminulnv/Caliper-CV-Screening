@@ -222,12 +222,26 @@ async function processRun(
       }
       pdfBuffer = await storage.download(source.path);
       storagePath = source.path;
-    } else if (source.type === 'recruitee' && source.cv_url) {
-      const { downloadRecruiteeCV } = await import('../services/recruitee.js');
+    } else if (source.type === 'recruitee' && (source.cv_url || source.applicant_id)) {
+      const {
+        downloadRecruiteeCV,
+        fetchRecruiteeCandidateCv,
+      } = await import('../services/recruitee.js');
       const { getRecruiteeCredentials } = await import('../services/workspace.js');
       const creds = await getRecruiteeCredentials(workspaceId);
-      pdfBuffer = await downloadRecruiteeCV(source.cv_url, creds.apiKey);
       recruiteeId = source.applicant_id ?? null;
+      if (source.cv_url?.startsWith('http')) {
+        pdfBuffer = await downloadRecruiteeCV(source.cv_url, creds.apiKey);
+      } else if (source.applicant_id) {
+        const fetched = await fetchRecruiteeCandidateCv(
+          creds.baseUrl,
+          creds.apiKey,
+          source.applicant_id,
+        );
+        pdfBuffer = fetched.buffer;
+      } else {
+        continue;
+      }
       const recruiteePath = `${workspaceId}/runs/${runId}/${randomUUID()}.pdf`;
       await storage.upload(recruiteePath, pdfBuffer, 'application/pdf');
       storagePath = recruiteePath;

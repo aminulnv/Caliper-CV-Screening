@@ -5,6 +5,11 @@ export function getPlatformRecruiteeApiKey(): string | null {
   return key || null;
 }
 
+export function getPlatformRecruiteeNumericCompanyId(): string | null {
+  const id = process.env.RECRUITEE_COMPANY_NUMERIC_ID?.trim();
+  return id || null;
+}
+
 export function getPlatformRecruiteeBaseUrl(): string | null {
   const explicit = process.env.RECRUITEE_BASE_URL?.trim();
   if (explicit) return explicit;
