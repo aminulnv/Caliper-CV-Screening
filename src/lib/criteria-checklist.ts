@@ -59,31 +59,50 @@ export function countsFromEvaluations(evals: ChecklistEval[]): ChecklistCounts {
 
 export function countsFromCandidateRow(c: {
   must_met?: number;
+  mustMet?: number;
   nice_met?: number;
+  niceMet?: number;
   flag_triggered?: number;
+  flagTriggered?: number;
   must_total?: number | null;
+  mustTotal?: number | null;
   nice_total?: number | null;
+  niceTotal?: number | null;
   flag_total?: number | null;
+  flagTotal?: number | null;
   criteria_met_pct?: number | null;
+  criteriaMetPct?: number | null;
   must_met_pct?: number | null;
+  mustMetPct?: number | null;
   nice_met_pct?: number | null;
+  niceMetPct?: number | null;
 }): ChecklistCounts | null {
-  if (c.must_total == null && c.criteria_met_pct == null) return null;
-  const mustTotal = c.must_total ?? 0;
-  const niceTotal = c.nice_total ?? 0;
-  const flagTotal = c.flag_total ?? 0;
+  const mustMet = c.must_met ?? c.mustMet;
+  const niceMet = c.nice_met ?? c.niceMet;
+  const flagTriggered = c.flag_triggered ?? c.flagTriggered;
+  const mustTotal = c.must_total ?? c.mustTotal;
+  const niceTotal = c.nice_total ?? c.niceTotal;
+  const flagTotal = c.flag_total ?? c.flagTotal;
+  const criteriaMetPct = c.criteria_met_pct ?? c.criteriaMetPct;
+  const mustMetPct = c.must_met_pct ?? c.mustMetPct;
+  const niceMetPct = c.nice_met_pct ?? c.niceMetPct;
+
+  if (mustTotal == null && criteriaMetPct == null) return null;
+  const mustTotalVal = mustTotal ?? 0;
+  const niceTotalVal = niceTotal ?? 0;
+  const flagTotalVal = flagTotal ?? 0;
   return {
-    mustMet: c.must_met ?? 0,
-    mustTotal,
-    mustPct: c.must_met_pct ?? pct(c.must_met ?? 0, mustTotal),
-    niceMet: c.nice_met ?? 0,
-    niceTotal,
-    nicePct: c.nice_met_pct ?? pct(c.nice_met ?? 0, niceTotal),
-    flagTriggered: c.flag_triggered ?? 0,
-    flagTotal,
-    flagPct: pct(c.flag_triggered ?? 0, flagTotal),
-    criteriaMet: (c.must_met ?? 0) + (c.nice_met ?? 0),
-    criteriaTotal: mustTotal + niceTotal,
-    criteriaMetPct: c.criteria_met_pct ?? pct((c.must_met ?? 0) + (c.nice_met ?? 0), mustTotal + niceTotal),
+    mustMet: mustMet ?? 0,
+    mustTotal: mustTotalVal,
+    mustPct: mustMetPct ?? pct(mustMet ?? 0, mustTotalVal),
+    niceMet: niceMet ?? 0,
+    niceTotal: niceTotalVal,
+    nicePct: niceMetPct ?? pct(niceMet ?? 0, niceTotalVal),
+    flagTriggered: flagTriggered ?? 0,
+    flagTotal: flagTotalVal,
+    flagPct: pct(flagTriggered ?? 0, flagTotalVal),
+    criteriaMet: (mustMet ?? 0) + (niceMet ?? 0),
+    criteriaTotal: mustTotalVal + niceTotalVal,
+    criteriaMetPct: criteriaMetPct ?? pct((mustMet ?? 0) + (niceMet ?? 0), mustTotalVal + niceTotalVal),
   };
 }

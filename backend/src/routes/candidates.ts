@@ -7,6 +7,7 @@ import { storage } from '../services/storage.js';
 import { fetchRecruiteeCandidateCv } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
 import { isWorkspaceStoragePath } from '../lib/storage-path.js';
+import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
 
 export async function candidatesRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authenticate);
@@ -34,14 +35,13 @@ export async function candidatesRoutes(app: FastifyInstance) {
       WHERE ce.candidate_id = ${req.params.id}
     `;
 
-    const cvStoragePath = (candidate.cvStoragePath ?? candidate.cv_storage_path) as string | null;
-    const recruiteeApplicantId = (candidate.recruiteeApplicantId ?? candidate.recruitee_applicant_id) as
-      | string
-      | null;
+    const formatted = formatRunCandidateRow(candidate as Record<string, unknown>);
+    const cvStoragePath = formatted.cv_storage_path;
+    const recruiteeApplicantId = formatted.recruitee_applicant_id;
 
     return {
       candidate: {
-        ...candidate,
+        ...formatted,
         has_cv: Boolean(cvStoragePath || recruiteeApplicantId),
       },
       evaluations: evaluations.map((e) => ({

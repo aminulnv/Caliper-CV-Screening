@@ -11,10 +11,23 @@ import { countsFromCandidateRow } from '@/lib/criteria-checklist'
 
 const confOrder = (c) => c === 'high' ? 3 : c === 'medium' ? 2 : 1;
 
+function candidateMetrics(c) {
+  const counts = countsFromCandidateRow(c);
+  return {
+    mustMet: c.must_met ?? c.mustMet ?? counts?.mustMet ?? 0,
+    niceMet: c.nice_met ?? c.niceMet ?? counts?.niceMet ?? 0,
+    flagTriggered: c.flag_triggered ?? c.flagTriggered ?? counts?.flagTriggered ?? 0,
+    criteriaMetPct: c.criteria_met_pct ?? c.criteriaMetPct ?? counts?.criteriaMetPct ?? null,
+    scoreBase: c.score_base ?? c.scoreBase ?? null,
+    penaltyFlag: c.penalty_flag ?? c.penaltyFlag ?? 0,
+  };
+}
+
 function ScoreDeductionBreakdown({ candidate }) {
-  const pct = candidate?.criteria_met_pct ?? candidate?.score_base;
+  const { criteriaMetPct, scoreBase, penaltyFlag } = candidateMetrics(candidate);
+  const pct = criteriaMetPct ?? scoreBase;
   if (pct == null) return null;
-  const flagPen = candidate.penalty_flag ?? 0;
+  const flagPen = penaltyFlag;
   const final = candidate.score ?? 0;
   if (flagPen === 0) {
     return (
@@ -189,7 +202,9 @@ function RankedList({ rows, onOpen, tweaks }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((c, i) => (
+          {rows.map((c, i) => {
+            const m = candidateMetrics(c);
+            return (
             <tr key={c.id} onClick={() => onOpen(c.id)} className="is-clickable">
               <td>
                 <span style={{
@@ -210,19 +225,20 @@ function RankedList({ rows, onOpen, tweaks }) {
                 )}
               </td>
               <td className="mono" style={{ fontSize: 12 }}>
-                {c.criteria_met_pct != null ? `${c.criteria_met_pct}%` : '—'}
+                {m.criteriaMetPct != null ? `${m.criteriaMetPct}%` : '—'}
               </td>
               <td>
-                <ScoreBar score={c.score ?? 0} must={c.must_met} nice={c.nice_met} flag={c.flag_triggered} variant={tweaks?.scoreStyle}/>
+                <ScoreBar score={c.score ?? 0} must={m.mustMet} nice={m.niceMet} flag={m.flagTriggered} variant={tweaks?.scoreStyle}/>
                 <div className="muted mono" style={{ fontSize: 10.5, marginTop: 4 }}>
-                  {c.must_met} must · {c.nice_met} nice · {c.flag_triggered} flag
+                  {m.mustMet} must · {m.niceMet} nice · {m.flagTriggered} flag
                 </div>
               </td>
               <td><Confidence level={c.confidence}/></td>
               <td><StatusBadge s={c.status}/></td>
               <td><Icon name="chevron-right" size={14} className="muted"/></td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -287,6 +303,8 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
 
   if (!candidate) return null;
 
+  const detailMetrics = candidateMetrics(candidate);
+
   return (
     <div className="detail" onClick={onClose}>
       <div className="detail__panel" onClick={(e) => e.stopPropagation()}>
@@ -305,7 +323,7 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
               </div>
             </div>
             <div className="col" style={{ gap: 4, alignItems: 'flex-end' }}>
-              <ScoreBar score={candidate.score ?? 0} must={candidate.must_met} nice={candidate.nice_met} flag={candidate.flag_triggered} variant={tweaks?.scoreStyle}/>
+              <ScoreBar score={candidate.score ?? 0} must={detailMetrics.mustMet} nice={detailMetrics.niceMet} flag={detailMetrics.flagTriggered} variant={tweaks?.scoreStyle}/>
               <ScoreDeductionBreakdown candidate={candidate}/>
             </div>
             <StatusBadge s={candidate.status}/>
@@ -341,9 +359,9 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
                 />
               </div>
               <div className="detail__eval">
-                {(candidate.summary || candidate.criteria_met_pct != null) && (
+                {(candidate.summary || detailMetrics.criteriaMetPct != null) && (
                   <div style={{ padding: '14px 0 8px', borderBottom: '1px solid var(--line)', marginBottom: 12 }}>
-                    {candidate.criteria_met_pct != null && (
+                    {detailMetrics.criteriaMetPct != null && (
                       <div style={{ marginBottom: candidate.summary ? 10 : 0 }}>
                         <ChecklistSummary counts={countsFromCandidateRow(candidate)}/>
                         <div style={{ marginTop: 8 }}>

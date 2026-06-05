@@ -12,6 +12,7 @@ import type { Criterion, ScoringRequest, CriterionResult } from '../types/index.
 import { countJobCriteria } from '../services/job-criteria.js';
 import { mapCriterionRows, pickRunnableModel } from '../services/screening-model.js';
 import { isWorkspaceStoragePath } from '../lib/storage-path.js';
+import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
 
 const MAX_CV_SOURCES_PER_RUN = 50;
 
@@ -75,7 +76,7 @@ export async function runsRoutes(app: FastifyInstance) {
     return {
       ...run,
       job_profiles: run.jobName ? { name: run.jobName, dept: run.jobDept } : null,
-      candidates,
+      candidates: candidates.map((c) => formatRunCandidateRow(c as Record<string, unknown>)),
     };
   });
 
