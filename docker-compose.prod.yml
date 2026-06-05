@@ -1,21 +1,25 @@
-# Local development only — not for platform-hosted production.
-# Production: docker-compose.prod.yml + deploy/ec2/ + host nginx (see DEPLOYMENT.md).
-#   cp .env.example .env
-#   cp backend/.env.example backend/.env
+# Platform-hosted production stack (EC2 / VM).
+# Containers bind to localhost; host nginx + TLS terminates public HTTPS.
+#
+#   cp deploy/ec2/.env.production.example .env
+#   cp deploy/ec2/backend.env.production.example backend/.env
+#   # fill secrets on the server only — never commit
+#   docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d --build
 
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      args:
-        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
-    ports:
-      - "3001:3001"
+    restart: unless-stopped
     env_file:
       - ./backend/.env
     environment:
-      CORS_ORIGIN: http://localhost:8080
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN}
+    ports:
+      - "127.0.0.1:3001:3001"
     healthcheck:
       test:
         [
@@ -27,24 +31,22 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        NPM_STRICT_SSL: ${NPM_STRICT_SSL:-true}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001}
+        VITE_API_URL: ${VITE_API_URL}
+    restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       backend:
         condition: service_healthy
 
-  # One-off migration job (run after backend image is built):
-  #   docker compose run --rm migrate
   migrate:
     build:
       context: ./backend

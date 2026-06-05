@@ -2,6 +2,17 @@
 
 Container images and runtime notes for **Caliper CV Screening** (React/Vite frontend + Fastify API).
 
+## Deployment targets
+
+| Target | Compose file | Purpose |
+|--------|--------------|---------|
+| **Local dev** | `docker-compose.yml` | Developer machine (`localhost:8080`) |
+| **Platform hosted (production)** | `docker-compose.prod.yml` | EC2/VM behind nginx + TLS — **same path for current platform environment and future promotion** |
+
+Platform may label the first RDS/EC2 as “test”; treat it as **production deployment practice**: `NODE_ENV=production`, real RDS/S3/IAM creds, HTTPS domain, migrations before traffic, secrets only on the server, no localhost overrides.
+
+**Current platform host:** `ubuntu@43.205.206.143` (SSH key `okr-ai-app.pem`, VPN required). Instance `i-0995460ae6be07c19`, SG `ec2-rds-5`.
+
 ## Architecture
 
 | Service | Image | Port | Role |
@@ -41,7 +52,8 @@ These are baked into the static bundle at **build** time. Rebuild the frontend i
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | Yes | Postgres connection string |
+| `DATABASE_URL` | Yes* | Full Postgres URL (*or use `DB_HOST` + `DB_USERNAME` + `DB_PASSWORD` + `DB_NAME` below) |
+| `DB_HOST` / `DB_PORT` / `DB_USERNAME` / `DB_NAME` / `DB_PASSWORD` | Yes* | Platform-style RDS vars (alternative to `DATABASE_URL`) |
 | `ENCRYPTION_MASTER_KEY` | Yes | 64-char hex (32 bytes) |
 | `GOOGLE_CLIENT_ID` | Yes | Same as `VITE_GOOGLE_CLIENT_ID` (verifies ID token audience) |
 | `S3_BUCKET` | Yes | CV storage bucket |
@@ -106,6 +118,54 @@ Or from a machine with `backend/.env`:
 ```bash
 cd backend && npm run migrate
 ```
+
+## Platform EC2 deploy (production)
+
+Run on the application server after RDS security group allows EC2 → port 5432.
+
+### 1. Host bootstrap (once)
+
+```bash
+ssh -i okr-ai-app.pem ubuntu@43.205.206.143
+git clone https://gitlab.nextventures.io/qpt/caliper-cv-screening.git
+cd caliper-cv-screening
+bash deploy/ec2/bootstrap.sh
+# log out/in if docker group was added
+```
+
+### 2. Environment (server only — never commit)
+
+```bash
+cp deploy/ec2/.env.production.example .env
+cp deploy/ec2/backend.env.production.example backend/.env
+# Edit both with platform RDS, S3, Google, ENCRYPTION_MASTER_KEY, public URLs
+```
+
+Set `VITE_API_URL` and `CORS_ORIGIN` to the **public HTTPS domain** (e.g. `https://caliper.example.com` and `https://caliper.example.com/api` if API is path-mounted — match nginx config).
+
+Add the same HTTPS origin to **Google OAuth** authorized JavaScript origins.
+
+### 3. Migrate, build, run
+
+```bash
+docker compose -f docker-compose.prod.yml --profile tools run --rm migrate
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Containers listen on **127.0.0.1:8080** (frontend) and **127.0.0.1:3001** (API) — not exposed publicly.
+
+### 4. nginx + TLS (host)
+
+```bash
+sudo cp deploy/nginx/caliper.conf.example /etc/nginx/sites-available/caliper
+# edit YOUR_DOMAIN, enable site, then:
+sudo certbot --nginx -d YOUR_DOMAIN
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 5. Promote / redeploy later
+
+Same flow for any environment: update image (`git pull`), re-run migrate if schema changed, `docker compose -f docker-compose.prod.yml up -d --build`. Only env URLs and secrets differ between environments.
 
 ## GitLab CI / production (outline)
 
