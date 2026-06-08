@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
+import { prefetchJobs } from '@/lib/jobs-cache'
 import {
   useTweaks,
   TweaksPanel,
@@ -44,6 +45,11 @@ export default function CaliperShellLayout() {
     document.documentElement.style.setProperty('--accent-ink', t.accentInk)
     document.documentElement.dataset.density = t.density
   }, [t.accent, t.accentSoft, t.accentInk, t.density])
+
+  useEffect(() => {
+    prefetchJobs()
+    void import('@/caliper/pages/ProfilesPage')
+  }, [])
 
   return (
     <>

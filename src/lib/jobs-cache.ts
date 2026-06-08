@@ -1,5 +1,7 @@
 /** Session cache for the jobs list — avoids full Recruitee sync on every navigation. */
 
+import { api } from '@/services/api';
+
 export const JOBS_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 const CACHE_KEY = 'caliper:jobs-cache:v1';
@@ -61,4 +63,59 @@ export function formatSyncNote(sync: {
   if (sync.created > 0) parts.push(`${sync.created} new`);
   if (sync.updated > 0) parts.push(`${sync.updated} updated`);
   return parts.join(' · ');
+}
+
+let inflight: Promise<JobsCacheEntry> | null = null;
+
+async function fetchJobsEntry(forceSync: boolean): Promise<JobsCacheEntry> {
+  const cache = readJobsCache();
+  const runSync = shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, forceSync);
+  let syncNote = cache?.syncNote ?? '';
+  let lastSyncAt = cache?.lastSyncAt ?? null;
+
+  if (runSync) {
+    try {
+      const sync = await api.recruitee.syncJobs();
+      syncNote = formatSyncNote(sync);
+      lastSyncAt = Date.now();
+    } catch {
+      /* keep prior syncNote from cache */
+    }
+  }
+
+  const jobs = await api.jobs.list();
+  const entry: JobsCacheEntry = {
+    jobs,
+    fetchedAt: Date.now(),
+    lastSyncAt: runSync ? lastSyncAt : cache?.lastSyncAt ?? lastSyncAt,
+    syncNote,
+  };
+  writeJobsCache(entry);
+  return entry;
+}
+
+/** Load jobs (Recruitee sync + list). Dedupes concurrent calls; returns session cache when fresh. */
+export async function loadJobs(options?: { forceSync?: boolean }): Promise<JobsCacheEntry> {
+  const forceSync = Boolean(options?.forceSync);
+
+  if (forceSync) {
+    inflight = null;
+  } else {
+    const cache = readJobsCache();
+    if (cache?.jobs?.length && !shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, false)) {
+      return cache;
+    }
+    if (inflight) return inflight;
+  }
+
+  const promise = fetchJobsEntry(forceSync).finally(() => {
+    inflight = null;
+  });
+  inflight = promise;
+  return promise;
+}
+
+/** Warm jobs data in the background (e.g. while the runs page is visible). */
+export function prefetchJobs(options?: { forceSync?: boolean }): void {
+  void loadJobs(options).catch(() => {});
 }

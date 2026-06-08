@@ -29,10 +29,9 @@ import {
 } from '@/lib/applicants-cache'
 import {
   clearJobsCache,
-  formatSyncNote,
+  loadJobs,
   readJobsCache,
   shouldRunRecruiteeSync,
-  writeJobsCache,
 } from '@/lib/jobs-cache'
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { runsForDisplay, shapeJobRow } from '@/lib/job-profile'
@@ -751,7 +750,7 @@ function ProfilesPage({ go, route }) {
     let cancelled = false;
     const hadList = liveProfiles !== null;
     const cache = readJobsCache();
-    const runSync = shouldRunRecruiteeSync(
+    const needsSync = shouldRunRecruiteeSync(
       cache?.lastSyncAt ?? null,
       refreshToken.forceSync,
     );
@@ -760,55 +759,29 @@ function ProfilesPage({ go, route }) {
       setProfilesLoading(true);
       setProfilesLoadError(null);
       setLiveProfiles(null);
+      setLoadPhase(needsSync ? 'Syncing open roles from Recruitee…' : 'Loading your job list…');
     } else {
       setBackgroundRefreshing(true);
     }
 
-    (async () => {
-      let syncNote = cache?.syncNote ?? '';
-      let lastSyncAt = cache?.lastSyncAt ?? null;
-
-      if (runSync) {
-        if (!hadList) setLoadPhase('Syncing open roles from Recruitee…');
-        try {
-          const sync = await api.recruitee.syncJobs();
-          if (!cancelled) {
-            syncNote = formatSyncNote(sync);
-            lastSyncAt = Date.now();
-          }
-        } catch {
-          /* keep prior syncNote from cache */
-        }
-      }
-
-      if (cancelled) return;
-      if (!hadList) setLoadPhase('Loading your job list…');
-
-      try {
-        const jobs = await api.jobs.list();
-        if (!cancelled) {
-          const shaped = shapeJobsList(jobs);
-          setLiveProfiles(shaped);
-          setProfilesLoadError(null);
-          writeJobsCache({
-            jobs,
-            fetchedAt: Date.now(),
-            lastSyncAt: runSync ? lastSyncAt : cache?.lastSyncAt ?? lastSyncAt,
-            syncNote,
-          });
-        }
-      } catch (err) {
+    loadJobs({ forceSync: refreshToken.forceSync })
+      .then((entry) => {
+        if (cancelled) return;
+        setLiveProfiles(shapeJobsList(entry.jobs));
+        setProfilesLoadError(null);
+      })
+      .catch((err) => {
         if (!cancelled && !hadList) {
           setLiveProfiles(null);
           setProfilesLoadError(err?.message ?? 'Failed to load jobs.');
         }
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) {
           setProfilesLoading(false);
           setBackgroundRefreshing(false);
         }
-      }
-    })();
+      });
 
     return () => { cancelled = true; };
   }, [refreshToken.n, refreshToken.forceSync]);
