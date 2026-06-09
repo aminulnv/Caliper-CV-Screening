@@ -10,6 +10,7 @@ export default function AccessDenied() {
       <div className="access-denied__hero" style={styles.heroPanel}>
         <div className="access-denied__orb access-denied__orb--1" aria-hidden />
         <div className="access-denied__orb access-denied__orb--2" aria-hidden />
+        <img src={assets.logoUrl} alt="" width={48} height={48} style={styles.brandLogo} aria-hidden />
         <h1 className="access-denied__brand" style={styles.brandTitle}>Caliper</h1>
         <p style={styles.heroSubtitle}>CV screening for hiring teams</p>
       </div>
@@ -68,6 +69,15 @@ const styles: Record<string, CSSProperties> = {
     borderBottomRightRadius: 0,
     boxShadow: 'var(--shadow-2)',
     position: 'relative',
+  },
+  brandLogo: {
+    width: 48,
+    height: 48,
+    marginBottom: '1rem',
+    borderRadius: '12px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+    position: 'relative',
+    zIndex: 1,
   },
   brandTitle: {
     margin: 0,

@@ -45,6 +45,7 @@ export default function Login() {
     <div className="auth-card" style={styles.wrapper}>
       <style>{AUTH_PANEL_CSS}</style>
       <div style={styles.leftPanel}>
+        <img src={assets.logoUrl} alt="" width={48} height={48} style={styles.brandLogo} aria-hidden />
         <h1 style={styles.leftTitle}>Caliper</h1>
         <p style={styles.leftSubtitle}>
           AI-powered CV screening for your hiring team. Sign in with your company Google account to continue.
@@ -126,6 +127,13 @@ const styles: Record<string, CSSProperties> = {
     borderTopRightRadius: 0,
     borderBottomRightRadius: 0,
     boxShadow: 'var(--shadow-2)',
+  },
+  brandLogo: {
+    width: 48,
+    height: 48,
+    marginBottom: '1rem',
+    borderRadius: '12px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
   },
   leftTitle: {
     margin: 0,

@@ -23,7 +23,7 @@ const brandTheme = getBrandTheme(brandShellGradient)
  * - getBackgroundStyle(value): Returns style props for a given value (image URL vs color/gradient).
  */
 export const assets = {
-  logoUrl: '' as string,
+  logoUrl: '/caliper-mark.svg' as string,
   loginBackgroundValue:
     'https://i.pinimg.com/736x/21/16/59/21165977ebcdc14db9ac23044c721820.jpg',
   layoutBackgroundValue: brandShellGradient,

@@ -453,7 +453,7 @@ export function AppNavBar({
         style={{ background: logoUrl ? 'transparent' : logoColor }}
       >
         {logoUrl ? (
-          <img src={logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <img src={logoUrl} alt="Caliper" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         ) : (
           <BrandIcon size={17} color="#fff" strokeWidth={2.5} />
         )}
