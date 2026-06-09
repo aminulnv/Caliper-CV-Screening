@@ -32,6 +32,7 @@ export type VerifiedIdentity = {
   sub: string;
   email: string;
   name: string;
+  picture: string | null;
 };
 
 function isAllowedEmail(email: string): boolean {
@@ -39,7 +40,13 @@ function isAllowedEmail(email: string): boolean {
   return ALLOWED_DOMAINS.includes(domain ?? '');
 }
 
-async function migrateUserSub(oldSub: string, newSub: string, email: string, name: string): Promise<void> {
+async function migrateUserSub(
+  oldSub: string,
+  newSub: string,
+  email: string,
+  name: string,
+  picture: string | null,
+): Promise<void> {
   if (oldSub === newSub) return;
 
   const tempEmail = `${email}.__sub_migrate__`;
@@ -58,22 +65,31 @@ async function migrateUserSub(oldSub: string, newSub: string, email: string, nam
     await tx`UPDATE audit_log SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
     await tx`DELETE FROM users WHERE sub = ${oldSub}`;
     await tx`
-      UPDATE users SET email = ${email}, name = ${name}, last_seen_at = NOW() WHERE sub = ${newSub}
+      UPDATE users
+      SET email = ${email},
+          name = ${name},
+          avatar_url = COALESCE(${picture}, avatar_url),
+          last_seen_at = NOW()
+      WHERE sub = ${newSub}
     `;
   });
 }
 
 export async function upsertUserFromIdentity(identity: VerifiedIdentity): Promise<void> {
-  const { sub, email, name } = identity;
+  const { sub, email, name, picture } = identity;
   const [existingByEmail] = await sql`SELECT sub FROM users WHERE email = ${email} LIMIT 1`;
 
   if (existingByEmail && existingByEmail.sub !== sub) {
-    await migrateUserSub(existingByEmail.sub as string, sub, email, name);
+    await migrateUserSub(existingByEmail.sub as string, sub, email, name, picture);
   } else {
     await sql`
-      INSERT INTO users (sub, email, name)
-      VALUES (${sub}, ${email}, ${name})
-      ON CONFLICT (sub) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, last_seen_at = NOW()
+      INSERT INTO users (sub, email, name, avatar_url)
+      VALUES (${sub}, ${email}, ${name}, ${picture})
+      ON CONFLICT (sub) DO UPDATE SET
+        email = EXCLUDED.email,
+        name = EXCLUDED.name,
+        avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+        last_seen_at = NOW()
     `;
   }
 }
@@ -119,7 +135,9 @@ export async function verifyGoogleJwt(
     (typeof payload.given_name === 'string' && payload.given_name) ||
     email;
 
-  return { sub, email, name };
+  const picture = typeof payload.picture === 'string' && payload.picture ? payload.picture : null;
+
+  return { sub, email, name, picture };
 }
 
 async function passesDomainGate(email: string): Promise<boolean> {

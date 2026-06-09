@@ -404,6 +404,32 @@ export async function fetchRecruiteeJobs(baseUrl: string, apiKey: string): Promi
   }));
 }
 
+/**
+ * Order applicants by the role's Recruitee pipeline order so the UI can render
+ * contiguous stage groups. `stageById` is built from `pipeline_template.stages`,
+ * whose insertion order is the pipeline order. Applicants with no/unknown stage
+ * sort last, preserving their original relative order (stable).
+ */
+function sortApplicantsByPipelineStage(
+  applicants: RecruiteeApplicant[],
+  stageById: Map<string, string>,
+): RecruiteeApplicant[] {
+  const rankByStageName = new Map<string, number>();
+  let rank = 0;
+  for (const stageName of stageById.values()) {
+    if (!rankByStageName.has(stageName)) rankByStageName.set(stageName, rank++);
+  }
+  const rankOf = (applicant: RecruiteeApplicant): number =>
+    applicant.status != null && rankByStageName.has(applicant.status)
+      ? rankByStageName.get(applicant.status)!
+      : Number.MAX_SAFE_INTEGER;
+
+  return applicants
+    .map((item, idx) => ({ item, idx, rank: rankOf(item) }))
+    .sort((a, b) => a.rank - b.rank || a.idx - b.idx)
+    .map((entry) => entry.item);
+}
+
 function mapListCandidateToApplicant(
   candidate: CandidateRow,
   offerId: string,
@@ -475,7 +501,7 @@ export async function fetchRecruiteeApplicants(
     mapListCandidateToApplicant(candidate, jobId, stageById, locationById),
   );
 
-  return [...enriched, ...rest];
+  return sortApplicantsByPipelineStage([...enriched, ...rest], stageById);
 }
 
 export async function fetchRecruiteeCandidateCv(

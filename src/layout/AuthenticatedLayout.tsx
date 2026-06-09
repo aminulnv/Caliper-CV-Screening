@@ -8,7 +8,7 @@ import { layoutConfig, getPageTitle } from '@/config/layout'
  * Use as the element of the protected layout route.
  */
 export default function AuthenticatedLayout() {
-  const { user, displayName, signOut, isAdmin } = useAuth()
+  const { user, displayName, avatarUrl, signOut, isAdmin } = useAuth()
 
   const navItems = useMemo(
     () => (isAdmin ? layoutConfig.navItems : layoutConfig.navItems.filter((item) => item.path !== '/settings')),
@@ -23,6 +23,7 @@ export default function AuthenticatedLayout() {
       userName={displayName}
       profileLabel={displayName}
       profileSubtext={user?.email}
+      avatarUrl={avatarUrl}
       onSignOut={signOut}
       showSettingsLink={isAdmin}
     />

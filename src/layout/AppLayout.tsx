@@ -20,6 +20,7 @@ interface AppLayoutProps extends AppLayoutConfig {
   topBarCenterSlot?: React.ReactNode
   topBarRightSlot?: React.ReactNode
   userName?: string
+  avatarUrl?: string | null
   languageLabel?: string
   onLanguageClick?: () => void
   showSettingsLink?: boolean
@@ -39,6 +40,7 @@ export function AppLayout({
   topBarCenterSlot,
   topBarRightSlot,
   userName,
+  avatarUrl,
   languageLabel,
   onLanguageClick,
   showSettingsLink = true,
@@ -84,6 +86,7 @@ export function AppLayout({
         bottomNavItem={bottomNavItem}
         bottomContent={sidebarBottomContent}
         userName={userName}
+        avatarUrl={avatarUrl}
         profileSubtext={profileSubtext}
         onSignOut={onSignOut}
         rightSlot={topBarRightSlot}

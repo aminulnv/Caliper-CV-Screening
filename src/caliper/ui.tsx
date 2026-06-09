@@ -10,6 +10,7 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
     case 'home':       return <svg {...p}><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>;
     case 'play':       return <svg {...p}><path d="M5 4l14 8-14 8z"/></svg>;
     case 'list':       return <svg {...p}><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>;
+    case 'columns':    return <svg {...p}><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="16" rx="1"/><rect x="17" y="4" width="4" height="16" rx="1"/></svg>;
     case 'layers':     return <svg {...p}><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>;
     case 'briefcase':  return <svg {...p}><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><path d="M20 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"/></svg>;
     case 'sliders':    return <svg {...p}><path d="M4 6h11M19 6h1M4 12h5M13 12h7M4 18h13M19 18h1"/><circle cx="17" cy="6" r="2"/><circle cx="11" cy="12" r="2"/><circle cx="19" cy="18" r="0"/></svg>;

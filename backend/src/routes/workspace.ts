@@ -27,6 +27,7 @@ function formatMember(row: Record<string, unknown>, currentUserId: string) {
     user_id: userId,
     email: (row.email) as string,
     name: (row.name as string | null) ?? null,
+    avatar_url: (row.avatarUrl ?? row.avatar_url ?? null) as string | null,
     role: (row.role) as UserRole,
     joined_at: (row.joinedAt ?? row.joined_at ?? row.createdAt ?? row.created_at) as string,
     is_current_user: userId === currentUserId,
@@ -72,6 +73,7 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
           sub: identity.sub,
           email: identity.email,
           name: identity.name,
+          picture: identity.picture,
         },
         workspace: {
           id: access.workspaceId,
@@ -97,7 +99,7 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
 
         const memberRows = await sql`
           SELECT ur.id, ur.user_id, ur.role, ur.created_at,
-                 u.email, u.name
+                 u.email, u.name, u.avatar_url
           FROM user_roles ur
           JOIN users u ON u.sub = ur.user_id
           WHERE ur.workspace_id = ${workspaceId}

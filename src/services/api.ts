@@ -273,7 +273,7 @@ export type MeResponse =
     }
   | {
       access: 'active';
-      user: { sub: string; email: string; name: string };
+      user: { sub: string; email: string; name: string; picture?: string | null };
       workspace: { id: string; name: string };
       role: UserRole;
     };
@@ -283,6 +283,7 @@ export interface WorkspaceMember {
   user_id: string;
   email: string;
   name: string | null;
+  avatar_url?: string | null;
   role: UserRole;
   joined_at: string;
   is_current_user: boolean;

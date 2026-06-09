@@ -1,4 +1,4 @@
-import { Briefcase, FileUser, List, Settings } from 'lucide-react'
+import { Briefcase, DraftingCompass, List, Settings } from 'lucide-react'
 import type { AppLayoutConfig } from '@/layout'
 import { assets } from './assets'
 
@@ -9,7 +9,7 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
   brand: {
     name: 'Caliper',
     subtitle: 'CV Screening',
-    icon: FileUser,
+    icon: DraftingCompass,
     logoColor: assets.brandLogoColor,
     logoUrl: assets.logoUrl || undefined,
   },

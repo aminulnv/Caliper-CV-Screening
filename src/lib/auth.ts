@@ -5,6 +5,7 @@ export type AuthTokenUser = {
   sub: string;
   email: string;
   name: string;
+  picture: string | null;
 };
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
@@ -45,7 +46,8 @@ export function parseUserFromToken(token: string): AuthTokenUser | null {
       (typeof payload.name === 'string' && payload.name) ||
       (typeof payload.given_name === 'string' && payload.given_name) ||
       email;
-    return { sub, email, name };
+    const picture = typeof payload.picture === 'string' && payload.picture ? payload.picture : null;
+    return { sub, email, name, picture };
   } catch {
     return null;
   }

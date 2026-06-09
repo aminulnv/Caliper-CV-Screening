@@ -215,6 +215,253 @@ a { color: inherit; text-decoration: none; }
 .tbl .col-num { font-variant-numeric: tabular-nums; }
 .tbl .col-right { text-align: right; }
 
+/* Stage / section group header rows inside a .tbl */
+.tbl tbody tr.tbl-group td {
+  height: auto;
+  padding: 9px var(--pad-cell) 8px;
+  background: color-mix(in srgb, var(--bg-sunk) 55%, var(--surface));
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
+}
+.tbl tbody tr.tbl-group:first-child td { border-top: none; }
+.tbl tbody tr.tbl-group:hover td {
+  background: color-mix(in srgb, var(--bg-sunk) 55%, var(--surface));
+}
+.tbl-group__label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-soft);
+}
+.tbl-group__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+.tbl-group__count {
+  margin-left: 10px; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Candidate board (stage columns) ──────────────────────── */
+.cand-board {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.cand-board::-webkit-scrollbar { height: 9px; }
+.cand-board::-webkit-scrollbar-thumb {
+  background: var(--faint);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+}
+.cand-board::-webkit-scrollbar-track { background: transparent; }
+
+.cand-col {
+  flex: 0 0 clamp(244px, 23vw, 296px);
+  width: clamp(244px, 23vw, 296px);
+  display: flex;
+  flex-direction: column;
+  max-height: 564px;
+  background: color-mix(in srgb, var(--bg-sunk) 42%, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  scroll-snap-align: start;
+  animation: cand-col-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--col-index, 0) * 65ms);
+}
+.cand-col__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.cand-col__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.cand-col__title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cand-col__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.cand-col__count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+.cand-col__screen {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--brand-primary-ink);
+  background: var(--brand-primary-soft);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.cand-col__screen:hover {
+  background: color-mix(in srgb, var(--brand-primary) 22%, white);
+}
+.cand-col__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 56px;
+}
+.cand-col__empty {
+  padding: 16px 10px;
+  font-size: 12px;
+  color: var(--subtle);
+  text-align: center;
+}
+.cand-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 11px;
+  box-shadow: var(--shadow-1);
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.18s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.18s ease;
+}
+.cand-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-2);
+  border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--line));
+}
+.cand-card__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.cand-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.cand-card__loc {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cand-card__cv {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.cand-card__cv:hover {
+  background: var(--bg-sunk);
+  color: var(--ink);
+  border-color: var(--faint);
+}
+
+/* Segment (stage) filter chips — used in the run-screening sheet */
+.seg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.seg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.seg-chip:hover {
+  border-color: var(--faint);
+  background: var(--bg-sunk);
+}
+.seg-chip.is-active {
+  color: var(--brand-primary-contrast);
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+}
+.seg-chip__n {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--bg-sunk);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.seg-chip.is-active .seg-chip__n {
+  color: var(--brand-primary-contrast);
+  background: color-mix(in srgb, var(--brand-primary-contrast) 22%, transparent);
+}
+
+.cand-col__screen:focus-visible,
+.cand-card__cv:focus-visible,
+.seg-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand-primary) 45%, transparent);
+  outline-offset: 2px;
+}
+
+@keyframes cand-col-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cand-col { animation: none; }
+  .cand-card { transition: none; }
+  .cand-card:hover { transform: none; }
+}
+
 .tbl--fixed {
   table-layout: fixed;
   width: 100%;
@@ -1004,6 +1251,28 @@ button.wiz__step {
   min-width: 0;
   line-height: 1.4;
   color: var(--ink-soft);
+}
+.crit-list__chips .chip__crit-name--input {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+.crit-list__chips .chip__crit-name--input:hover {
+  border-color: var(--line-soft);
+  background: var(--bg);
+}
+.crit-list__chips .chip__crit-name--input:focus {
+  outline: none;
+  border-color: var(--line);
+  background: var(--bg);
+  box-shadow: 0 0 0 2px oklch(0.92 0.02 280 / 0.45);
 }
 .crit-list__chips .chip__crit-actions {
   display: inline-flex;

@@ -244,6 +244,14 @@
   font-weight: 700;
   color: var(--brand-primary-contrast);
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.shell-profile-trigger__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .shell-profile-trigger__name {

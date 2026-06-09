@@ -22,6 +22,7 @@ type AuthContextValue = {
   canEdit: boolean
   isAdmin: boolean
   displayName: string
+  avatarUrl: string | null
   signIn: (idToken: string) => void
   signOut: () => Promise<void>
   refreshSession: () => Promise<void>
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           sub: me.user.sub,
           email: me.user.email,
           name: me.user.name ?? prev?.name ?? me.user.email,
+          picture: me.user.picture ?? prev?.picture ?? null,
         }))
       }
     } catch {
@@ -113,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         canEdit: canEditWorkspace(role),
         isAdmin: isWorkspaceAdmin(role),
         displayName: user?.name ?? '',
+        avatarUrl: user?.picture ?? null,
         signIn,
         signOut,
         refreshSession,

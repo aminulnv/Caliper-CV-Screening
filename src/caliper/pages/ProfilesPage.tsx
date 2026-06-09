@@ -95,7 +95,7 @@ function delayJob(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteria }) {
+function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
   const [profile, setProfile] = React.useState(initialProfile);
   const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
 
@@ -128,6 +128,7 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
   const [step, setStep] = React.useState(1);
   const [cvMode, setCvMode] = React.useState(profile.source === 'recruitee' ? 'recruitee' : 'manual');
   const [recruiteeRowSelected, setRecruiteeRowSelected] = React.useState([]);
+  const [stageScope, setStageScope] = React.useState(initialStage ?? 'all');
   const [uploadedFiles, setUploadedFiles] = React.useState([]);
   const [recruiteeApplicants, setRecruiteeApplicants] = React.useState([]);
   const [recruiteeLoading, setRecruiteeLoading] = React.useState(false);
@@ -154,11 +155,13 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
       setRecruiteeLoading(false);
       return;
     }
+    const pickInitial = (apps) =>
+      apps.map((a) => !initialStage || initialStage === 'all' || (a.status || 'No stage set') === initialStage);
     let cancelled = false;
     const cached = getCachedApplicants(profile.sourceRef);
     if (cached?.length) {
       setRecruiteeApplicants(cached);
-      setRecruiteeRowSelected(cached.map(() => true));
+      setRecruiteeRowSelected(pickInitial(cached));
       setRecruiteeLoading(false);
     } else {
       setRecruiteeLoading(true);
@@ -167,7 +170,7 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
       .then((apps) => {
         if (cancelled) return;
         setRecruiteeApplicants(apps);
-        setRecruiteeRowSelected(apps.map(() => true));
+        setRecruiteeRowSelected(pickInitial(apps));
       })
       .catch(() => {
         if (!cancelled) setRecruiteeApplicants([]);
@@ -176,12 +179,13 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
         if (!cancelled) setRecruiteeLoading(false);
       });
     return () => { cancelled = true; };
-  }, [profile.id, profile.sourceRef, profile.source]);
+  }, [profile.id, profile.sourceRef, profile.source, initialStage]);
 
   const rows = recruiteeApplicants.map((a) => ({
     id: a.id,
     name: a.name || 'Unknown',
     loc: a.location || '—',
+    stage: a.status || 'No stage set',
     cv_url: a.cv_url,
     status: a.cv_url ? 'ok' : 'warn',
     reason: a.cv_url ? '' : 'No CV attached in Recruitee',
@@ -190,6 +194,33 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
   const rowSel = recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true);
   const nSelectedRec = rowSel.filter(Boolean).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
+
+  // Pipeline stages (segments), preserving the incoming order from Recruitee.
+  const stageOrder = [];
+  const stageCounts = {};
+  rows.forEach((r) => {
+    if (!(r.stage in stageCounts)) { stageCounts[r.stage] = 0; stageOrder.push(r.stage); }
+    stageCounts[r.stage] += 1;
+  });
+  const sheetGroups = stageOrder.map((stage) => ({
+    stage,
+    rows: rows.map((r, i) => ({ r, i })).filter((x) => x.r.stage === stage),
+  }));
+
+  const applyStageScope = (stage) => {
+    setStageScope(stage);
+    setRecruiteeRowSelected(rows.map((r) => stage === 'all' || r.stage === stage));
+  };
+  const toggleRecruiteeRow = (i) => {
+    const next = rowSel.slice();
+    next[i] = !next[i];
+    setRecruiteeRowSelected(next);
+    setStageScope('custom');
+  };
+  const toggleStageRows = (stage, select) => {
+    setRecruiteeRowSelected(rows.map((r, i) => (r.stage === stage ? select : rowSel[i])));
+    setStageScope('custom');
+  };
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
@@ -434,17 +465,42 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
                     <div className="callout">No applicants found in Recruitee for this position.</div>
                   ) : (
                     <>
-                      <div className="row" style={{ justifyContent: 'space-between' }}>
-                        <div className="row" style={{ gap: 8 }}>
-                          <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => true))}>Select all</Btn>
-                          <Btn size="sm" variant="ghost" onClick={() => setRecruiteeRowSelected(rows.map(() => false))}>Unselect all</Btn>
-                          <span className="muted mono" style={{ fontSize: 11 }}>{nSelectedRec} of {rows.length} selected</span>
-                        </div>
+                      <div className="wiz__pane-sub" style={{ marginBottom: 2 }}>
+                        Screen everyone, or pick a pipeline stage to screen just that segment.
+                      </div>
+                      <div className="seg-chips">
+                        <button
+                          type="button"
+                          className={`seg-chip${stageScope === 'all' ? ' is-active' : ''}`}
+                          onClick={() => applyStageScope('all')}
+                        >
+                          All stages <span className="seg-chip__n">{rows.length}</span>
+                        </button>
+                        {stageOrder.map((stage) => (
+                          <button
+                            key={stage}
+                            type="button"
+                            className={`seg-chip${stageScope === stage ? ' is-active' : ''}`}
+                            onClick={() => applyStageScope(stage)}
+                          >
+                            {stage} <span className="seg-chip__n">{stageCounts[stage]}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {stageScope === 'all'
+                            ? 'Screening every applicant.'
+                            : stageScope === 'custom'
+                              ? 'Custom selection.'
+                              : <>Screening the <strong>{stageScope}</strong> stage.</>}
+                          {' '}<span className="mono">{nSelectedRec}</span> of <span className="mono">{rows.length}</span> selected.
+                        </span>
                         {nWarnSelected > 0
                           ? <Badge tone="warn" dot>{nWarnSelected} without CV</Badge>
                           : <Badge tone="ok" dot>All have CVs</Badge>}
                       </div>
-                      <div className="card" style={{ maxHeight: 280, overflow: 'auto' }}>
+                      <div className="card" style={{ maxHeight: 320, overflow: 'auto' }}>
                         <table className="tbl">
                           <thead>
                             <tr>
@@ -455,34 +511,57 @@ function RunScreeningSheet({ profile: initialProfile, onClose, go, onEditCriteri
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((c, i) => (
-                              <tr
-                                key={c.id}
-                                className={rowSel[i] ? 'is-selected' : ''}
-                                onClick={() => {
-                                  const next = [...rowSel];
-                                  next[i] = !next[i];
-                                  setRecruiteeRowSelected(next);
-                                }}
-                                style={{ cursor: 'pointer' }}
-                              >
-                                <td>
-                                  <span style={{
-                                    display: 'inline-grid', placeItems: 'center', width: 16, height: 16,
-                                    border: `1.5px solid ${rowSel[i] ? 'var(--brand-primary)' : 'var(--faint)'}`,
-                                    background: rowSel[i] ? 'var(--brand-primary)' : 'var(--surface)',
-                                    borderRadius: 3, color: 'var(--bg)',
-                                  }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
-                                </td>
-                                <td><strong style={{ fontWeight: 500 }}>{c.name}</strong></td>
-                                <td className="muted">{c.loc}</td>
-                                <td>
-                                  {c.status === 'ok'
-                                    ? <Badge tone="ok" dot>Attached</Badge>
-                                    : <span className="row" style={{ gap: 6 }}><Badge tone="warn" dot>Missing</Badge><span className="muted" style={{ fontSize: 11 }}>{c.reason}</span></span>}
-                                </td>
-                              </tr>
-                            ))}
+                            {sheetGroups.map((g) => {
+                              const groupSel = g.rows.filter((x) => rowSel[x.i]).length;
+                              const allSel = g.rows.length > 0 && groupSel === g.rows.length;
+                              return (
+                                <React.Fragment key={g.stage}>
+                                  <tr className="tbl-group">
+                                    <td colSpan={4}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <span className="tbl-group__label">
+                                          <span className="tbl-group__dot" />
+                                          {g.stage}
+                                        </span>
+                                        <span className="tbl-group__count">{groupSel}/{g.rows.length} selected</span>
+                                        <Btn
+                                          size="sm"
+                                          variant="ghost"
+                                          style={{ marginLeft: 'auto' }}
+                                          onClick={() => toggleStageRows(g.stage, !allSel)}
+                                        >
+                                          {allSel ? 'Clear' : 'Select stage'}
+                                        </Btn>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                  {g.rows.map(({ r: c, i }) => (
+                                    <tr
+                                      key={c.id}
+                                      className={rowSel[i] ? 'is-selected' : ''}
+                                      onClick={() => toggleRecruiteeRow(i)}
+                                      style={{ cursor: 'pointer' }}
+                                    >
+                                      <td>
+                                        <span style={{
+                                          display: 'inline-grid', placeItems: 'center', width: 16, height: 16,
+                                          border: `1.5px solid ${rowSel[i] ? 'var(--brand-primary)' : 'var(--faint)'}`,
+                                          background: rowSel[i] ? 'var(--brand-primary)' : 'var(--surface)',
+                                          borderRadius: 3, color: 'var(--bg)',
+                                        }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
+                                      </td>
+                                      <td><strong style={{ fontWeight: 500 }}>{c.name}</strong></td>
+                                      <td className="muted">{c.loc}</td>
+                                      <td>
+                                        {c.status === 'ok'
+                                          ? <Badge tone="ok" dot>Attached</Badge>
+                                          : <span className="row" style={{ gap: 6 }}><Badge tone="warn" dot>Missing</Badge><span className="muted" style={{ fontSize: 11 }}>{c.reason}</span></span>}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </React.Fragment>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -733,6 +812,7 @@ function ProfilesPage({ go, route }) {
   const [filter, setFilter] = React.useState('all');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [runSheetProfileId, setRunSheetProfileId] = React.useState(null);
+  const [runSheetStage, setRunSheetStage] = React.useState(null);
   const [showRunPicker, setShowRunPicker] = React.useState(false);
   const [liveProfiles, setLiveProfiles] = React.useState(() =>
     initialCache?.jobs?.length ? shapeJobsList(initialCache.jobs) : null,
@@ -817,12 +897,13 @@ function ProfilesPage({ go, route }) {
             setEditorInitialTab(null);
           }}
           go={go}
-          onOpenRunSheet={() => setRunSheetProfileId(profile.id)}
+          onOpenRunSheet={(stage) => { setRunSheetStage(stage ?? null); setRunSheetProfileId(profile.id); }}
         />
         {canEdit && runSheetProfileId === profile.id && (
           <RunScreeningSheet
             profile={profile}
-            onClose={() => setRunSheetProfileId(null)}
+            initialStage={runSheetStage}
+            onClose={() => { setRunSheetStage(null); setRunSheetProfileId(null); }}
             go={go}
             onEditCriteria={() => {
               setRunSheetProfileId(null);
@@ -1038,6 +1119,7 @@ function ProfilesPage({ go, route }) {
           onClose={() => setShowRunPicker(false)}
           onPick={(id) => {
             setShowRunPicker(false);
+            setRunSheetStage(null);
             setRunSheetProfileId(id);
           }}
         />
@@ -1045,7 +1127,8 @@ function ProfilesPage({ go, route }) {
       {runSheetProfile && (
         <RunScreeningSheet
           profile={runSheetProfile}
-          onClose={() => setRunSheetProfileId(null)}
+          initialStage={runSheetStage}
+          onClose={() => { setRunSheetStage(null); setRunSheetProfileId(null); }}
           go={go}
           onEditCriteria={() => {
             const jobId = runSheetProfileId;
@@ -1743,6 +1826,7 @@ function ProfileTabs({
           recruiteeError={recruiteeAppsError}
           completedRuns={completedRunsForJob}
           go={go}
+          canEdit={canEdit}
           onOpenRunSheet={onOpenRunSheet}
         />
       )}
@@ -2065,15 +2149,15 @@ function CriteriaPane({
       />
       <CriteriaList kind="must" label="Must-have criteria"
         help="Missing or weak evidence applies a heavy score penalty. Quoted CV evidence counts fully; inferred matches count for less."
-        items={mh} setItems={setMH}
+        items={mh} setItems={setMH} canEdit={canEdit}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'must' }); setShowBias(true); }}/>
       <CriteriaList kind="nice" label="Nice-to-have"
         help="Boosts when matched with evidence. Doesn't penalise when missing."
-        items={nh} setItems={setNH}
+        items={nh} setItems={setNH} canEdit={canEdit}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'nice' }); setShowBias(true); }}/>
       <CriteriaList kind="flag" label="Red flags"
         help="If matched, points are deducted (weight ×4 per flag, ×2 if inferred) and the candidate is marked Flagged."
-        items={rf} setItems={setRF}
+        items={rf} setItems={setRF} canEdit={canEdit}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'flag' }); setShowBias(true); }}/>
       {showBias && (
         <div className="bias-banner">
@@ -2254,6 +2338,57 @@ function RecruiteeCvModal({ candidateId, candidateName, onClose }) {
   );
 }
 
+/* ----- Stage board: applicants laid out as columns per pipeline stage ----- */
+function CandidateBoard({ stageGroups, canEdit, onView, onScreenStage }) {
+  return (
+    <div className="cand-board" role="list" aria-label="Applicants by pipeline stage">
+      {stageGroups.map((group, ci) => (
+        <section className="cand-col" role="listitem" key={group.stage} style={{ ['--col-index']: ci }}>
+          <header className="cand-col__head">
+            <span className="cand-col__title">
+              <span className="cand-col__dot" />
+              <span className="cand-col__title-text" title={group.stage}>{group.stage}</span>
+            </span>
+            <span className="cand-col__count">{group.items.length}</span>
+            {canEdit && onScreenStage && group.items.length > 0 && (
+              <button
+                type="button"
+                className="cand-col__screen"
+                onClick={() => onScreenStage(group.stage)}
+                title={`Run screening on the ${group.items.length} applicant${group.items.length === 1 ? '' : 's'} in “${group.stage}”`}
+              >
+                <Icon name="play" size={11} /> Screen
+              </button>
+            )}
+          </header>
+          <div className="cand-col__body">
+            {group.items.length === 0 ? (
+              <div className="cand-col__empty">No applicants</div>
+            ) : (
+              group.items.map((a) => (
+                <article className="cand-card" key={a.id}>
+                  <div className="cand-card__name">{a.name || 'Unknown'}</div>
+                  <div className="cand-card__meta">
+                    <span className="cand-card__loc">{a.location || '—'}</span>
+                    <button
+                      type="button"
+                      className="cand-card__cv"
+                      onClick={() => onView(a)}
+                      aria-label={`View CV for ${a.name || 'applicant'}`}
+                    >
+                      <Icon name="eye" size={11} /> CV
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /* ----- Recruitee applicants + screened candidates ----- */
 function JobCandidatesPane({
   profile,
@@ -2263,15 +2398,35 @@ function JobCandidatesPane({
   recruiteeError,
   completedRuns,
   go,
+  canEdit = true,
   onOpenRunSheet,
 }) {
   const [cvPreview, setCvPreview] = React.useState(null);
+  const [view, setView] = React.useState('board');
 
   const uniquePeople = React.useMemo(() => {
     const s = new Set();
     rows.forEach((r) => s.add(r.name.toLowerCase()));
     return s.size;
   }, [rows]);
+
+  // Group applicants by their Recruitee pipeline stage, preserving the incoming
+  // order (the API returns them in pipeline order) so sections read top→bottom.
+  const stageGroups = React.useMemo(() => {
+    const groups = [];
+    const byStage = new Map();
+    for (const a of recruiteeApps) {
+      const key = a.status || 'No stage set';
+      let group = byStage.get(key);
+      if (!group) {
+        group = { stage: key, items: [] };
+        byStage.set(key, group);
+        groups.push(group);
+      }
+      group.items.push(a);
+    }
+    return groups;
+  }, [recruiteeApps]);
 
   const hasRecruitee = profile.source === 'recruitee' && profile.sourceRef;
   const hasScreened = rows.length > 0 && completedRuns.length > 0;
@@ -2318,66 +2473,108 @@ function JobCandidatesPane({
     <div className="col" style={{ gap: 14 }}>
       {showRecruitee && (
         <>
-          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-            {profile.applicantsCount != null && recruiteeApps.length > 0 && recruiteeApps.length < profile.applicantsCount
-              ? (
-                <>
-                  Showing <strong>{recruiteeApps.length}</strong> of{' '}
-                  <strong>{profile.applicantsCount}</strong> applicants in Recruitee
-                  {recruiteeLoading ? ' · loading…' : ' (first batch loaded for screening)'}
-                  .
-                </>
-              )
-              : (
-                <>
-                  <strong>{recruiteeApps.length || profile.applicantsCount || 0}</strong> applicant
-                  {(recruiteeApps.length || profile.applicantsCount || 0) === 1 ? '' : 's'} in Recruitee
-                  {recruiteeLoading && ' · loading…'}
-                  .
-                </>
-              )}
-            {' '}Use <strong>Run screening</strong> to score CVs from this list.
-          </div>
-          <div className="card">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Applicant</th>
-                  <th style={{ width: 140 }}>Location</th>
-                  <th style={{ width: 140 }}>Stage</th>
-                  <th style={{ width: 100 }}>CV</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recruiteeLoading && recruiteeApps.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="muted" style={{ padding: 20, fontSize: 12.5 }}>
-                      Loading applicants…
-                    </td>
-                  </tr>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, flex: '1 1 300px', minWidth: 0 }}>
+              {profile.applicantsCount != null && recruiteeApps.length > 0 && recruiteeApps.length < profile.applicantsCount
+                ? (
+                  <>
+                    Showing <strong>{recruiteeApps.length}</strong> of{' '}
+                    <strong>{profile.applicantsCount}</strong> applicants in Recruitee
+                    {recruiteeLoading ? ' · loading…' : ' (first batch loaded for screening)'}
+                    .
+                  </>
+                )
+                : (
+                  <>
+                    <strong>{recruiteeApps.length || profile.applicantsCount || 0}</strong> applicant
+                    {(recruiteeApps.length || profile.applicantsCount || 0) === 1 ? '' : 's'} in Recruitee
+                    {recruiteeLoading && ' · loading…'}
+                    .
+                  </>
                 )}
-                {recruiteeApps.map((a) => (
-                  <tr key={a.id}>
-                    <td>
-                      <div style={{ fontWeight: 500, fontSize: 13.5 }}>{a.name || 'Unknown'}</div>
-                    </td>
-                    <td className="muted">{a.location || '—'}</td>
-                    <td className="muted" style={{ fontSize: 12 }}>{a.status || '—'}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <Btn
-                        size="sm"
-                        variant="ghost"
-                        icon="eye"
-                        onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
-                      >
-                        View
-                      </Btn>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              {' '}
+              {canEdit
+                ? <>Screen a whole stage from its column, or <strong>Run screening</strong> for everyone.</>
+                : 'Grouped by Recruitee pipeline stage.'}
+            </div>
+            <Segmented value={view} onChange={setView} options={[
+              { value: 'board', label: 'Board' },
+              { value: 'list', label: 'List' },
+            ]}/>
           </div>
+
+          {recruiteeLoading && recruiteeApps.length === 0 ? (
+            <div className="card">
+              <div className="muted" style={{ padding: 20, fontSize: 12.5 }}>Loading applicants…</div>
+            </div>
+          ) : view === 'board' ? (
+            <CandidateBoard
+              stageGroups={stageGroups}
+              canEdit={canEdit}
+              onView={(a) => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
+              onScreenStage={(stage) => onOpenRunSheet && onOpenRunSheet(stage)}
+            />
+          ) : (
+            <div className="card">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Applicant</th>
+                    <th style={{ width: 160 }}>Location</th>
+                    <th style={{ width: 100 }}>CV</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stageGroups.map((group) => (
+                    <React.Fragment key={group.stage}>
+                      <tr className="tbl-group">
+                        <td colSpan={3}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="tbl-group__label">
+                              <span className="tbl-group__dot" />
+                              {group.stage}
+                            </span>
+                            <span className="tbl-group__count">
+                              {group.items.length} {group.items.length === 1 ? 'candidate' : 'candidates'}
+                            </span>
+                            {canEdit && onOpenRunSheet && (
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                icon="play"
+                                style={{ marginLeft: 'auto' }}
+                                onClick={() => onOpenRunSheet(group.stage)}
+                              >
+                                Screen stage
+                              </Btn>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {group.items.map((a) => (
+                        <tr key={a.id}>
+                          <td>
+                            <div style={{ fontWeight: 500, fontSize: 13.5 }}>{a.name || 'Unknown'}</div>
+                          </td>
+                          <td className="muted">{a.location || '—'}</td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <Btn
+                              size="sm"
+                              variant="ghost"
+                              icon="eye"
+                              onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
+                            >
+                              View
+                            </Btn>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
@@ -2588,10 +2785,12 @@ function AuditPane({ jobId, isHero, active, onCount, go }) {
 
 
 /* ----- Criteria list (shared) ----- */
-function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
+function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit = true }) {
   const [input, setInput] = React.useState('');
   const [weight, setWeight] = React.useState(kind === 'must' ? 5 : 3);
   const [inputError, setInputError] = React.useState('');
+  const [renameErrors, setRenameErrors] = React.useState({});
+  const focusNamesRef = React.useRef({});
 
   const draftText = input.trim();
   const hasDraft = draftText.length > 0;
@@ -2615,10 +2814,34 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
   };
   const remove = (id) => setItems(items.filter(x => x.id !== id));
   const setWeightFor = (id, w) => setItems(items.map(x => x.id === id ? { ...x, weight: w } : x));
+  const renameItem = (id, name) => {
+    setRenameErrors((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setItems(items.map(x => x.id === id ? { ...x, name } : x));
+  };
+  const commitRename = (id, rawName) => {
+    const trimmed = rawName.trim();
+    const fallback = focusNamesRef.current[id] ?? items.find(x => x.id === id)?.name ?? '';
+    if (!trimmed) {
+      renameItem(id, fallback);
+      return;
+    }
+    const blocked = getProtectedAttributeError(trimmed);
+    if (blocked) {
+      setRenameErrors((prev) => ({ ...prev, [id]: blocked }));
+      renameItem(id, fallback);
+      return;
+    }
+    const biased = getBiasWarning(trimmed);
+    setItems(items.map(x => x.id === id ? { ...x, name: trimmed, ...(biased ? { biased: true } : {}) } : x));
+  };
 
   return (
     <div className="crit-list">
-      {hasDraft && (
+      {canEdit && hasDraft && (
         <div className="callout" style={{ marginBottom: 10, fontSize: 12.5 }}>
           You have unsaved text in the box below. Click <strong>+ Add</strong>, then{' '}
           <strong>Save criteria &amp; model</strong> — typing alone does not add a criterion.
@@ -2641,39 +2864,62 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn }) {
             ? <span className="muted" style={{ fontSize: 12, padding: '6px 2px' }}>No criteria yet — add one below.</span>
             : items.map(it => (
               <span key={it.id} className={`chip chip--${kind}`}>
-                <span className="chip__crit-name">{it.name}</span>
+                {canEdit ? (
+                  <input
+                    className="chip__crit-name chip__crit-name--input"
+                    value={it.name}
+                    aria-label={`Edit criterion: ${it.name}`}
+                    onFocus={() => { focusNamesRef.current[it.id] = it.name; }}
+                    onChange={(e) => renameItem(it.id, e.target.value)}
+                    onBlur={(e) => commitRename(it.id, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  />
+                ) : (
+                  <span className="chip__crit-name">{it.name}</span>
+                )}
+                {renameErrors[it.id] && (
+                  <span style={{ flex: '1 1 100%', fontSize: 11, color: 'var(--bad)', lineHeight: 1.35 }}>
+                    {renameErrors[it.id]}
+                  </span>
+                )}
                 <span className="chip__crit-actions">
-                  <WeightStepper value={it.weight} onChange={(w) => setWeightFor(it.id, w)}/>
-                  <button type="button" className="chip__x" onClick={() => remove(it.id)} aria-label={`Remove ${it.name}`}><Icon name="x" size={10} stroke={2}/></button>
+                  <WeightStepper value={it.weight} onChange={(w) => setWeightFor(it.id, w)} disabled={!canEdit}/>
+                  {canEdit && (
+                    <button type="button" className="chip__x" onClick={() => remove(it.id)} aria-label={`Remove ${it.name}`}><Icon name="x" size={10} stroke={2}/></button>
+                  )}
                 </span>
               </span>
             ))}
         </div>
-        <div className="crit-list__add">
-          <input className="inp" placeholder={`Add a ${kind === 'must' ? 'must-have' : kind === 'nice' ? 'nice-to-have' : 'red flag'} criterion…`}
-                 value={input}
-                 onChange={(e) => { setInput(e.target.value); if (inputError) setInputError(''); }}
-                 onKeyDown={(e) => e.key === 'Enter' && add()}
-                 style={{ flex: 1 }}/>
-          <div className="row" style={{ gap: 4 }}>
-            <span className="mono muted" style={{ fontSize: 11 }}>weight</span>
-            <WeightStepper value={weight} onChange={setWeight}/>
-          </div>
-          <Btn icon="plus" onClick={add}>Add</Btn>
-        </div>
-        {inputError && (
-          <p style={{ fontSize: 12, color: 'var(--bad)', margin: '8px 0 0' }}>{inputError}</p>
+        {canEdit && (
+          <>
+            <div className="crit-list__add">
+              <input className="inp" placeholder={`Add a ${kind === 'must' ? 'must-have' : kind === 'nice' ? 'nice-to-have' : 'red flag'} criterion…`}
+                     value={input}
+                     onChange={(e) => { setInput(e.target.value); if (inputError) setInputError(''); }}
+                     onKeyDown={(e) => e.key === 'Enter' && add()}
+                     style={{ flex: 1 }}/>
+              <div className="row" style={{ gap: 4 }}>
+                <span className="mono muted" style={{ fontSize: 11 }}>weight</span>
+                <WeightStepper value={weight} onChange={setWeight}/>
+              </div>
+              <Btn icon="plus" onClick={add}>Add</Btn>
+            </div>
+            {inputError && (
+              <p style={{ fontSize: 12, color: 'var(--bad)', margin: '8px 0 0' }}>{inputError}</p>
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-const WeightStepper = ({ value, onChange }) => (
-  <span className="chip__w" style={{ padding: 0, gap: 2 }}>
-    <button onClick={() => onChange(Math.max(1, value - 1))} style={stepBtnStyle}>−</button>
+const WeightStepper = ({ value, onChange, disabled = false }) => (
+  <span className="chip__w" style={{ padding: 0, gap: 2, opacity: disabled ? 0.55 : 1 }}>
+    <button type="button" disabled={disabled} onClick={() => onChange(Math.max(1, value - 1))} style={stepBtnStyle}>−</button>
     <span style={{ padding: '0 4px' }}>×{value}</span>
-    <button onClick={() => onChange(Math.min(5, value + 1))} style={stepBtnStyle}>+</button>
+    <button type="button" disabled={disabled} onClick={() => onChange(Math.min(5, value + 1))} style={stepBtnStyle}>+</button>
   </span>
 );
 const stepBtnStyle = {

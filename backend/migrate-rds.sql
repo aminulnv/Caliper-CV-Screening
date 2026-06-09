@@ -5,8 +5,12 @@ create table if not exists users (
   sub text primary key,
   email text not null unique,
   name text,
+  avatar_url text,
   last_seen_at timestamptz default now()
 );
+
+-- Backfill column for workspaces created before avatar support
+alter table users add column if not exists avatar_url text;
 
 -- Workspaces (tenants)
 create table if not exists workspaces (

@@ -23,6 +23,25 @@ function memberInitials(name, email) {
   return (email?.[0] ?? '?').toUpperCase();
 }
 
+function MemberAvatar({ name, email, avatarUrl }) {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => { setFailed(false); }, [avatarUrl]);
+  const showImage = Boolean(avatarUrl) && !failed;
+  return (
+    <span style={{
+      width: 28, height: 28, borderRadius: '50%',
+      background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
+      fontSize: 10, fontWeight: 600, flexShrink: 0, overflow: 'hidden',
+    }}>
+      {showImage
+        ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer"
+            onError={() => setFailed(true)}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : memberInitials(name, email)}
+    </span>
+  );
+}
+
 function formatJoined(iso) {
   try {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
@@ -273,11 +292,7 @@ function SettingsPage() {
                   <tr key={m.id}>
                     <td>
                       <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-                        <span style={{
-                          width: 28, height: 28, borderRadius: '50%',
-                          background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
-                          fontSize: 10, fontWeight: 600, flexShrink: 0,
-                        }}>{memberInitials(m.name, m.email)}</span>
+                        <MemberAvatar name={m.name} email={m.email} avatarUrl={m.avatar_url} />
                         <div>
                           <div style={{ fontWeight: 500 }}>
                             {m.name || m.email}

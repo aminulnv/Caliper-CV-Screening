@@ -59,12 +59,14 @@ function NotificationBellComingSoon() {
 
 function ProfileDropdown({
   userName,
+  avatarUrl,
   profileSubtext,
   onSignOut,
   isMobile,
   showSettingsLink = true,
 }: {
   userName?: string
+  avatarUrl?: string | null
   profileSubtext?: string
   onSignOut?: () => void
   isMobile?: boolean
@@ -72,6 +74,9 @@ function ProfileDropdown({
 }) {
   const [open, setOpen] = useState(false)
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
+  const [avatarFailed, setAvatarFailed] = useState(false)
+  const initials = userName ? userName.slice(0, 2).toUpperCase() : '?'
+  const showAvatarImage = Boolean(avatarUrl) && !avatarFailed
   const containerRef = useRef<HTMLDivElement>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const navigate = useNavigate()
@@ -84,6 +89,10 @@ function ProfileDropdown({
   }
 
   useEffect(() => () => clearCloseTimeout(), [])
+
+  useEffect(() => {
+    setAvatarFailed(false)
+  }, [avatarUrl])
 
   useEffect(() => {
     if (!open || isMobile) return
@@ -119,7 +128,17 @@ function ProfileDropdown({
         aria-expanded={open}
       >
         <div className="shell-profile-trigger__avatar">
-          {userName ? userName.slice(0, 2).toUpperCase() : '?'}
+          {showAvatarImage ? (
+            <img
+              className="shell-profile-trigger__avatar-img"
+              src={avatarUrl as string}
+              alt=""
+              referrerPolicy="no-referrer"
+              onError={() => setAvatarFailed(true)}
+            />
+          ) : (
+            initials
+          )}
         </div>
         {!isMobile && userName != null && (
           <span className="shell-profile-trigger__name">{userName}</span>
@@ -182,6 +201,7 @@ export interface AppNavBarProps {
   bottomNavItem?: NavItem
   bottomContent?: ReactNode
   userName?: string
+  avatarUrl?: string | null
   profileSubtext?: string
   onSignOut?: () => void
   rightSlot?: ReactNode
@@ -422,6 +442,7 @@ export function AppNavBar({
   bottomNavItem,
   bottomContent,
   userName,
+  avatarUrl,
   profileSubtext,
   onSignOut,
   rightSlot,
@@ -505,6 +526,7 @@ export function AppNavBar({
             <NotificationBellComingSoon />
             <ProfileDropdown
               userName={userName}
+              avatarUrl={avatarUrl}
               profileSubtext={profileSubtext}
               onSignOut={onSignOut}
               showSettingsLink={showSettingsLink}
