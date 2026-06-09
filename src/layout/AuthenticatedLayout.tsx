@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { AppLayout } from './AppLayout'
 import { useAuth } from '@/contexts/AuthContext'
 import { layoutConfig, getPageTitle } from '@/config/layout'
@@ -7,16 +8,23 @@ import { layoutConfig, getPageTitle } from '@/config/layout'
  * Use as the element of the protected layout route.
  */
 export default function AuthenticatedLayout() {
-  const { user, displayName, signOut } = useAuth()
+  const { user, displayName, signOut, isAdmin } = useAuth()
+
+  const navItems = useMemo(
+    () => (isAdmin ? layoutConfig.navItems : layoutConfig.navItems.filter((item) => item.path !== '/settings')),
+    [isAdmin],
+  )
 
   return (
     <AppLayout
       {...layoutConfig}
+      navItems={navItems}
       getPageTitle={getPageTitle}
       userName={displayName}
       profileLabel={displayName}
       profileSubtext={user?.email}
       onSignOut={signOut}
+      showSettingsLink={isAdmin}
     />
   )
 }

@@ -8,10 +8,12 @@
 import type { WorkspaceKeys } from './model-router.js';
 import {
   buildLinkedInSearchQueries,
+  buildLinkedInSearchQueryList,
   extractDiscoveryParams,
   resolveDiscoveryLocation,
   type DiscoverySearchParams,
 } from './discovery-params.js';
+import { buildExaPeopleSearchQuery } from './exa-linkedin-search.js';
 import { searchLinkedInProfilesWithExa, exaApiKey } from './exa-linkedin-search.js';
 import {
   headlineFromPageTitle,
@@ -72,6 +74,16 @@ export interface DiscoveryOptions {
   keys?: WorkspaceKeys;
   /** User-selected country name, or `global` for worldwide search when JD has no location. */
   searchCountry?: string;
+  /** User-edited natural-language search prompt (overrides AI-built query). */
+  searchQueryOverride?: string;
+}
+
+export interface SuggestedProfileSearch {
+  search_query: string;
+  search_provider: string;
+  location_query?: string | null;
+  location_scope?: string | null;
+  seniority_level?: string | null;
 }
 
 export interface DiscoveryResult {
@@ -326,17 +338,19 @@ function mockProfiles(jobTitle: string, jobDescription: string, limit: number): 
 async function searchForProfiles(
   params: DiscoverySearchParams,
   limit: number,
+  queryOverride?: string,
 ): Promise<{ hits: LinkedInSearchHit[]; searchQuery: string; searchProvider: string }> {
   const pref = (process.env.LINKEDIN_SEARCH_PROVIDER ?? 'exa').toLowerCase();
   const hasExa = Boolean(exaApiKey());
   const hasSerper = parseSerperApiKeys().length > 0;
   const allowSerperFallback = process.env.LINKEDIN_SEARCH_SERPER_FALLBACK === 'true';
+  const customQuery = queryOverride?.trim();
 
   const tryExa = (pref === 'exa' || pref === 'auto') && hasExa;
 
   if (tryExa && hasExa) {
     try {
-      const result = await searchLinkedInProfilesWithExa(params, limit);
+      const result = await searchLinkedInProfilesWithExa(params, limit, customQuery);
       return result;
     } catch (err) {
       if (!allowSerperFallback || !hasSerper) throw err;
@@ -352,6 +366,10 @@ async function searchForProfiles(
     );
   }
 
+  if (customQuery) {
+    return searchLinkedInProfileUrls([customQuery], limit);
+  }
+
   const location = params.locationQuery?.trim() ?? '';
   const { primary, fallback } = buildLinkedInSearchQueries(params);
   const searchQueries = primary.length > 0 ? primary : fallback;
@@ -360,7 +378,25 @@ async function searchForProfiles(
   });
 }
 
-async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number): Promise<DiscoveryResult> {
+function discoverySearchProvider(): string {
+  const pref = (process.env.LINKEDIN_SEARCH_PROVIDER ?? 'exa').toLowerCase();
+  const hasExa = Boolean(exaApiKey());
+  if ((pref === 'exa' || pref === 'auto') && hasExa) return 'exa';
+  return 'serper';
+}
+
+function buildSuggestedSearchQuery(params: DiscoverySearchParams): string {
+  if (discoverySearchProvider() === 'exa') {
+    return buildExaPeopleSearchQuery(params);
+  }
+  return buildLinkedInSearchQueryList(params)[0] ?? buildExaPeopleSearchQuery(params);
+}
+
+async function prepareDiscoveryParams(opts: DiscoveryOptions): Promise<{
+  params: DiscoverySearchParams;
+  locationScope: string | null;
+  seniorityBand: SeniorityBand;
+}> {
   if (!opts.modelId || !opts.keys) {
     throw new Error('AI provider keys are required to derive search terms from the job description.');
   }
@@ -386,7 +422,28 @@ async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number)
     exclude: params.seniorityExclude ?? [],
   };
 
-  const { hits, searchProvider, searchQuery } = await searchForProfiles(params, limit);
+  return { params, locationScope, seniorityBand };
+}
+
+export async function suggestRelatedProfileSearch(opts: DiscoveryOptions): Promise<SuggestedProfileSearch> {
+  const { params, locationScope } = await prepareDiscoveryParams(opts);
+  return {
+    search_query: buildSuggestedSearchQuery(params),
+    search_provider: discoverySearchProvider(),
+    location_query: params.locationQuery ?? null,
+    location_scope: locationScope,
+    seniority_level: params.seniorityLevel ?? null,
+  };
+}
+
+async function discoverFromJobDescription(opts: DiscoveryOptions, limit: number): Promise<DiscoveryResult> {
+  const { params, locationScope, seniorityBand } = await prepareDiscoveryParams(opts);
+
+  const { hits, searchProvider, searchQuery } = await searchForProfiles(
+    params,
+    limit,
+    opts.searchQueryOverride,
+  );
 
   if (hits.length === 0) {
     throw new Error(

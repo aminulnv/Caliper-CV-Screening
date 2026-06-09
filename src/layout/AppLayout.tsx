@@ -22,6 +22,7 @@ interface AppLayoutProps extends AppLayoutConfig {
   userName?: string
   languageLabel?: string
   onLanguageClick?: () => void
+  showSettingsLink?: boolean
 }
 
 export function AppLayout({
@@ -40,6 +41,7 @@ export function AppLayout({
   userName,
   languageLabel,
   onLanguageClick,
+  showSettingsLink = true,
 }: AppLayoutProps) {
   const location = useLocation()
   const { isMobile } = useBreakpoint()
@@ -87,6 +89,7 @@ export function AppLayout({
         rightSlot={topBarRightSlot}
         languageLabel={languageLabel}
         onLanguageClick={onLanguageClick}
+        showSettingsLink={showSettingsLink}
         isMobile={isMobile}
       />
       <div className="app-shell-body">

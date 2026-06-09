@@ -60,7 +60,7 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
 }
 
 export async function getRecruiteeCredentials(
-  workspaceId: string,
+  _workspaceId: string,
 ): Promise<{ baseUrl: string; apiKey: string }> {
   const platformUrl = getPlatformRecruiteeBaseUrl();
   const platformKey = getPlatformRecruiteeApiKey();
@@ -68,18 +68,9 @@ export async function getRecruiteeCredentials(
     return { baseUrl: platformUrl, apiKey: platformKey };
   }
 
-  const [row] = await sql`
-    SELECT recruitee_base_url, recruitee_key_enc
-    FROM workspace_settings
-    WHERE workspace_id = ${workspaceId}
-  `;
-  if (!row?.recruiteeBaseUrl || !row?.recruiteeKeyEnc) {
-    throw new Error('Recruitee not configured for this workspace');
-  }
-  return {
-    baseUrl: row.recruiteeBaseUrl as string,
-    apiKey: decryptKey(row.recruiteeKeyEnc as string),
-  };
+  throw new Error(
+    'Recruitee is not configured on the server. Contact your administrator to set platform credentials.',
+  );
 }
 
 /** Mirror platform Recruitee env into workspace_settings for UI indicators and legacy queries. */

@@ -1,8 +1,13 @@
 // @ts-nocheck
 // Page 5 — Settings
 import React from 'react'
-import { Btn, Badge, Field, Toggle } from '@/caliper/ui'
+import { Navigate } from 'react-router-dom'
+import { Btn, Badge, Field, Toggle, IconBtn } from '@/caliper/ui'
 import { api } from '@/services/api'
+import { useAuth } from '@/contexts/AuthContext'
+import { InviteMemberModal } from '@/caliper/components/InviteMemberModal'
+import { ConfirmModal } from '@/components/ConfirmModal'
+import { labelForRole } from '@/lib/roles'
 
 const CONFIDENCE_OPTIONS = [
   { value: 50, label: 'Lenient · 50%' },
@@ -11,17 +16,40 @@ const CONFIDENCE_OPTIONS = [
   { value: 85, label: 'Very strict · 85%' },
 ];
 
+function memberInitials(name, email) {
+  if (name?.trim()) {
+    return name.trim().split(/\s+/).map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+  }
+  return (email?.[0] ?? '?').toUpperCase();
+}
+
+function formatJoined(iso) {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  } catch {
+    return '—';
+  }
+}
+
+function roleBadgeTone(role) {
+  if (role === 'admin') return 'solid';
+  if (role === 'viewer') return 'ghost';
+  return 'default';
+}
+
 function SettingsPage() {
+  const { isAdmin } = useAuth();
   const [settings, setSettings] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [saveMsg, setSaveMsg] = React.useState(null);
 
-  // Recruitee section
-  const [recruiteeUrl, setRecruiteeUrl] = React.useState('');
-  const [recruiteeKey, setRecruiteeKey] = React.useState('');
-  const [testingRecruitee, setTestingRecruitee] = React.useState(false);
-  const [recruiteeTestResult, setRecruiteeTestResult] = React.useState(null);
+  const [team, setTeam] = React.useState(null);
+  const [teamLoading, setTeamLoading] = React.useState(true);
+  const [teamError, setTeamError] = React.useState(null);
+  const [showInvite, setShowInvite] = React.useState(false);
+  const [inviting, setInviting] = React.useState(false);
+  const [confirmRemove, setConfirmRemove] = React.useState(null);
 
   // AI section
   const [anthropicKey, setAnthropicKey] = React.useState('');
@@ -35,11 +63,19 @@ function SettingsPage() {
   const [cvRetentionDays, setCvRetentionDays] = React.useState(90);
   const [evaluationRetentionDays, setEvaluationRetentionDays] = React.useState<number | 'never'>(730);
 
+  const loadTeam = React.useCallback(() => {
+    setTeamLoading(true);
+    setTeamError(null);
+    api.workspace.listMembers()
+      .then(setTeam)
+      .catch((e) => setTeamError(e?.message ?? 'Failed to load team.'))
+      .finally(() => setTeamLoading(false));
+  }, []);
+
   React.useEffect(() => {
     api.settings.get()
       .then((s) => {
         setSettings(s);
-        setRecruiteeUrl(s.recruitee_base_url ?? '');
         setDefaultModel(s.default_model ?? 'claude-sonnet-4-6');
         setConfidenceThreshold(s.confidence_threshold ?? 60);
         setCvRetentionDays(s.cv_retention_days ?? 90);
@@ -51,6 +87,10 @@ function SettingsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  React.useEffect(() => {
+    if (isAdmin) loadTeam();
+  }, [isAdmin, loadTeam]);
+
   const save = async (body) => {
     setSaving(true);
     setSaveMsg(null);
@@ -60,7 +100,6 @@ function SettingsPage() {
       // Re-fetch to update has_*_key indicators
       const s = await api.settings.get();
       setSettings(s);
-      setRecruiteeUrl(s.recruitee_base_url ?? '');
     } catch (e) {
       setSaveMsg({ ok: false, text: e.message ?? 'Save failed.' });
     } finally {
@@ -69,25 +108,46 @@ function SettingsPage() {
     }
   };
 
-  const testRecruitee = async () => {
-    setTestingRecruitee(true);
-    setRecruiteeTestResult(null);
-    const body: { recruitee_base_url?: string; recruitee_key?: string } = {};
-    if (recruiteeUrl.trim()) body.recruitee_base_url = recruiteeUrl.trim();
-    if (recruiteeKey.trim()) body.recruitee_key = recruiteeKey.trim();
-    try {
-      const res = await api.settings.testRecruitee(body);
-      setRecruiteeTestResult({ ok: true, text: `Connected · ${res.jobs_found} open position${res.jobs_found === 1 ? '' : 's'}` });
-    } catch (e) {
-      setRecruiteeTestResult({ ok: false, text: e.message ?? 'Connection failed' });
-    } finally {
-      setTestingRecruitee(false);
-    }
-  };
+  if (!isAdmin) return <Navigate to="/runs" replace />;
 
   if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading settings…</div></div>;
 
   const supportedModels = settings?.supported_models ?? ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5-20251001', 'gpt-4o', 'gpt-4o-mini'];
+
+  const handleInvite = async ({ email, role }) => {
+    setInviting(true);
+    try {
+      await api.workspace.invite({ email, role });
+      loadTeam();
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleRoleChange = async (memberId, role) => {
+    try {
+      await api.workspace.updateMemberRole(memberId, role);
+      loadTeam();
+    } catch (e) {
+      setTeamError(e?.message ?? 'Could not update role.');
+    }
+  };
+
+  const handleRemove = async () => {
+    if (!confirmRemove) return;
+    try {
+      if (confirmRemove.type === 'member') {
+        await api.workspace.removeMember(confirmRemove.id);
+      } else {
+        await api.workspace.revokeInvite(confirmRemove.id);
+      }
+      setConfirmRemove(null);
+      loadTeam();
+    } catch (e) {
+      setTeamError(e?.message ?? 'Could not remove.');
+      setConfirmRemove(null);
+    }
+  };
 
   return (
     <div className="page">
@@ -168,87 +228,6 @@ function SettingsPage() {
       </Section>
 
       <Section
-        title="Recruitee integration"
-        sub={
-          settings?.recruitee_managed_by_platform
-            ? 'Connected to your company Recruitee account. Credentials are managed by the platform team.'
-            : 'Caliper pulls open positions and applicants directly from your Recruitee account.'
-        }
-      >
-        <div className="col" style={{ gap: 14 }}>
-          {settings?.recruitee_managed_by_platform ? (
-            <>
-              <div className="callout" style={{ marginBottom: 0 }}>
-                <Badge tone="ok" dot>Platform connected</Badge>
-                <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-                  API endpoint: <code>{settings.recruitee_base_url ?? '—'}</code>
-                </div>
-              </div>
-              <div className="row" style={{ gap: 10, marginTop: 2 }}>
-                <Btn icon="check" variant="ghost" disabled={testingRecruitee} onClick={testRecruitee}>
-                  {testingRecruitee ? 'Testing…' : 'Test connection'}
-                </Btn>
-                {recruiteeTestResult && (
-                  <Badge tone={recruiteeTestResult.ok ? 'ok' : 'warn'} dot>
-                    {recruiteeTestResult.text}
-                  </Badge>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <Field
-                label="API base URL"
-                hint="From Recruitee → Settings → Apps and plugins → API tokens (company ID is on that page)."
-              >
-                <input
-                  className="inp inp--mono"
-                  value={recruiteeUrl}
-                  onChange={(e) => setRecruiteeUrl(e.target.value)}
-                  placeholder="https://api.recruitee.com/c/your-company-id"
-                />
-              </Field>
-              <Field
-                label="API key"
-                hint={settings?.has_recruitee_key ? 'Key stored · enter a new key to replace it.' : 'No key stored.'}
-              >
-                <input
-                  className="inp inp--mono"
-                  type="password"
-                  placeholder={settings?.has_recruitee_key ? '••••••••••••••••••••••••••' : 'rec_live_…'}
-                  value={recruiteeKey}
-                  onChange={(e) => setRecruiteeKey(e.target.value)}
-                  autoComplete="off"
-                />
-              </Field>
-              <div className="row" style={{ gap: 10, marginTop: 2 }}>
-                <Btn
-                  variant="primary"
-                  disabled={saving}
-                  onClick={() => {
-                    const body = {};
-                    if (recruiteeUrl) body.recruitee_base_url = recruiteeUrl;
-                    if (recruiteeKey.trim()) body.recruitee_key = recruiteeKey;
-                    if (Object.keys(body).length) { save(body); setRecruiteeKey(''); }
-                  }}
-                >
-                  Save
-                </Btn>
-                <Btn icon="check" variant="ghost" disabled={testingRecruitee} onClick={testRecruitee}>
-                  {testingRecruitee ? 'Testing…' : 'Test connection'}
-                </Btn>
-                {recruiteeTestResult && (
-                  <Badge tone={recruiteeTestResult.ok ? 'ok' : 'warn'} dot>
-                    {recruiteeTestResult.text}
-                  </Badge>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </Section>
-
-      <Section
         title="Screening defaults"
         sub="Apply across every new screening run."
       >
@@ -271,52 +250,134 @@ function SettingsPage() {
 
       <Section
         title="Team &amp; access"
-        sub="TA team has full access. Hiring managers see results only. Admins manage settings."
+        sub="Editors can run screenings and manage jobs. Viewers see results only. Admins manage settings and access."
       >
+        {teamError && (
+          <div style={{ fontSize: 13, color: 'var(--bad)', marginBottom: 12 }}>{teamError}</div>
+        )}
         <div className="card" style={{ border: 'none' }}>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th style={{ width: 160 }}>Role</th>
-                <th style={{ width: 140 }}>Joined</th>
-                <th style={{ width: 80 }}/>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['Sasha Kerridge', 'TA · Admin', 'Sep 2024', 'admin'],
-                ['Mara Achterberg', 'TA', 'Jan 2025', 'ta'],
-                ['Idris Park', 'TA', 'Mar 2025', 'ta'],
-                ['Lior Bashan', 'Hiring manager', 'Apr 2025', 'hm'],
-                ['Sirin Akar', 'Hiring manager', 'Feb 2026', 'hm'],
-              ].map(([name, role, joined, kind], i) => (
-                <tr key={i}>
-                  <td>
-                    <div className="row" style={{ gap: 10 }}>
-                      <span style={{
-                        width: 24, height: 24, borderRadius: '50%',
-                        background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
-                        fontSize: 10, fontWeight: 600,
-                      }}>{name.split(' ').map(n => n[0]).join('')}</span>
-                      <span style={{ fontWeight: 500 }}>{name}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <Badge tone={kind === 'admin' ? 'solid' : kind === 'hm' ? 'ghost' : 'default'}>{role}</Badge>
-                  </td>
-                  <td className="mono muted" style={{ fontSize: 11.5 }}>{joined}</td>
-                  <td/>
+          {teamLoading ? (
+            <div className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>Loading team…</div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th style={{ width: 160 }}>Role</th>
+                  <th style={{ width: 140 }}>Joined</th>
+                  <th style={{ width: 48 }} />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(team?.members ?? []).map((m) => (
+                  <tr key={m.id}>
+                    <td>
+                      <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                        <span style={{
+                          width: 28, height: 28, borderRadius: '50%',
+                          background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
+                          fontSize: 10, fontWeight: 600, flexShrink: 0,
+                        }}>{memberInitials(m.name, m.email)}</span>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>
+                            {m.name || m.email}
+                            {m.is_current_user && <span className="muted" style={{ fontWeight: 400 }}> · you</span>}
+                          </div>
+                          {m.name && <div className="team-member__email">{m.email}</div>}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <select
+                        className="sel team-role-select"
+                        value={m.role}
+                        onChange={(e) => handleRoleChange(m.id, e.target.value)}
+                        aria-label={`Role for ${m.email}`}
+                      >
+                        <option value="viewer">{labelForRole('viewer')}</option>
+                        <option value="recruiter">{labelForRole('recruiter')}</option>
+                        <option value="admin">{labelForRole('admin')}</option>
+                      </select>
+                    </td>
+                    <td className="mono muted" style={{ fontSize: 11.5 }}>{formatJoined(m.joined_at)}</td>
+                    <td>
+                      <IconBtn
+                        name="trash"
+                        title="Remove member"
+                        onClick={() => setConfirmRemove({ type: 'member', id: m.id, label: m.name || m.email })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+                {(team?.pending_invites ?? []).map((inv) => (
+                  <tr key={inv.id} className="team-row--pending">
+                    <td>
+                      <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                        <span style={{
+                          width: 28, height: 28, borderRadius: '50%',
+                          background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
+                          fontSize: 10, fontWeight: 600, flexShrink: 0,
+                        }}>{memberInitials(null, inv.email)}</span>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{inv.email}</div>
+                          <Badge tone="info" style={{ marginTop: 4 }}>Pending</Badge>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <Badge tone={roleBadgeTone(inv.role)}>{labelForRole(inv.role)}</Badge>
+                    </td>
+                    <td className="mono muted" style={{ fontSize: 11.5 }}>{formatJoined(inv.invited_at)}</td>
+                    <td>
+                      <IconBtn
+                        name="trash"
+                        title="Revoke invite"
+                        onClick={() => setConfirmRemove({ type: 'invite', id: inv.id, label: inv.email })}
+                      />
+                    </td>
+                  </tr>
+                ))}
+                {!team?.members?.length && !team?.pending_invites?.length && (
+                  <tr>
+                    <td colSpan={4} className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>
+                      No members yet. Invite someone to get started.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
         <div className="row" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-          <Btn icon="plus" variant="ghost">Invite member</Btn>
+          <Btn icon="plus" variant="ghost" onClick={() => setShowInvite(true)}>Invite member</Btn>
           <div className="spacer"/>
-          <span className="muted mono" style={{ fontSize: 11 }}>5 of 25 seats</span>
+          {team?.seats && (
+            <span className="muted mono" style={{ fontSize: 11 }}>
+              {team.seats.used} of {team.seats.max} seats
+            </span>
+          )}
         </div>
+
+        <InviteMemberModal
+          open={showInvite}
+          onClose={() => setShowInvite(false)}
+          onInvite={handleInvite}
+          inviting={inviting}
+        />
+
+        <ConfirmModal
+          open={Boolean(confirmRemove)}
+          onClose={() => setConfirmRemove(null)}
+          onConfirm={handleRemove}
+          title={confirmRemove?.type === 'invite' ? 'Revoke invite?' : 'Remove member?'}
+          message={
+            confirmRemove
+              ? `${confirmRemove.label} will lose access to this workspace.`
+              : undefined
+          }
+          confirmLabel={confirmRemove?.type === 'invite' ? 'Revoke' : 'Remove'}
+          variant="danger"
+        />
       </Section>
 
       <Section

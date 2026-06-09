@@ -48,9 +48,24 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+async function relatedProfilesNeedsCountry(
+  res: Response,
+  payload: { error?: string; needs_country?: boolean },
+): Promise<void> {
+  if (res.status === 422 && payload.needs_country) {
+    throw new NeedsCountryError(payload.error ?? 'Select a country or Global to continue.');
+  }
+}
+
 async function discoverRelatedProfilesRequest(
   jobId: string,
-  body?: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string },
+  body?: {
+    linkedin_urls?: string[];
+    limit?: number;
+    search_country?: string;
+    model_id?: string;
+    search_query?: string;
+  },
 ): Promise<DiscoverRelatedProfilesResponse> {
   const headers: Record<string, string> = {
     ...(await getAuthHeader()),
@@ -69,9 +84,7 @@ async function discoverRelatedProfilesRequest(
     needs_country?: boolean;
   };
 
-  if (res.status === 422 && payload.needs_country) {
-    throw new NeedsCountryError(payload.error ?? 'Select a country or Global to continue.');
-  }
+  await relatedProfilesNeedsCountry(res, payload);
 
   if (!res.ok) {
     const generic =
@@ -147,9 +160,38 @@ export const api = {
     audit: (id: string) => request<JobAuditEntry[]>('GET', `/api/v1/jobs/${id}/audit`),
     relatedProfiles: (id: string) =>
       request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
+    suggestRelatedProfileSearch: async (
+      id: string,
+      body?: { search_country?: string; model_id?: string },
+    ): Promise<SuggestRelatedProfileSearchResponse> => {
+      const headers: Record<string, string> = {
+        ...(await getAuthHeader()),
+        'Content-Type': 'application/json',
+      };
+      const res = await fetch(`${BASE_URL}/api/v1/jobs/${id}/related-profiles/suggest-search`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body ?? {}),
+      });
+      const payload = await res.json().catch(() => ({})) as {
+        error?: string;
+        needs_country?: boolean;
+      };
+      await relatedProfilesNeedsCountry(res, payload);
+      if (!res.ok) {
+        throw new Error(payload.error ?? res.statusText ?? 'Could not suggest search terms');
+      }
+      return payload as SuggestRelatedProfileSearchResponse;
+    },
     discoverRelatedProfiles: (
       id: string,
-      body?: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string },
+      body?: {
+        linkedin_urls?: string[];
+        limit?: number;
+        search_country?: string;
+        model_id?: string;
+        search_query?: string;
+      },
     ) => discoverRelatedProfilesRequest(id, body),
     deleteRelatedProfile: (jobId: string, profileId: string) =>
       request<{ success: boolean }>(
@@ -185,16 +227,86 @@ export const api = {
   settings: {
     get: () => request<WorkspaceSettings>('GET', '/api/v1/settings'),
     update: (body: UpdateSettingsBody) => request<{ success: boolean }>('PUT', '/api/v1/settings', body),
-    testRecruitee: (body?: { recruitee_base_url?: string; recruitee_key?: string }) =>
+    testRecruitee: () =>
       request<{ success: boolean; jobs_found: number }>(
         'POST',
         '/api/v1/settings/test-recruitee',
-        body ?? {},
+        {},
       ),
+  },
+
+  me: {
+    get: async (): Promise<MeResponse> => {
+      const headers = await getAuthHeader();
+      const res = await fetch(`${BASE_URL}/api/v1/me`, { headers });
+      if (res.status === 401) {
+        throw new Error('Unauthorized');
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string; message?: string };
+        throw new Error(err.error ?? err.message ?? `Request failed: ${res.status}`);
+      }
+      return res.json() as Promise<MeResponse>;
+    },
+  },
+
+  workspace: {
+    listMembers: () => request<WorkspaceMembersResponse>('GET', '/api/v1/workspace/members'),
+    invite: (body: InviteMemberBody) =>
+      request<{ success: boolean; updated?: boolean }>('POST', '/api/v1/workspace/invites', body),
+    updateMemberRole: (memberId: string, role: UserRole) =>
+      request<{ success: boolean }>('PATCH', `/api/v1/workspace/members/${memberId}`, { role }),
+    removeMember: (memberId: string) =>
+      request<{ success: boolean }>('DELETE', `/api/v1/workspace/members/${memberId}`),
+    revokeInvite: (inviteId: string) =>
+      request<{ success: boolean }>('DELETE', `/api/v1/workspace/invites/${inviteId}`),
   },
 };
 
 // ── Types (mirror backend) ─────────────────────────────────────────────────────
+export type UserRole = 'admin' | 'recruiter' | 'viewer';
+
+export type MeResponse =
+  | {
+      access: 'none';
+      user: { email: string; name: string };
+    }
+  | {
+      access: 'active';
+      user: { sub: string; email: string; name: string };
+      workspace: { id: string; name: string };
+      role: UserRole;
+    };
+
+export interface WorkspaceMember {
+  id: string;
+  user_id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  joined_at: string;
+  is_current_user: boolean;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  email: string;
+  role: UserRole;
+  invited_at: string;
+  status: 'pending';
+}
+
+export interface WorkspaceMembersResponse {
+  members: WorkspaceMember[];
+  pending_invites: WorkspaceInvite[];
+  seats: { used: number; max: number };
+}
+
+export interface InviteMemberBody {
+  email: string;
+  role: UserRole;
+}
+
 export interface RunListItem {
   id: string;
   job_id: string;
@@ -315,6 +427,14 @@ export interface RelatedProfileRow {
   source: string;
   discovered_at: string;
   created_at: string;
+}
+
+export interface SuggestRelatedProfileSearchResponse {
+  search_query: string;
+  search_provider: string;
+  location_query?: string | null;
+  location_scope?: string | null;
+  seniority_level?: string | null;
 }
 
 export interface DiscoverRelatedProfilesResponse {

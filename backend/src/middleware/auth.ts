@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { sql } from '../services/db.js';
+import { hasPendingInvite, resolveWorkspaceAccess } from '../services/workspace-access.js';
 import type { UserRole } from '../types/index.js';
 
 declare module 'fastify' {
@@ -15,14 +16,23 @@ declare module 'fastify' {
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 
-const DEFAULT_USER_ROLE: UserRole = 'recruiter';
-
 const ALLOWED_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS ?? 'nextventures.io,wearenext.io,fn.com')
   .split(',')
   .map((d) => d.trim().toLowerCase())
   .filter(Boolean);
 
 const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+
+export const NO_WORKSPACE_ACCESS = {
+  error: 'no_workspace_access',
+  message: 'Unfortunately, you are not invited to Caliper. Please contact your Admin.',
+} as const;
+
+export type VerifiedIdentity = {
+  sub: string;
+  email: string;
+  name: string;
+};
 
 function isAllowedEmail(email: string): boolean {
   const domain = email.split('@')[1]?.toLowerCase();
@@ -35,13 +45,13 @@ async function migrateUserSub(oldSub: string, newSub: string, email: string, nam
   const tempEmail = `${email}.__sub_migrate__`;
 
   await sql.begin(async (tx) => {
-    // New `sub` must exist in `users` before FKs can point at it; email is unique so use a temp address first.
     await tx`
       INSERT INTO users (sub, email, name)
       VALUES (${newSub}, ${tempEmail}, ${name})
       ON CONFLICT (sub) DO UPDATE SET name = EXCLUDED.name, last_seen_at = NOW()
     `;
     await tx`UPDATE user_roles SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
+    await tx`UPDATE workspace_invites SET invited_by = ${newSub} WHERE invited_by = ${oldSub}`;
     await tx`UPDATE job_profiles SET created_by = ${newSub} WHERE created_by = ${oldSub}`;
     await tx`UPDATE screening_runs SET owner_id = ${newSub} WHERE owner_id = ${oldSub}`;
     await tx`UPDATE candidate_evaluations SET overridden_by = ${newSub} WHERE overridden_by = ${oldSub}`;
@@ -53,11 +63,29 @@ async function migrateUserSub(oldSub: string, newSub: string, email: string, nam
   });
 }
 
-export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+export async function upsertUserFromIdentity(identity: VerifiedIdentity): Promise<void> {
+  const { sub, email, name } = identity;
+  const [existingByEmail] = await sql`SELECT sub FROM users WHERE email = ${email} LIMIT 1`;
+
+  if (existingByEmail && existingByEmail.sub !== sub) {
+    await migrateUserSub(existingByEmail.sub as string, sub, email, name);
+  } else {
+    await sql`
+      INSERT INTO users (sub, email, name)
+      VALUES (${sub}, ${email}, ${name})
+      ON CONFLICT (sub) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, last_seen_at = NOW()
+    `;
+  }
+}
+
+export async function verifyGoogleJwt(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): Promise<VerifiedIdentity | null> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     reply.status(401).send({ error: 'Unauthorized' });
-    return;
+    return null;
   }
 
   const token = authHeader.slice(7);
@@ -72,7 +100,7 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
   } catch (err) {
     console.log('[auth] JWT verify failed:', err);
     reply.status(401).send({ error: 'Unauthorized' });
-    return;
+    return null;
   }
 
   const sub = payload.sub as string;
@@ -83,15 +111,7 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
     reply.status(401).send({
       error: 'Sign-in token is missing a verified email. Sign out and sign in again with Google.',
     });
-    return;
-  }
-
-  if (!isAllowedEmail(email)) {
-    const domain = email.split('@')[1];
-    reply.status(403).send({
-      error: `Access restricted to company accounts (@${domain} is not allowed)`,
-    });
-    return;
+    return null;
   }
 
   const name =
@@ -99,53 +119,41 @@ export async function authenticate(req: FastifyRequest, reply: FastifyReply): Pr
     (typeof payload.given_name === 'string' && payload.given_name) ||
     email;
 
+  return { sub, email, name };
+}
+
+async function passesDomainGate(email: string): Promise<boolean> {
+  if (isAllowedEmail(email)) return true;
+  return hasPendingInvite(email);
+}
+
+export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const identity = await verifyGoogleJwt(req, reply);
+  if (!identity) return;
+
+  const { sub, email, name } = identity;
+
   try {
-    const [existingByEmail] = await sql`SELECT sub FROM users WHERE email = ${email} LIMIT 1`;
-
-    if (existingByEmail && existingByEmail.sub !== sub) {
-      await migrateUserSub(existingByEmail.sub as string, sub, email, name);
-    } else {
-      await sql`
-        INSERT INTO users (sub, email, name)
-        VALUES (${sub}, ${email}, ${name})
-        ON CONFLICT (sub) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, last_seen_at = NOW()
-      `;
+    if (!(await passesDomainGate(email))) {
+      const domain = email.split('@')[1];
+      reply.status(403).send({
+        error: `Access restricted to company accounts (@${domain} is not allowed)`,
+      });
+      return;
     }
 
-    let [roleRow] = await sql`
-      SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
-    `;
+    await upsertUserFromIdentity(identity);
 
-    if (!roleRow) {
-      const defaultWorkspaceId = process.env.DEFAULT_WORKSPACE_ID;
-      if (!defaultWorkspaceId) {
-        reply.status(403).send({ error: 'No workspace configured' });
-        return;
-      }
-      await sql`
-        INSERT INTO user_roles (user_id, workspace_id, role)
-        VALUES (${sub}, ${defaultWorkspaceId}, ${DEFAULT_USER_ROLE})
-        ON CONFLICT DO NOTHING
-      `;
-      [roleRow] = await sql`
-        SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
-      `;
-      if (!roleRow) {
-        reply.status(403).send({ error: 'Could not assign workspace role' });
-        return;
-      }
-    }
-
-    const workspaceId = roleRow.workspaceId ?? roleRow.workspace_id;
-    if (!workspaceId) {
-      reply.status(403).send({ error: 'No workspace assigned to this account' });
+    const access = await resolveWorkspaceAccess(sub, email);
+    if (access.status === 'none') {
+      reply.status(403).send(NO_WORKSPACE_ACCESS);
       return;
     }
 
     req.userId = sub;
     req.userEmail = email;
-    req.workspaceId = workspaceId;
-    req.userRole = roleRow.role as UserRole;
+    req.workspaceId = access.workspaceId;
+    req.userRole = access.role;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[auth] database error:', message);

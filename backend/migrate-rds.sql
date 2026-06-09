@@ -12,6 +12,7 @@ create table if not exists users (
 create table if not exists workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  max_seats int not null default 25,
   created_at timestamptz default now()
 );
 
@@ -23,6 +24,19 @@ create table if not exists user_roles (
   role text check (role in ('admin', 'recruiter', 'viewer')) not null,
   created_at timestamptz default now(),
   unique(user_id, workspace_id)
+);
+
+-- Email invites (access activates on first Google sign-in with matching email)
+create table if not exists workspace_invites (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid references workspaces(id) on delete cascade not null,
+  email text not null,
+  role text check (role in ('admin', 'recruiter', 'viewer')) not null,
+  invited_by text references users(sub) not null,
+  created_at timestamptz default now(),
+  accepted_at timestamptz,
+  revoked_at timestamptz,
+  unique (workspace_id, email)
 );
 
 -- Per-workspace config
@@ -141,6 +155,8 @@ create index if not exists idx_candidate_evals_candidate on candidate_evaluation
 create index if not exists idx_audit_log_workspace on audit_log(workspace_id);
 create index if not exists idx_audit_log_created on audit_log(created_at desc);
 create index if not exists idx_user_roles_user on user_roles(user_id);
+create index if not exists idx_workspace_invites_email on workspace_invites(lower(email));
+create index if not exists idx_workspace_invites_workspace on workspace_invites(workspace_id);
 
 -- Seed default workspace
 insert into workspaces (id, name)

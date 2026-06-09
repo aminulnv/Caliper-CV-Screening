@@ -140,13 +140,14 @@ function mapExaResult(row: Record<string, unknown>): LinkedInSearchHit | null {
 export async function searchLinkedInProfilesWithExa(
   params: DiscoverySearchParams,
   limit: number,
+  queryOverride?: string,
 ): Promise<LinkedInUrlSearchResult> {
   const apiKey = exaApiKey();
   if (!apiKey) {
     throw new Error('EXA_API_KEY is not configured. Add it to the backend environment.');
   }
 
-  const query = buildExaPeopleSearchQuery(params);
+  const query = queryOverride?.trim() || buildExaPeopleSearchQuery(params);
   const numResults = Math.max(1, Math.min(limit, 25));
 
   const res = await fetch(EXA_SEARCH, {

@@ -3,7 +3,11 @@ import { authenticate } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { sql } from '../services/db.js';
-import { discoverSimilarProfiles, NeedsCountryError } from '../services/linkedin-discovery.js';
+import {
+  discoverSimilarProfiles,
+  NeedsCountryError,
+  suggestRelatedProfileSearch,
+} from '../services/linkedin-discovery.js';
 import { scoreJdAlignment } from '../services/jd-alignment.js';
 import { capStarsForSeniorityMismatch } from '../services/seniority-match.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
@@ -83,7 +87,64 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
 
   app.post<{
     Params: { id: string };
-    Body: { linkedin_urls?: string[]; limit?: number; search_country?: string; model_id?: string };
+    Body: { search_country?: string; model_id?: string };
+  }>(
+    '/jobs/:id/related-profiles/suggest-search',
+    { preHandler: requireRole('recruiter') },
+    async (req, reply) => {
+      const jobId = req.params.id;
+      const [job] = await sql`
+        SELECT id, name, description, screening_model
+        FROM job_profiles
+        WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+      `;
+      if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+      const description = (job.description as string | null)?.trim();
+      if (!description) {
+        return reply.status(400).send({
+          error: 'Add a job description before suggesting profile search terms.',
+        });
+      }
+
+      const settings = await getWorkspaceSettings(req.workspaceId);
+      const keys = await getWorkspaceKeys(req.workspaceId);
+      const bodyModel = req.body?.model_id?.trim();
+      const preferredModel =
+        bodyModel ||
+        (job.screeningModel as string | null) ||
+        settings.default_model ||
+        'claude-sonnet-4-6';
+      const { modelId } = pickRunnableModel(preferredModel, settings.allowed_models, keys);
+
+      try {
+        const suggestion = await suggestRelatedProfileSearch({
+          jobTitle: job.name as string,
+          jobDescription: description,
+          modelId,
+          keys,
+          searchCountry: req.body?.search_country,
+        });
+        return suggestion;
+      } catch (err) {
+        if (err instanceof NeedsCountryError) {
+          return reply.status(422).send({ error: err.message, needs_country: true });
+        }
+        const message = err instanceof Error ? err.message : 'Could not suggest search terms';
+        return reply.status(500).send({ error: message });
+      }
+    },
+  );
+
+  app.post<{
+    Params: { id: string };
+    Body: {
+      linkedin_urls?: string[];
+      limit?: number;
+      search_country?: string;
+      model_id?: string;
+      search_query?: string;
+    };
   }>(
     '/jobs/:id/related-profiles/discover',
     { preHandler: requireRole('recruiter') },
@@ -136,6 +197,7 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
             modelId,
             keys,
             searchCountry: req.body?.search_country,
+            searchQueryOverride: req.body?.search_query?.trim(),
           });
 
         let saved = 0;

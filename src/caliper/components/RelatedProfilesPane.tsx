@@ -149,6 +149,97 @@ function RelatedProfilesModelSelect({ modelId, onChange, settings, disabled }) {
   )
 }
 
+function SearchPromptEditor({
+  value,
+  onChange,
+  onReset,
+  suggesting,
+  disabled,
+  showReset,
+  meta,
+  needsCountry,
+  selectedCountry,
+  onCountryChange,
+}) {
+  return (
+    <div className="related-profiles-query-field">
+      <div className="related-profiles-query-field__head">
+        <label className="related-profiles-query-field__label" htmlFor="related-profiles-search-prompt">
+          Search prompt
+        </label>
+        {showReset && (
+          <button
+            type="button"
+            className="related-profiles-query-field__reset"
+            onClick={onReset}
+            disabled={disabled || suggesting}
+          >
+            Reset to AI suggestion
+          </button>
+        )}
+      </div>
+      <p className="related-profiles-query-field__hint muted">
+        AI-recommended LinkedIn search terms — edit before running Suggest profiles.
+      </p>
+      <textarea
+        id="related-profiles-search-prompt"
+        className="ta related-profiles-query-field__input mono"
+        rows={4}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled || suggesting}
+        placeholder={suggesting ? 'Generating search terms from the job description…' : 'Search prompt will appear here'}
+        spellCheck
+        aria-describedby="related-profiles-search-prompt-hint"
+      />
+      {needsCountry && (
+        <div className="related-profiles-query-field__location">
+          <label className="related-profiles-query-field__location-label" htmlFor="related-profiles-country">
+            Search location
+          </label>
+          <select
+            id="related-profiles-country"
+            className="sel related-profiles-query-field__location-select"
+            value={selectedCountry}
+            onChange={(e) => onCountryChange(e.target.value)}
+            disabled={disabled || suggesting}
+          >
+            <option value={GLOBAL_SEARCH}>{GLOBAL_SEARCH_LABEL}</option>
+            {COUNTRY_NAMES.map((country) => (
+              <option key={country} value={country}>{country}</option>
+            ))}
+          </select>
+          <p className="related-profiles-query-field__location-hint muted">
+            No location in the job description — choose a country or Global, then edit the prompt if needed.
+          </p>
+        </div>
+      )}
+      <div id="related-profiles-search-prompt-hint" className="related-profiles-query-field__footer">
+        {suggesting ? (
+          <span className="related-profiles-query-field__status" role="status">
+            <span className="related-profiles-pane__pulse" aria-hidden />
+            Generating search terms…
+          </span>
+        ) : meta ? (
+          <div className="related-profiles-meta related-profiles-query-field__meta">
+            {meta.searchProvider && (
+              <span className="related-profiles-meta__pill">{meta.searchProvider}</span>
+            )}
+            {meta.locationScope && (
+              <span className="related-profiles-meta__pill">{meta.locationScope}</span>
+            )}
+            {meta.seniorityLevel && (
+              <span className="related-profiles-meta__pill" title="Target seniority band for this search">
+                {meta.seniorityLevel}
+              </span>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function RelatedProfilesLoading() {
   return (
     <div className="card related-profiles-loading" aria-busy="true" aria-label="Loading related profiles">
@@ -180,12 +271,25 @@ export function RelatedProfilesPane({
   const [loading, setLoading] = React.useState(true)
   const [discovering, setDiscovering] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [draftQuery, setDraftQuery] = React.useState('')
+  const [queryTouched, setQueryTouched] = React.useState(false)
+  const [suggesting, setSuggesting] = React.useState(false)
+  const [suggestMeta, setSuggestMeta] = React.useState<{
+    searchProvider: string | null
+    locationScope: string | null
+    seniorityLevel: string | null
+  } | null>(null)
   const [lastSearchQuery, setLastSearchQuery] = React.useState<string | null>(null)
   const [lastSearchProvider, setLastSearchProvider] = React.useState<string | null>(null)
   const [lastLocationScope, setLastLocationScope] = React.useState<string | null>(null)
   const [lastSeniorityLevel, setLastSeniorityLevel] = React.useState<string | null>(null)
-  const [showCountryPicker, setShowCountryPicker] = React.useState(false)
+  const [needsCountry, setNeedsCountry] = React.useState(false)
   const [selectedCountry, setSelectedCountry] = React.useState(GLOBAL_SEARCH)
+  const queryTouchedRef = React.useRef(false)
+
+  React.useEffect(() => {
+    queryTouchedRef.current = queryTouched
+  }, [queryTouched])
 
   const load = React.useCallback(() => {
     if (isHero || !jobId) {
@@ -207,25 +311,124 @@ export function RelatedProfilesPane({
     setModelId(screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6')
   }, [screeningModel, workspaceSettings?.default_model, jobId])
 
-  const runDiscover = async (searchCountry?: string) => {
+  React.useEffect(() => {
+    setDraftQuery('')
+    setQueryTouched(false)
+    queryTouchedRef.current = false
+    setSuggestMeta(null)
+    setLastSearchQuery(null)
+    setLastSearchProvider(null)
+    setLastLocationScope(null)
+    setLastSeniorityLevel(null)
+    setNeedsCountry(false)
+    setSelectedCountry(GLOBAL_SEARCH)
+  }, [jobId])
+
+  const applySuggestion = React.useCallback((res: {
+    search_query: string
+    search_provider?: string | null
+    location_scope?: string | null
+    seniority_level?: string | null
+  }, force = false) => {
+    if (force || !queryTouchedRef.current) {
+      setDraftQuery(res.search_query)
+      if (force) {
+        setQueryTouched(false)
+        queryTouchedRef.current = false
+      }
+    }
+    setSuggestMeta({
+      searchProvider: res.search_provider ?? null,
+      locationScope: res.location_scope ?? null,
+      seniorityLevel: res.seniority_level ?? null,
+    })
+  }, [])
+
+  const fetchSuggestion = React.useCallback(async (searchCountry?: string, force = false) => {
+    if (!hasDescription || isHero) return
+    setSuggesting(true)
+    setError(null)
+    try {
+      const res = await api.jobs.suggestRelatedProfileSearch(jobId, {
+        model_id: modelId,
+        ...(searchCountry ? { search_country: searchCountry } : {}),
+      })
+      applySuggestion(res, force)
+    } catch (e) {
+      if (e instanceof NeedsCountryError) {
+        setNeedsCountry(true)
+        setError(null)
+        if (!searchCountry) {
+          try {
+            const retry = await api.jobs.suggestRelatedProfileSearch(jobId, {
+              model_id: modelId,
+              search_country: selectedCountry,
+            })
+            applySuggestion(retry, force)
+          } catch (retryErr) {
+            if (!(retryErr instanceof NeedsCountryError)) {
+              setError(retryErr instanceof Error ? retryErr.message : 'Could not suggest search terms')
+            }
+          }
+        }
+      } else {
+        setError(e instanceof Error ? e.message : 'Could not suggest search terms')
+      }
+    } finally {
+      setSuggesting(false)
+    }
+  }, [applySuggestion, hasDescription, isHero, jobId, modelId, selectedCountry])
+
+  React.useEffect(() => {
+    if (!hasDescription || isHero) return undefined
+    const timer = window.setTimeout(() => {
+      void fetchSuggestion()
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [hasDescription, isHero, modelId, jobId, fetchSuggestion])
+
+  const resetQueryToSuggestion = () => {
+    void fetchSuggestion(needsCountry ? selectedCountry : undefined, true)
+  }
+
+  const handleCountryChange = (country: string) => {
+    setSelectedCountry(country)
+    void fetchSuggestion(country, !queryTouchedRef.current)
+  }
+
+  const searchCountryParam = needsCountry ? selectedCountry : undefined
+
+  const runDiscover = async () => {
     if (!hasDescription) return
+    const trimmedQuery = draftQuery.trim()
+    if (!trimmedQuery) {
+      setError('Add a search prompt before running Suggest profiles.')
+      return
+    }
     setDiscovering(true)
     setError(null)
     try {
       const res = await api.jobs.discoverRelatedProfiles(jobId, {
         limit: 10,
         model_id: modelId,
-        ...(searchCountry ? { search_country: searchCountry } : {}),
+        search_query: trimmedQuery,
+        ...(searchCountryParam ? { search_country: searchCountryParam } : {}),
       })
-      setShowCountryPicker(false)
       setProfiles(res.profiles)
+      setDraftQuery(res.search_query)
+      setQueryTouched(false)
       setLastSearchQuery(res.search_query)
       setLastSearchProvider(res.search_provider)
       setLastLocationScope(res.location_scope ?? res.location_query ?? null)
       setLastSeniorityLevel(res.seniority_level ?? null)
+      setSuggestMeta({
+        searchProvider: res.search_provider ?? null,
+        locationScope: res.location_scope ?? res.location_query ?? null,
+        seniorityLevel: res.seniority_level ?? null,
+      })
     } catch (e) {
       if (e instanceof NeedsCountryError) {
-        setShowCountryPicker(true)
+        setNeedsCountry(true)
         setError(null)
       } else {
         setError(e instanceof Error ? e.message : 'Discovery failed')
@@ -233,10 +436,6 @@ export function RelatedProfilesPane({
     } finally {
       setDiscovering(false)
     }
-  }
-
-  const confirmCountrySearch = () => {
-    runDiscover(selectedCountry)
   }
 
   const removeProfile = async (profileId: string) => {
@@ -259,7 +458,7 @@ export function RelatedProfilesPane({
           <div className="related-profiles-hero-empty__icon">
             <Icon name="users" size={22}/>
           </div>
-          <div className="related-profiles-hero-empty__title">Related profiles</div>
+          <div className="related-profiles-hero-empty__title">Suggested Profiles for This Job</div>
           <p className="related-profiles-hero-empty__copy muted">
             Open a real job to search LinkedIn for candidates matching your job description.
           </p>
@@ -274,7 +473,7 @@ export function RelatedProfilesPane({
         <div className="card__head related-profiles-toolbar__head">
           <div className="related-profiles-toolbar__title-group">
             <Icon name="users" size={14} className="muted"/>
-            <span className="card__title">Related profiles</span>
+            <span className="card__title">Suggested Profiles for This Job</span>
             {profiles.length > 0 && (
               <Badge tone="info">{profiles.length} found</Badge>
             )}
@@ -290,7 +489,7 @@ export function RelatedProfilesPane({
             variant="primary"
             icon="sparkle"
             size="sm"
-            disabled={!hasDescription || discovering}
+            disabled={!hasDescription || discovering || suggesting || !draftQuery.trim()}
             onClick={() => runDiscover()}
           >
             {discovering ? 'Finding profiles…' : 'Suggest profiles'}
@@ -299,41 +498,26 @@ export function RelatedProfilesPane({
         <div className="card__body col related-profiles-toolbar__body">
           {!hasDescription && (
             <div className="callout related-profiles-callout">
-              Add a job description on the <strong>Overview</strong> tab before running discovery.
+              Add a job description on the <strong>Job Description</strong> tab before suggesting profiles.
             </div>
           )}
-          {showCountryPicker && (
-            <div className="related-profiles-country-picker" role="region" aria-label="Search location">
-              <p className="related-profiles-country-picker__lead">
-                No location was found in the job description. Choose a country to focus the search, or Global for worldwide results.
-              </p>
-              <div className="related-profiles-country-picker__row">
-                <label className="related-profiles-country-picker__label" htmlFor="related-profiles-country">
-                  Search scope
-                </label>
-                <select
-                  id="related-profiles-country"
-                  className="sel related-profiles-country-picker__select"
-                  value={selectedCountry}
-                  onChange={(e) => setSelectedCountry(e.target.value)}
-                  disabled={discovering}
-                >
-                  <option value={GLOBAL_SEARCH}>{GLOBAL_SEARCH_LABEL}</option>
-                  {COUNTRY_NAMES.map((country) => (
-                    <option key={country} value={country}>{country}</option>
-                  ))}
-                </select>
-                <Btn
-                  variant="primary"
-                  icon="search"
-                  size="sm"
-                  disabled={discovering}
-                  onClick={confirmCountrySearch}
-                >
-                  {discovering ? 'Searching…' : 'Search profiles'}
-                </Btn>
-              </div>
-            </div>
+          {hasDescription && (
+            <SearchPromptEditor
+              value={draftQuery}
+              onChange={(value) => {
+                setDraftQuery(value)
+                setQueryTouched(true)
+                queryTouchedRef.current = true
+              }}
+              onReset={resetQueryToSuggestion}
+              suggesting={suggesting}
+              disabled={discovering}
+              showReset={queryTouched}
+              meta={suggestMeta}
+              needsCountry={needsCountry}
+              selectedCountry={selectedCountry}
+              onCountryChange={handleCountryChange}
+            />
           )}
           {discovering && (
             <div className="related-profiles-pane__status related-profiles-pane__status--active" role="status">
@@ -375,7 +559,7 @@ export function RelatedProfilesPane({
             <div className="related-profiles-empty__icon">
               <Icon name="search" size={22}/>
             </div>
-            <div className="related-profiles-empty__title">No related profiles yet</div>
+            <div className="related-profiles-empty__title">No suggested profiles yet</div>
             <p className="related-profiles-empty__copy muted">
               Run <strong>Suggest profiles</strong> to discover LinkedIn candidates aligned with this job description.
             </p>
@@ -388,12 +572,6 @@ export function RelatedProfilesPane({
               <p className="related-profiles-results__headline">
                 {buildIntroText(profiles.length, jobName, displayLocation)}
               </p>
-              {showSearchMeta && (
-                <p className="related-profiles-results__query muted">
-                  <span className="related-profiles-results__query-label">Query</span>
-                  <code className="related-profiles-results__query-code mono">{lastSearchQuery}</code>
-                </p>
-              )}
             </div>
             <div className="related-profiles-results__stat" aria-hidden>
               <span className="related-profiles-results__stat-val">{profiles.length}</span>

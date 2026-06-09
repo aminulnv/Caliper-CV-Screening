@@ -4,8 +4,6 @@ import { Bell, ChevronDown, Menu, User, Settings, LogOut, X } from 'lucide-react
 import type { NavItem, BrandConfig } from './types'
 import { ConfirmModal } from '@/components/ConfirmModal'
 import { assets } from '@/config/assets'
-import { useNotifications } from '@/contexts/NotificationsContext'
-import { useSettings } from '@/contexts/SettingsContext'
 
 const NAV_ICON_SIZE = 15
 const NAV_ICON_STROKE = 1.75
@@ -13,14 +11,6 @@ const HOVER_CLOSE_DELAY_MS = 150
 
 function isPathUnder(parentPath: string, pathname: string): boolean {
   return pathname === parentPath || (parentPath !== '/' && pathname.startsWith(parentPath + '/'))
-}
-
-function formatNotificationTime(ts: number) {
-  const diff = Date.now() - ts
-  if (diff < 60_000) return 'Just now'
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`
-  return new Date(ts).toLocaleDateString()
 }
 
 function navLinkStyle(isActive: boolean, slidingIndicator = false): CSSProperties {
@@ -52,116 +42,17 @@ function getActiveNavPath(items: NavItem[], pathname: string): string | null {
   return matched[0]?.path ?? null
 }
 
-function NotificationBellDropdown() {
-  const [open, setOpen] = useState(false)
-  const [iconHovered, setIconHovered] = useState(false)
-  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { notifications, unreadCount, markAsRead, markAllRead } = useNotifications()
-  const { settings } = useSettings()
-
-  const clearCloseTimeout = () => {
-    if (closeTimeoutRef.current) {
-      clearTimeout(closeTimeoutRef.current)
-      closeTimeoutRef.current = null
-    }
-  }
-
-  useEffect(() => () => clearCloseTimeout(), [])
-
+function NotificationBellComingSoon() {
   return (
     <div
-      style={{ position: 'relative' }}
-      onMouseEnter={() => {
-        clearCloseTimeout()
-        setOpen(true)
-        setIconHovered(true)
-      }}
-      onMouseLeave={() => {
-        setIconHovered(false)
-        clearCloseTimeout()
-        closeTimeoutRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY_MS)
-      }}
+      className="shell-notifications-soon"
+      aria-label="Notifications — coming soon"
+      title="Notifications — coming soon"
     >
-      <button
-        type="button"
-        className="shell-icon-btn"
-        aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : 'Notifications'}
-        aria-expanded={open}
-      >
-        <Bell
-          size={14}
-          strokeWidth={iconHovered || open ? 2.25 : 1.75}
-        />
-        {unreadCount > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: '0.4375rem',
-              right: '0.4375rem',
-              width: '0.375rem',
-              height: '0.375rem',
-              borderRadius: '50%',
-              background: '#EF4444',
-              border: '0.09375rem solid rgba(255,255,255,0.3)',
-            }}
-            aria-hidden
-          />
-        )}
-      </button>
-      {open && settings.notifications && (
-        <div className="shell-dropdown shell-dropdown--notifications" role="dialog" aria-label="Notifications">
-          <div className="shell-dropdown__head">
-            <span className="shell-dropdown__title">Notifications</span>
-            {unreadCount > 0 && (
-              <button
-                type="button"
-                onClick={markAllRead}
-                style={{
-                  fontSize: '0.6875rem',
-                  fontWeight: 600,
-                  color: '#6B7280',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Mark all read
-              </button>
-            )}
-          </div>
-          <div style={{ padding: '0.25rem 0' }}>
-            {notifications.length === 0 ? (
-              <div style={{ padding: '1.5rem 0.75rem', fontSize: '0.8125rem', color: '#6B7280', textAlign: 'center' }}>
-                No notifications yet
-              </div>
-            ) : (
-              notifications.map((n) => (
-                <button
-                  key={n.id}
-                  type="button"
-                  className={`shell-dropdown-item shell-dropdown-item--block${n.read ? '' : ' shell-dropdown-item--unread'}`}
-                  onClick={() => markAsRead(n.id)}
-                >
-                  <span style={{ fontWeight: 600, color: '#111827' }}>{n.title}</span>
-                  {n.message && (
-                    <div style={{ marginTop: '0.25rem', color: '#6B7280' }}>{n.message}</div>
-                  )}
-                  <div style={{ marginTop: '0.25rem', fontSize: '0.6875rem', color: '#9CA3AF' }}>
-                    {formatNotificationTime(n.createdAt)}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-      {open && !settings.notifications && (
-        <div className="shell-dropdown shell-dropdown--notifications" role="dialog" aria-label="Notifications">
-          <div style={{ padding: '1rem 0.875rem', fontSize: '0.8125rem', color: 'var(--muted)', textAlign: 'center' }}>
-            In-app notifications are off. Turn them on in Settings.
-          </div>
-        </div>
-      )}
+      <span className="shell-icon-btn shell-icon-btn--disabled" aria-hidden>
+        <Bell size={14} strokeWidth={1.75} />
+      </span>
+      <span className="shell-notifications-soon__label">Coming soon</span>
     </div>
   )
 }
@@ -171,11 +62,13 @@ function ProfileDropdown({
   profileSubtext,
   onSignOut,
   isMobile,
+  showSettingsLink = true,
 }: {
   userName?: string
   profileSubtext?: string
   onSignOut?: () => void
   isMobile?: boolean
+  showSettingsLink?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
@@ -251,10 +144,12 @@ function ProfileDropdown({
             <User size={14} color="var(--muted)" strokeWidth={2} />
             Profile
           </button>
-          <button type="button" className="shell-dropdown-item" onClick={() => { setOpen(false); navigate('/settings') }} role="menuitem">
-            <Settings size={14} color="var(--muted)" strokeWidth={2} />
-            Settings
-          </button>
+          {showSettingsLink && (
+            <button type="button" className="shell-dropdown-item" onClick={() => { setOpen(false); navigate('/settings') }} role="menuitem">
+              <Settings size={14} color="var(--muted)" strokeWidth={2} />
+              Settings
+            </button>
+          )}
           <div style={{ height: 1, background: 'var(--line-soft)', margin: '0.25rem 0' }} />
           <button
             type="button"
@@ -292,6 +187,7 @@ export interface AppNavBarProps {
   rightSlot?: ReactNode
   languageLabel?: string
   onLanguageClick?: () => void
+  showSettingsLink?: boolean
   isMobile?: boolean
 }
 
@@ -531,6 +427,7 @@ export function AppNavBar({
   rightSlot,
   languageLabel,
   onLanguageClick,
+  showSettingsLink = true,
   isMobile = false,
 }: AppNavBarProps) {
   const navigate = useNavigate()
@@ -605,11 +502,12 @@ export function AppNavBar({
         )}
         {rightSlot ?? (
           <>
-            <NotificationBellDropdown />
+            <NotificationBellComingSoon />
             <ProfileDropdown
               userName={userName}
               profileSubtext={profileSubtext}
               onSignOut={onSignOut}
+              showSettingsLink={showSettingsLink}
               isMobile={isMobile}
             />
           </>

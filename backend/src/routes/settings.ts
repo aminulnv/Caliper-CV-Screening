@@ -28,15 +28,12 @@ const SUPPORTED_MODELS = [
 /** Map DB row (camelCase from postgres.js) to API snake_case for the frontend. */
 function formatSettingsResponse(row: Record<string, unknown>, workspaceId: string) {
   const platformRecruitee = isPlatformRecruiteeConfigured();
-  const recruiteeBaseUrl = platformRecruitee
-    ? getPlatformRecruiteeBaseUrl()
-    : ((row.recruiteeBaseUrl ?? row.recruitee_base_url ?? null) as string | null);
 
   return {
     workspace_id: (row.workspaceId ?? row.workspace_id ?? workspaceId) as string,
     default_model: (row.defaultModel ?? row.default_model ?? 'claude-sonnet-4-6') as string,
     allowed_models: (row.allowedModels ?? row.allowed_models ?? ['claude-sonnet-4-6']) as string[],
-    recruitee_base_url: recruiteeBaseUrl,
+    recruitee_base_url: platformRecruitee ? getPlatformRecruiteeBaseUrl() : null,
     confidence_threshold: (row.confidenceThreshold ?? row.confidence_threshold ?? 60) as number,
     cv_retention_days: normalizeCvRetentionDays(
       (row.cvRetentionDays ?? row.cv_retention_days) as number,
@@ -46,9 +43,8 @@ function formatSettingsResponse(row: Record<string, unknown>, workspaceId: strin
     ),
     has_anthropic_key: Boolean(row.hasAnthropicKey ?? row.has_anthropic_key),
     has_openai_key: Boolean(row.hasOpenaiKey ?? row.has_openai_key),
-    has_recruitee_key:
-      platformRecruitee || Boolean(row.hasRecruiteeKey ?? row.has_recruitee_key),
-    recruitee_managed_by_platform: platformRecruitee,
+    has_recruitee_key: platformRecruitee,
+    recruitee_managed_by_platform: true,
     supported_models: SUPPORTED_MODELS,
   };
 }
@@ -93,7 +89,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         has_anthropic_key: false,
         has_openai_key: false,
         has_recruitee_key: platformRecruitee,
-        recruitee_managed_by_platform: platformRecruitee,
+        recruitee_managed_by_platform: true,
         supported_models: SUPPORTED_MODELS,
       };
     }
@@ -114,7 +110,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     };
   }>(
     '/settings',
-    { preHandler: requireRole('recruiter') },
+    { preHandler: requireRole('admin') },
     async (req, reply) => {
       const {
         default_model, allowed_models, anthropic_key, openai_key,
@@ -129,12 +125,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'One or more unsupported models' });
       }
 
-      if (
-        isPlatformRecruiteeConfigured() &&
-        (recruitee_base_url != null || recruitee_key)
-      ) {
+      if (recruitee_base_url != null || recruitee_key) {
         return reply.status(400).send({
-          error: 'Recruitee is configured by the platform. Contact your administrator to change it.',
+          error: 'Recruitee is managed by the platform. Only LLM API keys can be updated in Settings.',
         });
       }
 
@@ -143,10 +136,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (default_model) updates.default_model = default_model;
       if (allowed_models) updates.allowed_models = allowed_models;
       if (confidence_threshold != null) updates.confidence_threshold = confidence_threshold;
-      if (recruitee_base_url != null) updates.recruitee_base_url = recruitee_base_url.trim();
       if (anthropic_key) updates.anthropic_key_enc = encryptKey(anthropic_key);
       if (openai_key) updates.openai_key_enc = encryptKey(openai_key);
-      if (recruitee_key) updates.recruitee_key_enc = encryptKey(recruitee_key);
       if (cv_retention_days != null) {
         updates.cv_retention_days = normalizeCvRetentionDays(cv_retention_days);
       }
@@ -174,19 +165,17 @@ export async function settingsRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{
-    Body: { recruitee_base_url?: string; recruitee_key?: string };
-  }>(
+  app.post(
     '/settings/test-recruitee',
     { preHandler: requireRole('recruiter') },
     async (req, reply) => {
       const stored = await getRecruiteeCredentials(req.workspaceId).catch(() => null);
-      const baseUrl = req.body?.recruitee_base_url?.trim() || stored?.baseUrl;
-      const apiKey = req.body?.recruitee_key?.trim() || stored?.apiKey;
+      const baseUrl = stored?.baseUrl;
+      const apiKey = stored?.apiKey;
 
       if (!baseUrl || !apiKey) {
         return reply.status(400).send({
-          error: 'Recruitee not configured. Enter the base URL and API key, then Save or Test connection.',
+          error: 'Recruitee is not configured on the server. Contact your administrator.',
         });
       }
 

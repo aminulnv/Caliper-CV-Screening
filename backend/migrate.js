@@ -55,6 +55,7 @@ const migrations = [
   './migrate-checklist-pct.sql',
   './migrate-related-profiles.sql',
   './migrate-related-profiles-null-stars.sql',
+  './migrate-access-management.sql',
 ];
 
 let failed = false;

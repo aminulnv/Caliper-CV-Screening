@@ -34,6 +34,7 @@ import {
   shouldRunRecruiteeSync,
 } from '@/lib/jobs-cache'
 import { CvViewer } from '@/caliper/components/CvViewer'
+import { useAuth } from '@/contexts/AuthContext'
 import { runsForDisplay, shapeJobRow } from '@/lib/job-profile'
 import {
   getBiasWarning,
@@ -723,6 +724,7 @@ function JobsPageLoading({ phase, onRetry }) {
 }
 
 function ProfilesPage({ go, route }) {
+  const { canEdit } = useAuth();
   const initialCache = React.useMemo(() => readJobsCache(), []);
   const [selectedId, setSelectedId] = React.useState(null);
   const [editorInitialTab, setEditorInitialTab] = React.useState(null);
@@ -808,6 +810,7 @@ function ProfilesPage({ go, route }) {
         <ProfileEditor
           profile={profile}
           initialTab={editorInitialTab}
+          canEdit={canEdit}
           onBack={() => {
             setRunSheetProfileId(null);
             setSelectedId(null);
@@ -816,7 +819,7 @@ function ProfilesPage({ go, route }) {
           go={go}
           onOpenRunSheet={() => setRunSheetProfileId(profile.id)}
         />
-        {runSheetProfileId === profile.id && (
+        {canEdit && runSheetProfileId === profile.id && (
           <RunScreeningSheet
             profile={profile}
             onClose={() => setRunSheetProfileId(null)}
@@ -895,16 +898,22 @@ function ProfilesPage({ go, route }) {
           { value: 'manual',    label: 'Manually added' },
         ]}/>
         <div className="spacer"/>
-        <Btn
-          variant="ghost"
-          icon="history"
-          disabled={backgroundRefreshing}
-          onClick={() => refreshProfiles({ forceSync: true })}
-        >
-          {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
-        </Btn>
-        <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening</Btn>
-        <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
+        {canEdit && (
+          <Btn
+            variant="ghost"
+            icon="history"
+            disabled={backgroundRefreshing}
+            onClick={() => refreshProfiles({ forceSync: true })}
+          >
+            {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
+          </Btn>
+        )}
+        {canEdit && (
+          <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening</Btn>
+        )}
+        {canEdit && (
+          <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
+        )}
       </div>
 
       <div className="card">
@@ -1000,7 +1009,7 @@ function ProfilesPage({ go, route }) {
         </div>
       </div>
 
-      {showNew && (
+      {canEdit && showNew && (
         <NewProfileDialog
           profiles={jobs}
           onClose={() => setShowNew(false)}
@@ -1023,7 +1032,7 @@ function ProfilesPage({ go, route }) {
           }}
         />
       )}
-      {showRunPicker && (
+      {canEdit && showRunPicker && (
         <PickJobToRunModal
           profiles={jobs}
           onClose={() => setShowRunPicker(false)}
@@ -1265,7 +1274,7 @@ function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId
   setSelectedId(profile.id);
 }
 
-function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpenRunSheet }) {
+function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpenRunSheet, canEdit = true }) {
   const isHero = initialProfile.id === HERO_PROFILE.id;
   const [profile, setProfile] = React.useState(initialProfile);
   const [detailRefreshing, setDetailRefreshing] = React.useState(false);
@@ -1557,7 +1566,9 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" icon="copy">Duplicate</Btn>
           <Btn variant="ghost" icon="archive">Archive</Btn>
-          <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
+          {canEdit && (
+            <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
+          )}
         </div>
       </div>
 
@@ -1565,6 +1576,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
       <ProfileTabs
         key={profile.id}
         profile={profile}
+        canEdit={canEdit}
         initialTab={initialTab}
         desc={desc} setDesc={setDesc}
         mh={mh} setMH={setMH}
@@ -1586,7 +1598,6 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
           lastAutoCriteriaFingerprintRef.current = '';
           runGenerateCriteria('manual');
         }}
-        desc={desc}
       />
     </div>
   );
@@ -1596,7 +1607,7 @@ function ProfileTabs({
   profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF,
   runsToShow, showBias, setShowBias, totalCriteria,
   workspaceSettings, screeningModel, setScreeningModel, onSaveProfile, saveState, isHero,
-  go, onOpenRunSheet, criteriaGenState, onGenerateCriteria,
+  go, onOpenRunSheet, criteriaGenState, onGenerateCriteria, canEdit = true,
 }) {
   const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
   React.useLayoutEffect(() => {
@@ -1684,11 +1695,11 @@ function ProfileTabs({
   return (
     <>
       <div className="row" style={{ marginBottom: 18, borderBottom: '1px solid var(--line)', gap: 0 }} role="tablist" aria-label="Job sections">
-        <TabBtn label="Overview"  count={null}            active={tab === 'overview'} onClick={() => setTab('overview')}/>
-        <TabBtn label="Criteria"  count={totalCriteria}   active={tab === 'criteria'} onClick={() => setTab('criteria')}/>
-        <TabBtn label="Runs"      count={runsToShow.length} active={tab === 'runs'}   onClick={() => setTab('runs')}/>
-        <TabBtn label="Candidates" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
-        <TabBtn label="Related profiles" count={relatedCount} active={tab === 'related'} onClick={() => setTab('related')}/>
+        <TabBtn label="Job Description" count={null} active={tab === 'overview'} onClick={() => setTab('overview')}/>
+        <TabBtn label="Filtering Criteria" count={totalCriteria} active={tab === 'criteria'} onClick={() => setTab('criteria')}/>
+        <TabBtn label="Processed CVs" count={runsToShow.length} active={tab === 'runs'} onClick={() => setTab('runs')}/>
+        <TabBtn label="Applicants and CVs" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
+        <TabBtn label="Suggested Profiles for This Job" count={relatedCount} active={tab === 'related'} onClick={() => setTab('related')}/>
         <TabBtn label="Audit"     count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
       </div>
 
@@ -1716,6 +1727,7 @@ function ProfileTabs({
           onSave={onSaveProfile}
           saveState={saveState}
           isHero={isHero}
+          canEdit={canEdit}
           criteriaGenState={criteriaGenState}
           onGenerateCriteria={onGenerateCriteria}
           hasUsableDescription={isUsableJobDescription(desc)}
@@ -1990,7 +2002,7 @@ function ScreeningModelPicker({ modelId, onChange, settings }) {
 function CriteriaPane({
   mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias,
   workspaceSettings, screeningModel, setScreeningModel, onSave, saveState, isHero,
-  criteriaGenState, onGenerateCriteria, hasUsableDescription,
+  criteriaGenState, onGenerateCriteria, hasUsableDescription, canEdit = true,
 }) {
   const [biasPending, setBiasPending] = React.useState(null);
   const generating = criteriaGenState?.status === 'loading';
@@ -2034,14 +2046,16 @@ function CriteriaPane({
               </div>
             )}
           </div>
-          <Btn
-            variant="default"
-            icon="sparkle"
-            disabled={generating || !hasUsableDescription}
-            onClick={() => onGenerateCriteria && onGenerateCriteria()}
-          >
-            {generating ? 'Generating…' : 'Generate from job description'}
-          </Btn>
+          {canEdit && (
+            <Btn
+              variant="default"
+              icon="sparkle"
+              disabled={generating || !hasUsableDescription}
+              onClick={() => onGenerateCriteria && onGenerateCriteria()}
+            >
+              {generating ? 'Generating…' : 'Generate from job description'}
+            </Btn>
+          )}
         </div>
       )}
       <ScreeningModelPicker
@@ -2078,7 +2092,7 @@ function CriteriaPane({
         </div>
       )}
 
-      {!isHero && (
+      {!isHero && canEdit && (
         <div className="row" style={{ gap: 10, alignItems: 'center', justifyContent: 'flex-end' }}>
           {saveState?.message && (
             <span

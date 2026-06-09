@@ -1,4 +1,7 @@
-/** Platform-managed Recruitee credentials (set in backend/.env / secrets manager). */
+/**
+ * Platform-managed Recruitee credentials (backend/.env or secrets manager).
+ * Users cannot configure Recruitee in Settings — only workspace LLM API keys.
+ */
 
 export function getPlatformRecruiteeApiKey(): string | null {
   const key = process.env.RECRUITEE_API_KEY?.trim();

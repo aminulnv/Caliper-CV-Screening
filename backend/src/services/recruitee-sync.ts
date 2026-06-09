@@ -26,16 +26,10 @@ function defaultDescription(title: string, dept: string | null): string {
 }
 
 async function workspacesWithRecruitee(): Promise<string[]> {
-  if (isPlatformRecruiteeConfigured()) {
-    const defaultWorkspaceId = process.env.DEFAULT_WORKSPACE_ID?.trim();
-    if (defaultWorkspaceId) return [defaultWorkspaceId];
-  }
+  if (!isPlatformRecruiteeConfigured()) return [];
 
-  const rows = await sql`
-    SELECT workspace_id FROM workspace_settings
-    WHERE recruitee_base_url IS NOT NULL AND recruitee_key_enc IS NOT NULL
-  `;
-  return rows.map((r) => r.workspaceId as string);
+  const defaultWorkspaceId = process.env.DEFAULT_WORKSPACE_ID?.trim();
+  return defaultWorkspaceId ? [defaultWorkspaceId] : [];
 }
 
 /** Import or refresh all active Recruitee offers as Caliper job profiles. */
