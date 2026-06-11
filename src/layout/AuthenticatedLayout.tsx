@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { AppLayout } from './AppLayout'
 import { useAuth } from '@/contexts/AuthContext'
 import { layoutConfig, getPageTitle } from '@/config/layout'
+import { GlobalSearch } from '@/components/GlobalSearch'
 
 /**
  * App shell layout with top navigation bar, wired to auth (user name in header).
@@ -26,6 +27,7 @@ export default function AuthenticatedLayout() {
       avatarUrl={avatarUrl}
       onSignOut={signOut}
       showSettingsLink={isAdmin}
+      topBarCenterSlot={<GlobalSearch />}
     />
   )
 }

@@ -8,6 +8,7 @@ import { fetchRecruiteeOfferMeta } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
 import { validateCriteriaPayload } from '../services/criteria-validation.js';
 import { syncJobCriteria } from '../services/job-criteria.js';
+import { getJobCalibration } from '../services/criterion-calibration.js';
 import { generateCriteriaFromJobDescription } from '../services/criteria-generation.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
@@ -243,6 +244,18 @@ export async function jobsRoutes(app: FastifyInstance) {
         req.userId,
       ),
     );
+  });
+
+  app.get<{ Params: { id: string } }>('/jobs/:id/calibration', async (req, reply) => {
+    const jobId = req.params.id;
+
+    const [job] = await sql`
+      SELECT id FROM job_profiles
+      WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+    `;
+    if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+    return getJobCalibration(jobId, req.workspaceId);
   });
 
   app.put<{

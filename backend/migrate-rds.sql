@@ -103,6 +103,16 @@ create table if not exists screening_runs (
   created_at timestamptz default now()
 );
 
+-- Run sharing (owner grants read access to other workspace members)
+create table if not exists run_shares (
+  id uuid primary key default gen_random_uuid(),
+  run_id text references screening_runs(id) on delete cascade not null,
+  user_id text references users(sub) on delete cascade not null,
+  shared_by text references users(sub) not null,
+  created_at timestamptz default now(),
+  unique (run_id, user_id)
+);
+
 -- Candidates per run
 create table if not exists run_candidates (
   id uuid primary key default gen_random_uuid(),
@@ -155,6 +165,7 @@ create table if not exists audit_log (
 create index if not exists idx_screening_runs_workspace on screening_runs(workspace_id);
 create index if not exists idx_screening_runs_job on screening_runs(job_id);
 create index if not exists idx_run_candidates_run on run_candidates(run_id);
+create index if not exists idx_run_shares_user on run_shares(user_id);
 create index if not exists idx_candidate_evals_candidate on candidate_evaluations(candidate_id);
 create index if not exists idx_audit_log_workspace on audit_log(workspace_id);
 create index if not exists idx_audit_log_created on audit_log(created_at desc);

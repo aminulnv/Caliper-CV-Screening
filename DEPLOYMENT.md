@@ -119,6 +119,45 @@ Or from a machine with `backend/.env`:
 cd backend && npm run migrate
 ```
 
+**Semantic CV search (Talent Search)** requires the PostgreSQL `vector` extension (pgvector). The app database user usually **cannot** create extensions — enable pgvector once as the RDS master user (or local Postgres superuser), then run migrations.
+
+**One-time enable (superuser):**
+
+```bash
+# From repo root, using master credentials (not the app user)
+psql "postgresql://MASTER_USER:PASSWORD@your-rds-host:5432/caliper_cv_screening" \
+  -f backend/scripts/enable-pgvector.sql
+```
+
+Or in `psql`:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+**Then** run app migrations (creates `cv_embeddings` if pgvector is present):
+
+```bash
+cd backend && npm run migrate
+```
+
+If pgvector is missing, `migrate.js` skips `migrate-cv-embeddings.sql` with a warning instead of failing the whole migration. Embeddings are created asynchronously when new screening runs complete; workspace OpenAI key must be configured in Settings.
+
+**Feature flag (off by default):** set both env vars to `true` when pgvector is ready:
+
+- Backend: `SEMANTIC_CV_SEARCH_ENABLED=true`
+- Frontend build: `VITE_SEMANTIC_CV_SEARCH_ENABLED=true`
+
+Until then, the **Talent Search** nav shows a “Coming soon” page and screening runs do not write embeddings.
+
+**Local dev (Homebrew Postgres):**
+
+```bash
+brew install pgvector
+psql "$DATABASE_URL" -f backend/scripts/enable-pgvector.sql
+cd backend && npm run migrate
+```
+
 ## Platform EC2 deploy (production)
 
 Run on the application server after RDS security group allows EC2 → port 5432.

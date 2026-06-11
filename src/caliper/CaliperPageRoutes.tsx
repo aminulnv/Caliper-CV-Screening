@@ -4,6 +4,7 @@ import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import RunsPage from '@/caliper/pages/RunsPage'
 import ResultsPage from '@/caliper/pages/ResultsPage'
 import CaliperSettingsPage from '@/caliper/pages/CaliperSettingsPage'
+import TalentSearchPage from '@/caliper/pages/TalentSearchPage'
 import { useCaliperGo } from '@/caliper/CaliperNavContext'
 import { useCaliperTweaks } from '@/caliper/CaliperShellLayout'
 import { getRunById } from '@/caliper/data'
@@ -62,4 +63,8 @@ export function ResultsPageRoute() {
 
 export function CaliperSettingsRoute() {
   return <CaliperSettingsPage />
+}
+
+export function TalentSearchPageRoute() {
+  return <TalentSearchPage />
 }

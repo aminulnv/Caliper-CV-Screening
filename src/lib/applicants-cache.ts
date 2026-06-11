@@ -1,18 +1,18 @@
-import type { RecruiteeApplicant } from '@/services/api';
+import type { RecruiteeApplicantsResponse } from '@/services/api';
 import { api } from '@/services/api';
 
 const APPLICANTS_TTL_MS = 10 * 60 * 1000;
 
 type CacheEntry = {
-  apps: RecruiteeApplicant[];
+  data: RecruiteeApplicantsResponse;
   fetchedAt: number;
 };
 
 const memory = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<RecruiteeApplicant[]>>();
+const inflight = new Map<string, Promise<RecruiteeApplicantsResponse>>();
 
 function storageKey(sourceRef: string): string {
-  return `caliper:applicants:v3:${sourceRef}`;
+  return `caliper:applicants:v6:${sourceRef}`;
 }
 
 function readStorage(sourceRef: string): CacheEntry | null {
@@ -21,7 +21,7 @@ function readStorage(sourceRef: string): CacheEntry | null {
     const raw = sessionStorage.getItem(storageKey(sourceRef));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEntry;
-    if (!parsed?.apps || !Array.isArray(parsed.apps) || typeof parsed.fetchedAt !== 'number') {
+    if (!parsed?.data?.applicants || !Array.isArray(parsed.data.applicants) || typeof parsed.fetchedAt !== 'number') {
       return null;
     }
     if (Date.now() - parsed.fetchedAt > APPLICANTS_TTL_MS) return null;
@@ -42,14 +42,14 @@ function writeStorage(sourceRef: string, entry: CacheEntry): void {
 
 export function getCachedApplicants(
   sourceRef: string | null | undefined,
-): RecruiteeApplicant[] | null {
+): RecruiteeApplicantsResponse | null {
   if (!sourceRef) return null;
   const mem = memory.get(sourceRef);
-  if (mem && Date.now() - mem.fetchedAt <= APPLICANTS_TTL_MS) return mem.apps;
+  if (mem && Date.now() - mem.fetchedAt <= APPLICANTS_TTL_MS) return mem.data;
   const stored = readStorage(sourceRef);
   if (stored) {
     memory.set(sourceRef, stored);
-    return stored.apps;
+    return stored.data;
   }
   return null;
 }
@@ -63,7 +63,7 @@ export function prefetchRecruiteeApplicants(sourceRef: string | null | undefined
 export async function loadRecruiteeApplicants(
   sourceRef: string,
   options?: { force?: boolean },
-): Promise<RecruiteeApplicant[]> {
+): Promise<RecruiteeApplicantsResponse> {
   if (!options?.force) {
     const cached = getCachedApplicants(sourceRef);
     if (cached) return cached;
@@ -75,12 +75,12 @@ export async function loadRecruiteeApplicants(
 
   const promise = api.recruitee
     .applicants(sourceRef)
-    .then((apps) => {
-      const entry = { apps, fetchedAt: Date.now() };
+    .then((data) => {
+      const entry = { data, fetchedAt: Date.now() };
       memory.set(sourceRef, entry);
       writeStorage(sourceRef, entry);
       inflight.delete(sourceRef);
-      return apps;
+      return data;
     })
     .catch((err) => {
       inflight.delete(sourceRef);

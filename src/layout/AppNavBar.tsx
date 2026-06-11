@@ -1,8 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, type ReactNode, type CSSProperties } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { Bell, ChevronDown, Menu, User, Settings, LogOut, X } from 'lucide-react'
+import { ChevronDown, Menu, User, Settings, LogOut, X } from 'lucide-react'
 import type { NavItem, BrandConfig } from './types'
 import { ConfirmModal } from '@/components/ConfirmModal'
+import { NotificationBell } from '@/components/NotificationBell'
 import { assets } from '@/config/assets'
 
 const NAV_ICON_SIZE = 15
@@ -40,21 +41,6 @@ function getActiveNavPath(items: NavItem[], pathname: string): string | null {
     })
     .sort((a, b) => b.path.length - a.path.length)
   return matched[0]?.path ?? null
-}
-
-function NotificationBellComingSoon() {
-  return (
-    <div
-      className="shell-notifications-soon"
-      aria-label="Notifications — coming soon"
-      title="Notifications — coming soon"
-    >
-      <span className="shell-icon-btn shell-icon-btn--disabled" aria-hidden>
-        <Bell size={14} strokeWidth={1.75} />
-      </span>
-      <span className="shell-notifications-soon__label">Coming soon</span>
-    </div>
-  )
 }
 
 function ProfileDropdown({
@@ -211,6 +197,21 @@ export interface AppNavBarProps {
   isMobile?: boolean
 }
 
+function NavComingSoon({ item }: { item: NavItem }) {
+  const Icon = item.icon
+  return (
+    <span
+      className="shell-nav__coming-soon"
+      aria-disabled="true"
+      title="Coming soon"
+    >
+      <Icon size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />
+      {item.label}
+      <span className="shell-nav__coming-soon-badge mono">Soon</span>
+    </span>
+  )
+}
+
 function NavDropdown({
   item,
   pathname,
@@ -328,6 +329,9 @@ function DesktopSlidingNav({
         }}
       />
       {items.map((item) => {
+        if (item.comingSoon) {
+          return <NavComingSoon key={item.path} item={item} />
+        }
         if (item.children?.length) {
           return <NavDropdown key={item.path} item={item} pathname={pathname} />
         }
@@ -367,6 +371,9 @@ function HorizontalNav({
   const items = bottomNavItem ? [...navItems, bottomNavItem] : navItems
 
   const renderLink = (item: NavItem, _slidingIndicator = false) => {
+    if (item.comingSoon) {
+      return <NavComingSoon key={item.path} item={item} />
+    }
     if (item.children?.length) {
       return <NavDropdown key={item.path} item={item} pathname={pathname} onNavigate={onMobileClose} />
     }
@@ -523,7 +530,7 @@ export function AppNavBar({
         )}
         {rightSlot ?? (
           <>
-            <NotificationBellComingSoon />
+            <NotificationBell />
             <ProfileDropdown
               userName={userName}
               avatarUrl={avatarUrl}

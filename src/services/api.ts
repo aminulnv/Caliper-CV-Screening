@@ -112,6 +112,17 @@ export const api = {
         model_substituted?: boolean;
         model_notice?: string;
       }>('POST', '/api/v1/runs', body),
+    setShares: (runId: string, userIds: string[]) =>
+      request<{ success: boolean; shared_user_ids: string[] }>(
+        'PUT',
+        `/api/v1/runs/${runId}/shares`,
+        { user_ids: userIds },
+      ),
+    compare: (runId: string, candidateIds: string[]) =>
+      request<CompareRunResponse>(
+        'GET',
+        `/api/v1/runs/${runId}/compare?ids=${candidateIds.map(encodeURIComponent).join(',')}`,
+      ),
   },
 
   candidates: {
@@ -128,7 +139,26 @@ export const api = {
       return URL.createObjectURL(blob);
     },
     override: (evalId: string, met: boolean, note: string) =>
-      request<{ success: boolean }>('PATCH', `/api/v1/evaluations/${evalId}/override`, { met, override_note: note }),
+      request<OverrideEvaluationResponse>(
+        'PATCH',
+        `/api/v1/evaluations/${evalId}/override`,
+        { met, override_note: note },
+      ),
+    agree: (evalId: string) =>
+      request<{ success: boolean }>('POST', `/api/v1/evaluations/${evalId}/agree`),
+    getHistory: (candidateId: string) =>
+      request<CandidateHistoryResponse>('GET', `/api/v1/candidates/${candidateId}/history`),
+  },
+
+  search: (q: string) =>
+    request<SearchResponse>('GET', `/api/v1/search?q=${encodeURIComponent(q)}`),
+
+  cvSearch: {
+    query: (q: string, limit = 20) =>
+      request<CvSearchResponse>(
+        'GET',
+        `/api/v1/cv-search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      ),
   },
 
   cv: {
@@ -158,6 +188,7 @@ export const api = {
     generateCriteria: (id: string, body?: GenerateCriteriaBody) =>
       request<GenerateCriteriaResponse>('POST', `/api/v1/jobs/${id}/generate-criteria`, body ?? {}),
     audit: (id: string) => request<JobAuditEntry[]>('GET', `/api/v1/jobs/${id}/audit`),
+    calibration: (id: string) => request<JobCalibrationResponse>('GET', `/api/v1/jobs/${id}/calibration`),
     relatedProfiles: (id: string) =>
       request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
     suggestRelatedProfileSearch: async (
@@ -209,7 +240,7 @@ export const api = {
       ),
     jobs: () => request<RecruiteeJob[]>('GET', '/api/v1/recruitee/jobs'),
     applicants: (jobId: string) =>
-      request<RecruiteeApplicant[]>('GET', `/api/v1/recruitee/jobs/${jobId}/applicants`),
+      request<RecruiteeApplicantsResponse>('GET', `/api/v1/recruitee/jobs/${jobId}/applicants`),
     fetchCv: async (candidateId: string): Promise<Blob> => {
       const headers = await getAuthHeader();
       const res = await fetch(
@@ -260,6 +291,14 @@ export const api = {
       request<{ success: boolean }>('DELETE', `/api/v1/workspace/members/${memberId}`),
     revokeInvite: (inviteId: string) =>
       request<{ success: boolean }>('DELETE', `/api/v1/workspace/invites/${inviteId}`),
+  },
+
+  notifications: {
+    list: () => request<AppNotification[]>('GET', '/api/v1/notifications'),
+    markRead: (id: string) =>
+      request<{ success: boolean }>('PATCH', `/api/v1/notifications/${id}/read`, {}),
+    markAllRead: () =>
+      request<{ success: boolean; count: number }>('POST', '/api/v1/notifications/read-all', {}),
   },
 };
 
@@ -317,9 +356,14 @@ export interface RunListItem {
   cv_count: number;
   score_range: number[] | null;
   error_message: string | null;
+  run_note: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  is_owner: boolean;
+  owner_name: string | null;
+  owner_email: string | null;
+  shared_user_ids: string[];
   job_profiles: { name: string; dept: string | null } | null;
 }
 
@@ -341,7 +385,6 @@ export interface CandidateRow {
   nice_met: number;
   flag_triggered: number;
   score_base?: number | null;
-  penalty_must?: number | null;
   penalty_flag?: number | null;
   must_total?: number | null;
   nice_total?: number | null;
@@ -350,6 +393,22 @@ export interface CandidateRow {
   must_met_pct?: number | null;
   nice_met_pct?: number | null;
   has_cv?: boolean;
+  applicant_email?: string | null;
+}
+
+export interface CandidateHistoryItem {
+  candidate_id: string;
+  run_id: string;
+  job_id: string;
+  job_name: string;
+  score: number | null;
+  status: 'strong' | 'promising' | 'review' | 'flagged' | null;
+  screened_at: string;
+}
+
+export interface CandidateHistoryResponse {
+  matched_by: 'email' | 'recruitee_id' | null;
+  history: CandidateHistoryItem[];
 }
 
 export interface CandidateEvaluationResponse {
@@ -367,6 +426,8 @@ export interface EvaluationItem {
   notes: string | null;
   overridden_by: string | null;
   override_note: string | null;
+  agreed_by: string | null;
+  agreed_at: string | null;
   created_at: string;
   job_criteria: {
     kind: 'must' | 'nice' | 'flag';
@@ -400,6 +461,30 @@ export interface CriterionItem {
   name: string;
   weight: number;
   biased: boolean;
+}
+
+export interface JobCalibrationCriterion {
+  criterion_id: string;
+  criterion_name: string;
+  kind: 'must' | 'nice' | 'flag';
+  archived: boolean;
+  total_evaluations: number;
+  override_count: number;
+  override_rate: number;
+  disagreement_count: number;
+  disagreement_rate: number | null;
+  recent_notes: string[];
+  message: string;
+}
+
+export interface JobCalibrationResponse {
+  job_id: string;
+  thresholds: {
+    min_sample: number;
+    min_overrides: number;
+    min_override_rate: number;
+  };
+  flagged: JobCalibrationCriterion[];
 }
 
 export interface JobAuditEntry {
@@ -486,12 +571,23 @@ export interface GenerateCriteriaResponse {
   model_substituted?: boolean;
 }
 
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  message: string | null;
+  link_path: string | null;
+  read: boolean;
+  created_at: string;
+}
+
 export interface CreateRunBody {
   job_id: string;
   model_id?: string;
+  run_note?: string;
   cv_sources: Array<
     | { type: 'storage'; path: string; name: string }
-    | { type: 'recruitee'; applicant_id: string; cv_url: string; name: string }
+    | { type: 'recruitee'; applicant_id: string; cv_url: string; name: string; email?: string }
   >;
 }
 
@@ -502,12 +598,34 @@ export interface RecruiteeJob {
   applicants_count: number;
 }
 
+export interface RecruiteePipelineStage {
+  id: string;
+  name: string;
+  category: string | null;
+  position: number;
+}
+
+export interface RecruiteeApplicantsResponse {
+  pipeline: { stages: RecruiteePipelineStage[] };
+  qualified_count: number;
+  disqualified_count: number;
+  applicants: RecruiteeApplicant[];
+}
+
 export interface RecruiteeApplicant {
   id: string;
   name: string;
+  email: string | null;
   location: string | null;
   cv_url: string | null;
+  stage_id: string | null;
+  stage_name: string | null;
   status: string | null;
+  disqualified: boolean;
+  disqualify_reason: string | null;
+  photo_url: string | null;
+  created_at: string | null;
+  evaluation_score: number | null;
 }
 
 export interface WorkspaceSettings {
@@ -536,4 +654,83 @@ export interface UpdateSettingsBody {
   confidence_threshold?: number;
   cv_retention_days?: number;
   evaluation_retention_days?: number | null;
+}
+
+export interface OverrideEvaluationResponse {
+  success: boolean;
+  candidate: CandidateRow | null;
+  score_range: number[] | null;
+}
+
+export interface SearchResponse {
+  jobs: SearchJobResult[];
+  runs: SearchRunResult[];
+  candidates: SearchCandidateResult[];
+}
+
+export interface SearchJobResult {
+  id: string;
+  name: string;
+  dept: string | null;
+  status: string;
+}
+
+export interface SearchRunResult {
+  id: string;
+  status: string;
+  run_note: string | null;
+  job_name: string | null;
+  job_dept: string | null;
+  created_at: string;
+}
+
+export interface SearchCandidateResult {
+  id: string;
+  name: string | null;
+  title: string | null;
+  score: number | null;
+  status: string | null;
+  run_id: string;
+  job_name: string | null;
+}
+
+export interface CvSearchResult {
+  candidate_id: string;
+  name: string | null;
+  title: string | null;
+  score: number | null;
+  status: 'strong' | 'promising' | 'review' | 'flagged' | null;
+  run_id: string;
+  job_id: string | null;
+  job_name: string | null;
+  similarity: number;
+}
+
+export interface CvSearchResponse {
+  query: string;
+  model: string;
+  results: CvSearchResult[];
+}
+
+export interface CompareEvalCell {
+  met: boolean | null;
+  confidence: 'high' | 'medium' | 'low' | null;
+  quote: string | null;
+  inferred: boolean;
+  overridden_by: string | null;
+  agreed_by: string | null;
+}
+
+export interface CompareCriterionRow {
+  id: string;
+  kind: 'must' | 'nice' | 'flag';
+  name: string;
+  weight: number;
+}
+
+export interface CompareRunResponse {
+  run_id: string;
+  candidates: CandidateRow[];
+  criteria: CompareCriterionRow[];
+  evaluations: Record<string, Record<string, CompareEvalCell>>;
 }

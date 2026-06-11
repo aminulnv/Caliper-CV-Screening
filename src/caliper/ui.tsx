@@ -43,6 +43,11 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
     case 'external':   return <svg {...p}><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v7h-7"/><path d="M3 10v11h11"/></svg>;
     case 'doc':        return <svg {...p}><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>;
     case 'flag':       return <svg {...p}><path d="M5 21V4h12l-2 4 2 4H5"/></svg>;
+    case 'share':      return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>;
+    case 'map-pin':    return <svg {...p}><path d="M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg>;
+    case 'ban':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></svg>;
+    case 'thumb-up':   return <svg {...p}><path d="M7 11v8a1 1 0 0 0 1 1h2v-9H7Z"/><path d="M10 11V6.5a2 2 0 0 1 2-2l3.5 1.5a2 2 0 0 1 1.2 1.8V11"/><path d="M10 11h5.5a2 2 0 0 1 2 2.1l-.8 4.8a2 2 0 0 1-2 1.7H10"/></svg>;
+    case 'thumb-down': return <svg {...p}><path d="M17 13V5a1 1 0 0 0-1-1h-2v9h3Z"/><path d="M14 13V7.5a2 2 0 0 0-2-2L8.5 4a2 2 0 0 0-1.2 1.8V13"/><path d="M14 13H8.5a2 2 0 0 0-2 2.1l.8 4.8a2 2 0 0 0 2 1.7H14"/></svg>;
     default: return null;
   }
 };

@@ -60,11 +60,13 @@ const AUTH_CSS = `
 }
 .caliper-auth__rays {
   position: absolute; top: 50%; left: 50%; width: 150vmax; height: 150vmax;
+  transform: translate(-50%, -50%);
+  transform-origin: center center;
   background: repeating-conic-gradient(from 0deg at 50% 50%,
     rgba(160,220,255,0.10) 0deg 3deg, transparent 3deg 17deg);
   -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 12%, #000 26%, transparent 64%);
   mask-image: radial-gradient(circle at 50% 50%, transparent 12%, #000 26%, transparent 64%);
-  animation: caliperRaySpin 64s linear infinite;
+  animation: caliperRaySpin 48s linear infinite;
 }
 .caliper-auth__grain { position: absolute; inset: 0; background-image: ${GRAIN}; opacity: 0.06; mix-blend-mode: overlay; pointer-events: none; }
 .caliper-auth__vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 110% at 50% 46%, transparent 42%, rgba(2,5,16,0.7) 100%); }

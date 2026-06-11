@@ -9,6 +9,7 @@ import {
   getWorkspaceMaxSeats,
 } from '../services/workspace-access.js';
 import type { UserRole } from '../types/index.js';
+import { alertWorkspaceInvite } from '../services/alerting.js';
 
 const VALID_ROLES: UserRole[] = ['admin', 'recruiter', 'viewer'];
 
@@ -175,21 +176,31 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
             SET role = ${role}, invited_by = ${req.userId}, created_at = NOW(), revoked_at = NULL
             WHERE id = ${existingInvite.id as string}
           `;
-          return reply.send({ success: true, updated: true });
+        } else {
+          await sql`
+            INSERT INTO workspace_invites (workspace_id, email, role, invited_by)
+            VALUES (${workspaceId}, ${email}, ${role}, ${req.userId})
+            ON CONFLICT (workspace_id, email) DO UPDATE
+            SET role = EXCLUDED.role,
+                invited_by = EXCLUDED.invited_by,
+                created_at = NOW(),
+                accepted_at = NULL,
+                revoked_at = NULL
+          `;
         }
 
-        await sql`
-          INSERT INTO workspace_invites (workspace_id, email, role, invited_by)
-          VALUES (${workspaceId}, ${email}, ${role}, ${req.userId})
-          ON CONFLICT (workspace_id, email) DO UPDATE
-          SET role = EXCLUDED.role,
-              invited_by = EXCLUDED.invited_by,
-              created_at = NOW(),
-              accepted_at = NULL,
-              revoked_at = NULL
-        `;
+        const [workspace] = await sql`SELECT name FROM workspaces WHERE id = ${workspaceId} LIMIT 1`;
+        const [inviter] = await sql`SELECT name, email FROM users WHERE sub = ${req.userId} LIMIT 1`;
 
-        return reply.send({ success: true });
+        void alertWorkspaceInvite({
+          inviteeEmail: email,
+          workspaceName: (workspace?.name as string) ?? 'Caliper',
+          role,
+          inviterName: (inviter?.name as string) ?? null,
+          inviterEmail: (inviter?.email as string) ?? null,
+        }).catch((err) => console.error('[alert] workspace invite:', err));
+
+        return reply.send({ success: true, updated: Boolean(existingInvite) });
       },
     );
 

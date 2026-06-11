@@ -1,6 +1,7 @@
-import { Briefcase, DraftingCompass, List, Settings } from 'lucide-react'
+import { Briefcase, DraftingCompass, List, Search, Settings } from 'lucide-react'
 import type { AppLayoutConfig } from '@/layout'
 import { assets } from './assets'
+import { semanticCvSearchEnabled } from './features'
 
 /**
  * App shell config: brand, nav items, and page titles (Caliper + Auth Basement shell).
@@ -15,6 +16,13 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
   },
   navItems: [
     { path: '/jobs', label: 'Jobs', icon: Briefcase, end: true },
+    {
+      path: '/talent-search',
+      label: 'Talent Search',
+      icon: Search,
+      end: true,
+      ...(semanticCvSearchEnabled ? {} : { comingSoon: true as const }),
+    },
     { path: '/runs', label: 'Runs', icon: List, end: true },
     { path: '/settings', label: 'Settings', icon: Settings, end: true },
   ],
@@ -28,6 +36,7 @@ export function getPageTitle(pathname: string): string {
   const titles: Record<string, string> = {
     '/runs': 'Runs',
     '/jobs': 'Jobs',
+    '/talent-search': 'Talent Search',
     '/settings': 'Settings',
     '/profile': 'Profile',
   }

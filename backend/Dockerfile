@@ -22,6 +22,7 @@ RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY migrate.js ./
 COPY migrate-*.sql ./
+COPY assets ./assets
 USER caliper
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

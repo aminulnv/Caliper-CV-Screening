@@ -123,6 +123,20 @@ export function CvViewer({
   const lastWidthRef = React.useRef(0);
   const renderGenRef = React.useRef(0);
   const renderingRef = React.useRef(false);
+  const highlightRef = React.useRef({ quote: highlightQuote, kind: highlightKind, label: highlightLabel });
+
+  React.useEffect(() => {
+    highlightRef.current = { quote: highlightQuote, kind: highlightKind, label: highlightLabel };
+  }, [highlightQuote, highlightKind, highlightLabel]);
+
+  const syncHighlights = React.useCallback(() => {
+    const container = pagesRef.current;
+    if (!container || !layoutsRef.current.length) return;
+    const { quote, kind, label } = highlightRef.current;
+    const first = applyHighlights(container, layoutsRef.current, quote, kind, label);
+    setHighlightFound(Boolean(first));
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
 
   React.useEffect(() => {
     let revoked = false;
@@ -237,6 +251,7 @@ export function CvViewer({
       container.replaceChildren(fragment);
       container.scrollTop = scrollTop;
       setPageCount(total);
+      requestAnimationFrame(() => syncHighlights());
     } catch (e) {
       if (gen === renderGenRef.current) {
         setError(e?.message ?? 'Could not render CV');
@@ -247,7 +262,7 @@ export function CvViewer({
         setRendering(false);
       }
     }
-  }, [maxPageWidth]);
+  }, [maxPageWidth, syncHighlights]);
 
   React.useEffect(() => {
     if (!pdfUrl) return undefined;
@@ -296,22 +311,9 @@ export function CvViewer({
   }, [pdfUrl, renderAllPages]);
 
   React.useEffect(() => {
-    const container = pagesRef.current;
-    if (!container || !layoutsRef.current.length) return;
-
-    const first = applyHighlights(
-      container,
-      layoutsRef.current,
-      highlightQuote,
-      highlightKind,
-      highlightLabel,
-    );
-    setHighlightFound(Boolean(first));
-
-    if (first) {
-      first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }, [highlightQuote, highlightKind, highlightLabel, pageCount, rendering]);
+    if (!pagesRef.current || !layoutsRef.current.length || rendering) return;
+    syncHighlights();
+  }, [highlightQuote, highlightKind, highlightLabel, pageCount, rendering, syncHighlights]);
 
   const busy = loading || rendering;
 
@@ -329,7 +331,7 @@ export function CvViewer({
             >
               {highlightFound
                 ? (highlightKind === 'flag' ? 'Flag source in CV' : 'Matching text in CV')
-                : 'Quote not found in PDF — check wording'}
+                : 'Could not locate this quote in the PDF text layer'}
             </span>
           )}
           {pdfUrl && (

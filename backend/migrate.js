@@ -56,14 +56,46 @@ const migrations = [
   './migrate-related-profiles.sql',
   './migrate-related-profiles-null-stars.sql',
   './migrate-access-management.sql',
+  './migrate-run-note.sql',
+  './migrate-notifications.sql',
+  './migrate-drop-penalty-must.sql',
+  './migrate-evaluation-agree.sql',
+  './migrate-candidate-email.sql',
+  './migrate-eval-ai-met.sql',
+  './migrate-cv-embeddings.sql',
 ];
 
 let failed = false;
+
+async function isPgvectorInstalled() {
+  const [row] = await sql`
+    SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS installed
+  `;
+  return Boolean(row?.installed);
+}
 
 for (const file of migrations) {
   const path = join(__dirname, file);
   const content = readFileSync(path, 'utf8');
   console.log(`Running ${file}...`);
+
+  if (file === './migrate-cv-embeddings.sql') {
+    const installed = await isPgvectorInstalled();
+    if (!installed) {
+      console.warn(
+        '⚠ Skipping migrate-cv-embeddings.sql: pgvector extension is not installed.',
+      );
+      console.warn(
+        '  Talent Search requires: CREATE EXTENSION IF NOT EXISTS vector;',
+      );
+      console.warn(
+        '  Run as superuser: psql "$DATABASE_URL" -f backend/scripts/enable-pgvector.sql',
+      );
+      console.warn('  Then re-run: npm run migrate');
+      continue;
+    }
+  }
+
   try {
     await sql.unsafe(content);
     console.log(`✓ ${file} done`);

@@ -37,6 +37,7 @@ export interface ScreeningRun {
   cv_count: number;
   score_range: number[] | null;
   error_message: string | null;
+  run_note: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -66,12 +67,15 @@ export interface CandidateEvaluation {
   candidate_id: string;
   criterion_id: string;
   met: boolean | null;
+  ai_met: boolean | null;
   confidence: Confidence | null;
   quote: string | null;
   inferred: boolean;
   notes: string | null;
   overridden_by: string | null;
   override_note: string | null;
+  agreed_by: string | null;
+  agreed_at: string | null;
   created_at: string;
 }
 
@@ -88,6 +92,7 @@ export interface ScoringRequest {
   criteria: Criterion[];
   modelId: string;
   candidateName?: string;
+  confidenceThreshold?: number;
 }
 
 export interface CriterionResult {
@@ -114,7 +119,6 @@ export interface ScoringResult {
   nice_met_pct: number;
   criteria_met_pct: number;
   base_score: number;
-  must_penalty: number;
   flag_penalty: number;
   parse_warning: string | null;
   criteria_results: CriterionResult[];
@@ -130,12 +134,37 @@ export interface RecruiteeJob {
   status?: string;
 }
 
+export interface RecruiteePipelineStage {
+  id: string;
+  name: string;
+  /** Recruitee stage group: applicants | active | hires */
+  category: string | null;
+  position: number;
+}
+
+export interface RecruiteeApplicantsPayload {
+  pipeline: { stages: RecruiteePipelineStage[] };
+  qualified_count: number;
+  disqualified_count: number;
+  applicants: RecruiteeApplicant[];
+}
+
 export interface RecruiteeApplicant {
   id: string;
   name: string;
+  email: string | null;
   location: string | null;
   cv_url: string | null;
+  stage_id: string | null;
+  stage_name: string | null;
+  /** Pipeline stage name — kept for screening sheet and list grouping */
   status: string | null;
+  disqualified: boolean;
+  disqualify_reason: string | null;
+  photo_url: string | null;
+  created_at: string | null;
+  /** Recruitee job-specific average evaluation score (0–100) from placement.positive_ratings */
+  evaluation_score: number | null;
 }
 
 export interface AuthenticatedRequest {

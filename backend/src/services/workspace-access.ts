@@ -1,5 +1,6 @@
 import { sql } from './db.js';
 import type { UserRole } from '../types/index.js';
+import { alertInviteAccepted } from './alerting.js';
 
 export type WorkspaceAccessResult =
   | { status: 'active'; workspaceId: string; role: UserRole }
@@ -41,7 +42,7 @@ export async function resolveWorkspaceAccess(
   }
 
   const [invite] = await sql`
-    SELECT id, workspace_id, role FROM workspace_invites
+    SELECT id, workspace_id, role, invited_by FROM workspace_invites
     WHERE lower(email) = ${normalizedEmail}
       AND accepted_at IS NULL
       AND revoked_at IS NULL
@@ -53,6 +54,7 @@ export async function resolveWorkspaceAccess(
     const workspaceId = (invite.workspaceId ?? invite.workspace_id) as string;
     const role = invite.role as UserRole;
     const inviteId = invite.id as string;
+    const invitedBy = (invite.invitedBy ?? invite.invited_by) as string;
 
     await sql.begin(async (tx) => {
       await tx`
@@ -64,6 +66,17 @@ export async function resolveWorkspaceAccess(
         UPDATE workspace_invites SET accepted_at = NOW() WHERE id = ${inviteId}
       `;
     });
+
+    const [workspace] = await sql`SELECT name FROM workspaces WHERE id = ${workspaceId} LIMIT 1`;
+    const [accepter] = await sql`SELECT name FROM users WHERE sub = ${sub} LIMIT 1`;
+
+    void alertInviteAccepted({
+      workspaceId,
+      inviterUserId: invitedBy,
+      workspaceName: (workspace?.name as string) ?? 'Workspace',
+      accepterEmail: normalizedEmail,
+      accepterName: (accepter?.name as string) ?? null,
+    }).catch((err) => console.error('[alert] invite accepted:', err));
 
     [roleRow] = await sql`
       SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1

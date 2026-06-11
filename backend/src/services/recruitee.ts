@@ -1,12 +1,12 @@
 import { getPlatformRecruiteeNumericCompanyId } from '../config/recruitee.js';
-import type { RecruiteeJob, RecruiteeApplicant } from '../types/index.js';
+import type { RecruiteeJob, RecruiteeApplicant, RecruiteeApplicantsPayload, RecruiteePipelineStage } from '../types/index.js';
 
 const TIMEOUT_MS = 10_000;
 const CANDIDATES_LIST_TIMEOUT_MS = 30_000;
 const ATS_HOST = 'api.recruitee.com';
 const APPLICANTS_PAGE_SIZE = 500;
 /** Recruitee list/search caps; avoid loading unbounded rows into the UI. */
-const APPLICANTS_MAX_FETCH = 2_000;
+const APPLICANTS_MAX_FETCH = 10_000;
 /** Detail fetches are expensive — enrich location + CV for the first batch only. */
 const APPLICANTS_DETAIL_ENRICH_MAX = 300;
 const APPLICANTS_DETAIL_CONCURRENCY = 10;
@@ -213,7 +213,19 @@ type PlacementRow = {
   stage_name?: string;
   location_ids?: Array<number | string>;
   department_name?: string;
+  disqualified_at?: string | null;
+  disqualify_reason?: string | null;
+  positive_ratings?: number | null;
+  created_at?: string;
 };
+
+function parseEvaluationScore(placement: PlacementRow | undefined): number | null {
+  const value = placement?.positive_ratings;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(Math.max(0, Math.min(100, value)));
+  }
+  return null;
+}
 
 type CandidateFieldRow = {
   kind?: string;
@@ -223,9 +235,13 @@ type CandidateFieldRow = {
 type CandidateRow = {
   id?: number | string;
   name?: string;
+  emails?: string[];
   city?: string;
   cv_url?: string | null;
   cv_original_url?: string | null;
+  photo_url?: string | null;
+  photo_thumb_url?: string | null;
+  created_at?: string;
   placements?: PlacementRow[];
   fields?: CandidateFieldRow[];
 };
@@ -241,6 +257,9 @@ type LocationRow = {
 type PipelineStageRow = {
   id?: number | string;
   name?: string;
+  position?: number;
+  group?: string;
+  category?: string;
 };
 
 function placementForOffer(
@@ -251,25 +270,34 @@ function placementForOffer(
   return candidate.placements?.find((p) => p.offer_id != null && String(p.offer_id) === target);
 }
 
-async function fetchOfferStageMap(
+async function fetchOfferPipeline(
   apiRoot: string,
   apiKey: string,
   offerId: string,
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+): Promise<RecruiteePipelineStage[]> {
   try {
     const data = (await recruiteeGet(apiRoot, apiKey, `/offers/${offerId}`)) as {
       offer?: { pipeline_template?: { stages?: PipelineStageRow[] } };
     };
     const stages = data.offer?.pipeline_template?.stages ?? [];
-    for (const stage of stages) {
-      if (stage.id != null && stage.name) {
-        map.set(String(stage.id), stage.name);
-      }
-    }
+    return stages
+      .filter((stage) => stage.id != null && stage.name)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      .map((stage, index) => ({
+        id: String(stage.id),
+        name: stage.name!,
+        category: stage.group ?? stage.category ?? null,
+        position: stage.position ?? index,
+      }));
   } catch {
-    // Stage names are optional; applicants still load without them.
+    return [];
   }
+}
+
+/** Stage id → name map derived from the ordered pipeline definition. */
+function stageMapFromPipeline(stages: RecruiteePipelineStage[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const stage of stages) map.set(stage.id, stage.name);
   return map;
 }
 
@@ -338,23 +366,14 @@ async function enrichRecruiteeApplicant(
   stageById: Map<string, string>,
   locationById: Map<string, string>,
 ): Promise<RecruiteeApplicant> {
-  const fallback = mapListCandidateToApplicant(candidate, offerId, stageById, locationById);
+  const fallback = mapCandidateToApplicant(candidate, offerId, stageById, locationById);
+  fallback.cv_url = null;
   try {
     const data = (await recruiteeGet(candidateRoot, apiKey, `/candidates/${candidate.id}`)) as {
       candidate?: CandidateRow;
     };
     const detail: CandidateRow = { ...candidate, ...(data.candidate ?? {}) };
-    const placement = placementForOffer(detail, offerId);
-    const stageId = placement?.stage_id;
-    return {
-      id: String(detail.id),
-      name: detail.name!,
-      location: resolveCandidateLocation(detail, offerId, locationById),
-      cv_url: resolveCvUrlFromRow(detail),
-      status:
-        placement?.stage_name
-        ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
-    };
+    return mapCandidateToApplicant(detail, offerId, stageById, locationById);
   } catch {
     return fallback;
   }
@@ -410,69 +429,84 @@ export async function fetchRecruiteeJobs(baseUrl: string, apiKey: string): Promi
  * whose insertion order is the pipeline order. Applicants with no/unknown stage
  * sort last, preserving their original relative order (stable).
  */
-function sortApplicantsByPipelineStage(
-  applicants: RecruiteeApplicant[],
+function resolveStageName(
+  stageId: string | null,
+  placement: PlacementRow | undefined,
   stageById: Map<string, string>,
-): RecruiteeApplicant[] {
-  const rankByStageName = new Map<string, number>();
-  let rank = 0;
-  for (const stageName of stageById.values()) {
-    if (!rankByStageName.has(stageName)) rankByStageName.set(stageName, rank++);
-  }
-  const rankOf = (applicant: RecruiteeApplicant): number =>
-    applicant.status != null && rankByStageName.has(applicant.status)
-      ? rankByStageName.get(applicant.status)!
-      : Number.MAX_SAFE_INTEGER;
-
-  return applicants
-    .map((item, idx) => ({ item, idx, rank: rankOf(item) }))
-    .sort((a, b) => a.rank - b.rank || a.idx - b.idx)
-    .map((entry) => entry.item);
+): string | null {
+  if (stageId && stageById.has(stageId)) return stageById.get(stageId)!;
+  return placement?.stage_name?.trim() ?? null;
 }
 
-function mapListCandidateToApplicant(
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** First syntactically valid email from Recruitee payload, lowercased. */
+export function pickPrimaryEmail(emails: string[] | undefined): string | null {
+  if (!emails?.length) return null;
+  for (const raw of emails) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim().toLowerCase();
+    if (trimmed && EMAIL_RE.test(trimmed)) return trimmed;
+  }
+  return null;
+}
+
+function mapCandidateToApplicant(
   candidate: CandidateRow,
   offerId: string,
   stageById: Map<string, string>,
   locationById: Map<string, string>,
 ): RecruiteeApplicant {
   const placement = placementForOffer(candidate, offerId);
-  const stageId = placement?.stage_id;
+  const stageId = placement?.stage_id != null ? String(placement.stage_id) : null;
+  const stageName = resolveStageName(stageId, placement, stageById);
+  const disqualified = Boolean(placement?.disqualified_at);
+  const disqualifyReason =
+    typeof placement?.disqualify_reason === 'string' && placement.disqualify_reason.trim()
+      ? placement.disqualify_reason.trim()
+      : null;
 
   return {
     id: String(candidate.id),
     name: candidate.name!,
+    email: pickPrimaryEmail(candidate.emails),
     location: resolveCandidateLocation(candidate, offerId, locationById),
-    cv_url: null,
-    status:
-      placement?.stage_name
-      ?? (stageId != null ? stageById.get(String(stageId)) ?? null : null),
+    cv_url: resolveCvUrlFromRow(candidate),
+    stage_id: stageId,
+    stage_name: stageName,
+    status: stageName,
+    disqualified,
+    disqualify_reason: disqualifyReason,
+    photo_url: candidate.photo_thumb_url ?? candidate.photo_url ?? null,
+    created_at: placement?.created_at ?? candidate.created_at ?? null,
+    evaluation_score: parseEvaluationScore(placement),
   };
 }
 
-export async function fetchRecruiteeApplicants(
-  baseUrl: string,
+const DISQUALIFIED_FETCH_MAX = 500;
+
+async function fetchCandidatesForOffer(
+  candidateRoot: string,
   apiKey: string,
   jobId: string,
-): Promise<RecruiteeApplicant[]> {
-  const { apiRoot: slugApiRoot } = parseRecruiteeConfig(baseUrl);
-  const numericCompanyId = await resolveNumericCompanyId(baseUrl, apiKey);
-  const candidateRoot = candidatesApiRoot(numericCompanyId);
-
-  const [stageById, locationById] = await Promise.all([
-    fetchOfferStageMap(slugApiRoot, apiKey, jobId),
-    fetchLocationMap([slugApiRoot, candidateRoot], apiKey),
-  ]);
-
+  options?: { filter?: 'qualified' | 'disqualified'; max?: number },
+): Promise<CandidateRow[]> {
+  const filterParam =
+    options?.filter === 'qualified'
+      ? '&qualified=true'
+      : options?.filter === 'disqualified'
+        ? '&disqualified=true'
+        : '';
+  const max = options?.max ?? APPLICANTS_MAX_FETCH;
   const candidates: CandidateRow[] = [];
   let offset = 0;
 
-  while (candidates.length < APPLICANTS_MAX_FETCH) {
-    const limit = Math.min(APPLICANTS_PAGE_SIZE, APPLICANTS_MAX_FETCH - candidates.length);
+  while (candidates.length < max) {
+    const limit = Math.min(APPLICANTS_PAGE_SIZE, max - candidates.length);
     const data = (await recruiteeGet(
       candidateRoot,
       apiKey,
-      `/candidates?offer_id=${encodeURIComponent(jobId)}&limit=${limit}&offset=${offset}`,
+      `/candidates?offer_id=${encodeURIComponent(jobId)}&limit=${limit}&offset=${offset}${filterParam}`,
       CANDIDATES_LIST_TIMEOUT_MS,
     )) as { candidates?: CandidateRow[] };
 
@@ -483,8 +517,56 @@ export async function fetchRecruiteeApplicants(
     offset += page.length;
   }
 
-  const filtered = candidates.filter((c) => c.id && c.name);
-  if (filtered.length === 0) return [];
+  return candidates;
+}
+
+export async function fetchRecruiteeApplicants(
+  baseUrl: string,
+  apiKey: string,
+  jobId: string,
+): Promise<RecruiteeApplicantsPayload> {
+  const { apiRoot: slugApiRoot } = parseRecruiteeConfig(baseUrl);
+  const numericCompanyId = await resolveNumericCompanyId(baseUrl, apiKey);
+  const candidateRoot = candidatesApiRoot(numericCompanyId);
+
+  const [pipelineStages, locationById, offerMeta, disqualifiedRaw, qualifiedRaw] = await Promise.all([
+    fetchOfferPipeline(slugApiRoot, apiKey, jobId),
+    fetchLocationMap([slugApiRoot, candidateRoot], apiKey),
+    fetchOfferMeta(slugApiRoot, apiKey, jobId),
+    fetchCandidatesForOffer(candidateRoot, apiKey, jobId, {
+      filter: 'disqualified',
+      max: DISQUALIFIED_FETCH_MAX,
+    }),
+    fetchCandidatesForOffer(candidateRoot, apiKey, jobId, {
+      filter: 'qualified',
+      max: APPLICANTS_MAX_FETCH,
+    }),
+  ]);
+  const stageById = stageMapFromPipeline(pipelineStages);
+
+  const disqualifiedIds = new Set(
+    disqualifiedRaw.filter((c) => c.id).map((c) => String(c.id)),
+  );
+  const mergedRaw: CandidateRow[] = [];
+  const seen = new Set<string>();
+  for (const candidate of [...disqualifiedRaw, ...qualifiedRaw]) {
+    if (!candidate.id || seen.has(String(candidate.id))) continue;
+    seen.add(String(candidate.id));
+    mergedRaw.push(candidate);
+  }
+
+  const filtered = mergedRaw.filter((c) => c.id && c.name);
+  const disqualified_count = filtered.filter((c) => disqualifiedIds.has(String(c.id))).length;
+  const qualified_count = Math.max(0, offerMeta.applicants_count - disqualified_count);
+
+  if (filtered.length === 0) {
+    return {
+      pipeline: { stages: pipelineStages },
+      qualified_count: 0,
+      disqualified_count: 0,
+      applicants: [],
+    };
+  }
 
   const enrichCount = Math.min(filtered.length, APPLICANTS_DETAIL_ENRICH_MAX);
   const toEnrich = filtered.slice(0, enrichCount);
@@ -497,11 +579,20 @@ export async function fetchRecruiteeApplicants(
       enrichRecruiteeApplicant(candidateRoot, apiKey, candidate, jobId, stageById, locationById),
   );
 
-  const rest = remainder.map((candidate) =>
-    mapListCandidateToApplicant(candidate, jobId, stageById, locationById),
-  );
+  const rest = remainder.map((candidate) => {
+    const row = mapCandidateToApplicant(candidate, jobId, stageById, locationById);
+    row.cv_url = null;
+    return row;
+  });
 
-  return sortApplicantsByPipelineStage([...enriched, ...rest], stageById);
+  const applicants = [...enriched, ...rest];
+
+  return {
+    pipeline: { stages: pipelineStages },
+    qualified_count,
+    disqualified_count,
+    applicants,
+  };
 }
 
 export async function fetchRecruiteeCandidateCv(

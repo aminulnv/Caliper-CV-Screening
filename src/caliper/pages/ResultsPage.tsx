@@ -3,8 +3,10 @@
 import React from 'react'
 import { Icon, Btn, IconBtn, Segmented, ScoreBar, Confidence, StatusBadge } from '@/caliper/ui'
 import { api } from '@/services/api'
-import type { RunDetail, CandidateRow, CandidateEvaluationResponse, EvaluationItem } from '@/services/api'
+import type { RunDetail, CandidateRow, CandidateEvaluationResponse, EvaluationItem, CompareRunResponse } from '@/services/api'
 import { CriteriaChecklistPanel, ChecklistSummary } from '@/caliper/components/CriteriaChecklist'
+import { CandidateCompareSheet } from '@/caliper/components/CandidateCompareSheet'
+import { CandidateHistoryPanel } from '@/caliper/components/CandidateHistoryPanel'
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { CvQuotesPanel } from '@/caliper/components/CvQuotesPanel'
 import { countsFromCandidateRow } from '@/lib/criteria-checklist'
@@ -45,6 +47,8 @@ function ScoreDeductionBreakdown({ candidate }) {
   );
 }
 
+const MAX_COMPARE = 4;
+
 function ResultsPage({ tweaks, route, go }) {
   const runId = route?.runId ?? route?.run;
 
@@ -56,6 +60,11 @@ function ResultsPage({ tweaks, route, go }) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [selected, setSelected] = React.useState<string | null>(null);
+  const [compareSelection, setCompareSelection] = React.useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = React.useState(false);
+  const [compareLoading, setCompareLoading] = React.useState(false);
+  const [compareError, setCompareError] = React.useState<string | null>(null);
+  const [compareData, setCompareData] = React.useState<CompareRunResponse | null>(null);
   const [sortBy, setSortBy] = React.useState('score');
   const [filterStatus, setFilterStatus] = React.useState('all');
 
@@ -81,7 +90,41 @@ function ResultsPage({ tweaks, route, go }) {
     return () => clearInterval(interval);
   }, [runId, run?.status]);
 
-  React.useEffect(() => { setSelected(null); }, [runId]);
+  React.useEffect(() => {
+    setSelected(null);
+    setCompareSelection([]);
+    setCompareOpen(false);
+    setCompareData(null);
+  }, [runId]);
+
+  const toggleCompareSelect = (id: string) => {
+    setCompareSelection((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= MAX_COMPARE) return prev;
+      return [...prev, id];
+    });
+  };
+
+  const openCompare = async () => {
+    if (compareSelection.length < 2 || !runId) return;
+    setCompareOpen(true);
+    setCompareLoading(true);
+    setCompareError(null);
+    setCompareData(null);
+    try {
+      const data = await api.runs.compare(runId, compareSelection);
+      setCompareData(data);
+    } catch (e) {
+      setCompareError(e instanceof Error ? e.message : 'Could not load comparison');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  const openCandidateFromCompare = (candidateId: string) => {
+    setCompareOpen(false);
+    setSelected(candidateId);
+  };
 
   if (!runId) return null;
   if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading results…</div></div>;
@@ -124,9 +167,54 @@ function ResultsPage({ tweaks, route, go }) {
     <div className="page" style={{ maxWidth: 1320 }}>
       <div className="row" style={{ marginBottom: 16, justifyContent: 'flex-end', gap: 8 }}>
         <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
-        <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv}>Export CSV</Btn>
+        <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv} disabled={run.status === 'in_progress'}>Export CSV</Btn>
         <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: run.job_id })}>Re-run</Btn>
       </div>
+
+      {(run.status === 'in_progress' || run.status === 'queued') && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 18, padding: '14px 18px',
+            display: 'flex', alignItems: 'center', gap: 12,
+            borderColor: 'color-mix(in srgb, var(--info) 35%, var(--line))',
+            background: 'color-mix(in srgb, var(--info-soft, var(--accent-soft)) 55%, var(--surface))',
+          }}
+        >
+          <Icon name="sparkle" size={18} style={{ color: 'var(--info)', flexShrink: 0 }}/>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
+              Screening in progress
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+              {candidates.length} of {run.cv_count ?? candidates.length} CV{candidates.length === 1 ? '' : 's'} scored so far — results update automatically.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {run.status === 'failed' && run.error_message && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 18, padding: '14px 18px',
+            borderColor: 'color-mix(in srgb, var(--bad) 35%, var(--line))',
+            background: 'var(--bad-soft)',
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--bad-ink)' }}>Run failed</div>
+          <div style={{ fontSize: 12, marginTop: 4, color: 'var(--bad-ink)' }}>{run.error_message}</div>
+        </div>
+      )}
+
+      {run.run_note && (
+        <div className="card" style={{ marginBottom: 18, padding: '14px 18px' }}>
+          <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+            Run note
+          </div>
+          <div style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{run.run_note}</div>
+        </div>
+      )}
 
       <div className="stats stats--4" style={{ marginBottom: 22 }}>
         <StatCell label="Strong matches"    value={String(nStrong)}      sub="≥ 85"                    tone="ok"/>
@@ -156,7 +244,42 @@ function ResultsPage({ tweaks, route, go }) {
         </div>
       </div>
 
-      <RankedList rows={rows} onOpen={setSelected} tweaks={tweaks}/>
+      <div className="row" style={{ marginBottom: 10, gap: 8, alignItems: 'center' }}>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {compareSelection.length === 0
+            ? 'Select 2–4 candidates to compare'
+            : `${compareSelection.length} selected for compare${compareSelection.length >= MAX_COMPARE ? ' (max)' : ''}`}
+        </span>
+        <div className="spacer"/>
+        <Btn
+          variant="default"
+          size="sm"
+          icon="columns"
+          disabled={compareSelection.length < 2 || run.status === 'in_progress'}
+          onClick={openCompare}
+        >
+          Compare{compareSelection.length >= 2 ? ` (${compareSelection.length})` : ''}
+        </Btn>
+      </div>
+
+      <RankedList
+        rows={rows}
+        onOpen={setSelected}
+        tweaks={tweaks}
+        compareSelection={compareSelection}
+        maxCompare={MAX_COMPARE}
+        onToggleCompare={toggleCompareSelect}
+      />
+
+      <CandidateCompareSheet
+        open={compareOpen}
+        loading={compareLoading}
+        error={compareError}
+        data={compareData}
+        onClose={() => setCompareOpen(false)}
+        onOpenCandidate={openCandidateFromCompare}
+        tweaks={tweaks}
+      />
 
       {selected && (
         <CandidateDetail
@@ -165,7 +288,20 @@ function ResultsPage({ tweaks, route, go }) {
           allCandidates={candidates}
           onClose={() => setSelected(null)}
           onCandidateChange={setSelected}
+          onCandidateUpdated={(updated, scoreRange) => {
+            setRun((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                score_range: scoreRange ?? prev.score_range,
+                candidates: (prev.candidates ?? []).map((c) =>
+                  c.id === updated.id ? { ...c, ...updated } : c
+                ),
+              };
+            });
+          }}
           tweaks={tweaks}
+          go={go}
         />
       )}
     </div>
@@ -182,15 +318,17 @@ const StatCell = ({ label, value, sub, tone }) => (
   </div>
 );
 
-function RankedList({ rows, onOpen, tweaks }) {
+function RankedList({ rows, onOpen, tweaks, compareSelection = [], maxCompare = 4, onToggleCompare }) {
   if (rows.length === 0) {
     return <div className="card"><div className="muted" style={{ textAlign: 'center', padding: 32 }}>No candidates yet.</div></div>;
   }
+  const atMax = compareSelection.length >= maxCompare;
   return (
     <div className="card">
       <table className="tbl">
         <thead>
           <tr>
+            <th className="compare-select-cell" style={{ width: 36 }} aria-label="Compare selection"/>
             <th style={{ width: 36 }}/>
             <th style={{ width: 56 }}>Rank</th>
             <th>Candidate</th>
@@ -204,8 +342,24 @@ function RankedList({ rows, onOpen, tweaks }) {
         <tbody>
           {rows.map((c, i) => {
             const m = candidateMetrics(c);
+            const isCompareSelected = compareSelection.includes(c.id);
+            const compareDisabled = !isCompareSelected && atMax;
             return (
-            <tr key={c.id} onClick={() => onOpen(c.id)} className="is-clickable">
+            <tr
+              key={c.id}
+              onClick={() => onOpen(c.id)}
+              className={`is-clickable${isCompareSelected ? ' is-compare-selected' : ''}`}
+            >
+              <td className="compare-select-cell" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={isCompareSelected}
+                  disabled={compareDisabled}
+                  aria-label={`Select ${c.name ?? 'candidate'} for comparison`}
+                  title={compareDisabled ? `Maximum ${maxCompare} candidates` : undefined}
+                  onChange={() => onToggleCompare?.(c.id)}
+                />
+              </td>
               <td>
                 <span style={{
                   display: 'inline-grid', placeItems: 'center',
@@ -245,7 +399,7 @@ function RankedList({ rows, onOpen, tweaks }) {
   );
 }
 
-function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandidateChange, tweaks }) {
+function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandidateChange, onCandidateUpdated, tweaks, go }) {
   const [evalData, setEvalData] = React.useState<CandidateEvaluationResponse | null>(null);
   const [evalLoading, setEvalLoading] = React.useState(true);
   const [decisions, setDecisions] = React.useState<Record<string, 'agree' | 'override' | null>>({});
@@ -255,10 +409,17 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
 
   React.useEffect(() => {
     setEvalLoading(true);
-    setDecisions({});
     setCvLink(null);
     api.candidates.getEvaluation(candidateId)
-      .then(setEvalData)
+      .then((data) => {
+        setEvalData(data);
+        const initial: Record<string, 'agree' | 'override' | null> = {};
+        for (const e of data.evaluations ?? []) {
+          if (e.overridden_by) initial[e.id] = 'override';
+          else if (e.agreed_by) initial[e.id] = 'agree';
+        }
+        setDecisions(initial);
+      })
       .catch(() => setEvalData(null))
       .finally(() => setEvalLoading(false));
   }, [candidateId]);
@@ -283,21 +444,45 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
   const handleOverride = async (evalId: string, met: boolean, note: string) => {
     setSaving(true);
     try {
-      await api.candidates.override(evalId, met, note);
-      // Optimistic UI: flip the evaluation locally
+      const result = await api.candidates.override(evalId, met, note);
+      setEvalData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          candidate: result.candidate ?? prev.candidate,
+          evaluations: prev.evaluations.map((e) =>
+            e.id === evalId
+              ? { ...e, met, override_note: note, overridden_by: 'you', agreed_by: null, agreed_at: null }
+              : e
+          ),
+        };
+      });
+      if (result.candidate) {
+        onCandidateUpdated?.(result.candidate, result.score_range);
+      }
+      setDecisions((d) => ({ ...d, [evalId]: 'override' }));
+    } finally {
+      setSaving(false);
+      setOverrideModal(null);
+    }
+  };
+
+  const handleAgree = async (evalId: string) => {
+    setSaving(true);
+    try {
+      await api.candidates.agree(evalId);
       setEvalData((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
           evaluations: prev.evaluations.map((e) =>
-            e.id === evalId ? { ...e, met, override_note: note, overridden_by: 'you' } : e
+            e.id === evalId ? { ...e, agreed_by: 'you', agreed_at: new Date().toISOString() } : e
           ),
         };
       });
-      setDecisions((d) => ({ ...d, [evalId]: 'override' }));
+      setDecisions((d) => ({ ...d, [evalId]: 'agree' }));
     } finally {
       setSaving(false);
-      setOverrideModal(null);
     }
   };
 
@@ -342,6 +527,14 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
               <span className="muted" style={{ fontSize: 11.5 }}>Switch without closing.</span>
             </div>
           )}
+
+          <CandidateHistoryPanel
+            candidateId={candidateId}
+            onNavigate={(targetRunId) => {
+              onClose();
+              if (typeof go === 'function') go('results', targetRunId);
+            }}
+          />
         </div>
 
         <div style={{ minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -394,7 +587,7 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
                   candidate={candidate}
                   sections={sections}
                   decisions={decisions}
-                  onAgree={(id) => setDecisions((d) => ({ ...d, [id]: 'agree' }))}
+                  onAgree={(id) => { void handleAgree(id); }}
                   onOverride={(id, currentMet) => setOverrideModal({ evalId: id, currentMet })}
                   onQuoteHover={setCvLink}
                   activeQuote={cvLink?.quote}

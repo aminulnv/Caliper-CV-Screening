@@ -42,6 +42,13 @@ import {
 } from '@/lib/criteria-validation'
 import { ChecklistRow } from '@/caliper/components/CriteriaChecklist'
 import { RelatedProfilesPane } from '@/caliper/components/RelatedProfilesPane'
+import {
+  RecruiteePipelineBoard,
+  RecruiteePipelineTabs,
+  buildPipelineListGroups,
+} from '@/caliper/components/RecruiteePipelineBoard'
+import { RecruiteeEvalBadge } from '@/caliper/components/RecruiteeEvalBadge'
+import type { EvalSortMode } from '@/lib/recruitee-eval-sort'
 
 function shapeJobsList(jobs: unknown[]) {
   return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
@@ -129,11 +136,16 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const [cvMode, setCvMode] = React.useState(profile.source === 'recruitee' ? 'recruitee' : 'manual');
   const [recruiteeRowSelected, setRecruiteeRowSelected] = React.useState([]);
   const [stageScope, setStageScope] = React.useState(initialStage ?? 'all');
+
+  React.useEffect(() => {
+    if (initialStage != null) setStageScope(initialStage);
+  }, [initialStage]);
   const [uploadedFiles, setUploadedFiles] = React.useState([]);
   const [recruiteeApplicants, setRecruiteeApplicants] = React.useState([]);
   const [recruiteeLoading, setRecruiteeLoading] = React.useState(false);
   const [runProcessing, setRunProcessing] = React.useState(null);
   const [runError, setRunError] = React.useState(null);
+  const [runNote, setRunNote] = React.useState('');
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
 
@@ -144,6 +156,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setUploadedFiles([]);
     setRunProcessing(null);
     setRunError(null);
+    setRunNote('');
     runCancelRef.current = false;
   }, [profile.id]);
 
@@ -156,21 +169,21 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       return;
     }
     const pickInitial = (apps) =>
-      apps.map((a) => !initialStage || initialStage === 'all' || (a.status || 'No stage set') === initialStage);
+      apps.map((a) => !initialStage || initialStage === 'all' || (a.status || a.stage_name || 'No stage set') === initialStage);
     let cancelled = false;
     const cached = getCachedApplicants(profile.sourceRef);
-    if (cached?.length) {
-      setRecruiteeApplicants(cached);
-      setRecruiteeRowSelected(pickInitial(cached));
+    if (cached?.applicants?.length) {
+      setRecruiteeApplicants(cached.applicants);
+      setRecruiteeRowSelected(pickInitial(cached.applicants));
       setRecruiteeLoading(false);
     } else {
       setRecruiteeLoading(true);
     }
     loadRecruiteeApplicants(profile.sourceRef)
-      .then((apps) => {
+      .then((data) => {
         if (cancelled) return;
-        setRecruiteeApplicants(apps);
-        setRecruiteeRowSelected(pickInitial(apps));
+        setRecruiteeApplicants(data.applicants);
+        setRecruiteeRowSelected(pickInitial(data.applicants));
       })
       .catch(() => {
         if (!cancelled) setRecruiteeApplicants([]);
@@ -184,8 +197,9 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const rows = recruiteeApplicants.map((a) => ({
     id: a.id,
     name: a.name || 'Unknown',
+    email: a.email ?? null,
     loc: a.location || '—',
-    stage: a.status || 'No stage set',
+    stage: a.status || a.stage_name || 'No stage set',
     cv_url: a.cv_url,
     status: a.cv_url ? 'ok' : 'warn',
     reason: a.cv_url ? '' : 'No CV attached in Recruitee',
@@ -206,6 +220,11 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     stage,
     rows: rows.map((r, i) => ({ r, i })).filter((x) => x.r.stage === stage),
   }));
+
+  const visibleSheetGroups =
+    stageScope === 'all' || stageScope === 'custom'
+      ? sheetGroups
+      : sheetGroups.filter((g) => g.stage === stageScope);
 
   const applyStageScope = (stage) => {
     setStageScope(stage);
@@ -282,6 +301,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
             applicant_id: r.id,
             cv_url: r.cv_url.startsWith('http') ? r.cv_url : `recruitee-applicant:${r.id}`,
             name: r.name,
+            ...(r.email ? { email: r.email } : {}),
           }));
       }
       if (runCancelRef.current) { setRunProcessing(null); return; }
@@ -291,6 +311,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
         job_id: profile.id,
         cv_sources: cvSources,
         ...(modelId ? { model_id: modelId } : {}),
+        ...(runNote.trim() ? { run_note: runNote.trim() } : {}),
       });
       const { run_id } = created;
       if (created.model_notice) {
@@ -308,7 +329,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       setRunProcessing(null);
       setRunError(err?.message ?? 'Failed to start run. Please try again.');
     }
-  }, [canRun, cvMode, uploadedFiles, rowSel, rows, profile.id, go, onClose]);
+  }, [canRun, cvMode, uploadedFiles, rowSel, rows, profile.id, profile.screeningModel, runNote, go, onClose]);
 
   const cvSum = {
     selected: cvMode === 'manual' ? uploadedFiles.length : rowSel.filter(Boolean).length,
@@ -511,7 +532,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                             </tr>
                           </thead>
                           <tbody>
-                            {sheetGroups.map((g) => {
+                            {visibleSheetGroups.map((g) => {
                               const groupSel = g.rows.filter((x) => rowSel[x.i]).length;
                               const allSel = g.rows.length > 0 && groupSel === g.rows.length;
                               return (
@@ -626,6 +647,26 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                     <div><div className="stats__lbl">Selected</div><div style={{ fontSize: 20, fontWeight: 500 }}>{cvSum.selected}</div></div>
                     <div><div className="stats__lbl">Parse warnings</div><div style={{ fontSize: 20, fontWeight: 500, color: cvSum.warnings ? 'var(--warn-ink)' : 'var(--muted)' }}>{cvSum.warnings}</div></div>
                   </div>
+                </div>
+              </div>
+              <div className="card">
+                <div className="card__head">
+                  <span className="card__title" style={{ fontSize: 12 }}>Run note</span>
+                  <span className="mono muted" style={{ fontSize: 11 }}>Optional</span>
+                </div>
+                <div className="card__body" style={{ paddingTop: 8 }}>
+                  <textarea
+                    className="ta"
+                    rows={3}
+                    placeholder="e.g. TA Interview batch — focus on procurement experience in EU markets"
+                    value={runNote}
+                    onChange={(e) => setRunNote(e.target.value)}
+                    maxLength={2000}
+                    aria-label="Run note"
+                  />
+                  <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0', lineHeight: 1.45 }}>
+                    Saved with this run so you and your team can remember why it was started.
+                  </p>
                 </div>
               </div>
             </div>
@@ -901,6 +942,7 @@ function ProfilesPage({ go, route }) {
         />
         {canEdit && runSheetProfileId === profile.id && (
           <RunScreeningSheet
+            key={`${profile.id}-${runSheetStage ?? 'all'}`}
             profile={profile}
             initialStage={runSheetStage}
             onClose={() => { setRunSheetStage(null); setRunSheetProfileId(null); }}
@@ -1126,6 +1168,7 @@ function ProfilesPage({ go, route }) {
       )}
       {runSheetProfile && (
         <RunScreeningSheet
+          key={`${runSheetProfile.id}-${runSheetStage ?? 'all'}`}
           profile={runSheetProfile}
           initialStage={runSheetStage}
           onClose={() => { setRunSheetStage(null); setRunSheetProfileId(null); }}
@@ -1693,9 +1736,30 @@ function ProfileTabs({
   go, onOpenRunSheet, criteriaGenState, onGenerateCriteria, canEdit = true,
 }) {
   const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
+  const [calibration, setCalibration] = React.useState(null);
   React.useLayoutEffect(() => {
     setTab(initialTab === 'criteria' ? 'criteria' : 'overview');
   }, [profile.id, initialTab]);
+
+  React.useEffect(() => {
+    if (tab !== 'criteria' || isHero) {
+      setCalibration(null);
+      return;
+    }
+    let cancelled = false;
+    api.jobs.calibration(profile.id)
+      .then((data) => { if (!cancelled) setCalibration(data); })
+      .catch(() => { if (!cancelled) setCalibration(null); });
+    return () => { cancelled = true; };
+  }, [tab, profile.id, isHero]);
+
+  const calibrationByCriterionId = React.useMemo(() => {
+    const map = new Map();
+    for (const item of calibration?.flagged ?? []) {
+      map.set(item.criterion_id, item);
+    }
+    return map;
+  }, [calibration]);
   const candidateRows = React.useMemo(
     () => (typeof getCandidateRowsForJob === 'function' ? getCandidateRowsForJob(profile.id) : []),
     [profile.id],
@@ -1708,12 +1772,12 @@ function ProfileTabs({
     () => (profile.sourceRef ? getCachedApplicants(profile.sourceRef) : null),
     [profile.sourceRef],
   );
-  const [recruiteeApps, setRecruiteeApps] = React.useState(() => initialApplicants ?? []);
+  const [recruiteeData, setRecruiteeData] = React.useState(() => initialApplicants ?? null);
   const [recruiteeAppsLoading, setRecruiteeAppsLoading] = React.useState(
     () =>
       profile.source === 'recruitee'
       && Boolean(profile.sourceRef)
-      && !(initialApplicants?.length),
+      && !(initialApplicants?.applicants?.length),
   );
   const [recruiteeAppsError, setRecruiteeAppsError] = React.useState(null);
   const [auditCount, setAuditCount] = React.useState(0);
@@ -1731,7 +1795,7 @@ function ProfileTabs({
 
   React.useEffect(() => {
     if (profile.source !== 'recruitee' || !profile.sourceRef) {
-      setRecruiteeApps([]);
+      setRecruiteeData(null);
       setRecruiteeAppsLoading(false);
       setRecruiteeAppsError(null);
       return;
@@ -1739,8 +1803,8 @@ function ProfileTabs({
 
     let cancelled = false;
     const cached = getCachedApplicants(profile.sourceRef);
-    if (cached?.length) {
-      setRecruiteeApps(cached);
+    if (cached?.applicants) {
+      setRecruiteeData(cached);
       setRecruiteeAppsLoading(false);
       setRecruiteeAppsError(null);
     } else {
@@ -1749,15 +1813,15 @@ function ProfileTabs({
     }
 
     loadRecruiteeApplicants(profile.sourceRef)
-      .then((apps) => {
+      .then((data) => {
         if (!cancelled) {
-          setRecruiteeApps(apps);
+          setRecruiteeData(data);
           setRecruiteeAppsError(null);
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          setRecruiteeApps([]);
+          setRecruiteeData(null);
           setRecruiteeAppsError(err?.message ?? 'Failed to load applicants from Recruitee.');
         }
       })
@@ -1768,11 +1832,13 @@ function ProfileTabs({
     return () => { cancelled = true; };
   }, [profile.id, profile.sourceRef, profile.source]);
 
+  const recruiteeApps = recruiteeData?.applicants ?? [];
+
   const candidatesTabCount = Math.max(
     candidateRows.length,
     recruiteeApps.length,
     profile.applicantsCount ?? 0,
-    initialApplicants?.length ?? 0,
+    initialApplicants?.applicants?.length ?? 0,
   );
 
   return (
@@ -1814,6 +1880,8 @@ function ProfileTabs({
           criteriaGenState={criteriaGenState}
           onGenerateCriteria={onGenerateCriteria}
           hasUsableDescription={isUsableJobDescription(desc)}
+          calibration={calibration}
+          calibrationByCriterionId={calibrationByCriterionId}
         />
       )}
       {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet}/>}
@@ -1821,7 +1889,7 @@ function ProfileTabs({
         <JobCandidatesPane
           profile={profile}
           rows={candidateRows}
-          recruiteeApps={recruiteeApps}
+          recruiteeData={recruiteeData}
           recruiteeLoading={recruiteeAppsLoading}
           recruiteeError={recruiteeAppsError}
           completedRuns={completedRunsForJob}
@@ -2087,9 +2155,12 @@ function CriteriaPane({
   mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias,
   workspaceSettings, screeningModel, setScreeningModel, onSave, saveState, isHero,
   criteriaGenState, onGenerateCriteria, hasUsableDescription, canEdit = true,
+  calibration, calibrationByCriterionId,
 }) {
   const [biasPending, setBiasPending] = React.useState(null);
   const generating = criteriaGenState?.status === 'loading';
+  const flagged = calibration?.flagged ?? [];
+  const hasArchivedFlagged = flagged.some((item) => item.archived);
 
   const addBiasedCriterion = () => {
     if (!biasPending) return;
@@ -2142,6 +2213,24 @@ function CriteriaPane({
           )}
         </div>
       )}
+      {flagged.length > 0 && (
+        <div className="calibration-banner">
+          <div className="calibration-banner__label mono">Calibration</div>
+          <div className="calibration-banner__list">
+            {flagged.map((item) => (
+              <div key={item.criterion_id} className="calibration-banner__item">
+                <strong>{item.criterion_name}</strong>
+                <span className="muted"> — {item.message}</span>
+              </div>
+            ))}
+          </div>
+          {hasArchivedFlagged && (
+            <div className="muted calibration-banner__foot">
+              Some flagged criteria are archived but still have override history from past runs.
+            </div>
+          )}
+        </div>
+      )}
       <ScreeningModelPicker
         modelId={screeningModel}
         onChange={setScreeningModel}
@@ -2150,14 +2239,17 @@ function CriteriaPane({
       <CriteriaList kind="must" label="Must-have criteria"
         help="Missing or weak evidence applies a heavy score penalty. Quoted CV evidence counts fully; inferred matches count for less."
         items={mh} setItems={setMH} canEdit={canEdit}
+        calibrationByCriterionId={calibrationByCriterionId}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'must' }); setShowBias(true); }}/>
       <CriteriaList kind="nice" label="Nice-to-have"
         help="Boosts when matched with evidence. Doesn't penalise when missing."
         items={nh} setItems={setNH} canEdit={canEdit}
+        calibrationByCriterionId={calibrationByCriterionId}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'nice' }); setShowBias(true); }}/>
       <CriteriaList kind="flag" label="Red flags"
         help="If matched, points are deducted (weight ×4 per flag, ×2 if inferred) and the candidate is marked Flagged."
         items={rf} setItems={setRF} canEdit={canEdit}
+        calibrationByCriterionId={calibrationByCriterionId}
         onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'flag' }); setShowBias(true); }}/>
       {showBias && (
         <div className="bias-banner">
@@ -2338,62 +2430,11 @@ function RecruiteeCvModal({ candidateId, candidateName, onClose }) {
   );
 }
 
-/* ----- Stage board: applicants laid out as columns per pipeline stage ----- */
-function CandidateBoard({ stageGroups, canEdit, onView, onScreenStage }) {
-  return (
-    <div className="cand-board" role="list" aria-label="Applicants by pipeline stage">
-      {stageGroups.map((group, ci) => (
-        <section className="cand-col" role="listitem" key={group.stage} style={{ ['--col-index']: ci }}>
-          <header className="cand-col__head">
-            <span className="cand-col__title">
-              <span className="cand-col__dot" />
-              <span className="cand-col__title-text" title={group.stage}>{group.stage}</span>
-            </span>
-            <span className="cand-col__count">{group.items.length}</span>
-            {canEdit && onScreenStage && group.items.length > 0 && (
-              <button
-                type="button"
-                className="cand-col__screen"
-                onClick={() => onScreenStage(group.stage)}
-                title={`Run screening on the ${group.items.length} applicant${group.items.length === 1 ? '' : 's'} in “${group.stage}”`}
-              >
-                <Icon name="play" size={11} /> Screen
-              </button>
-            )}
-          </header>
-          <div className="cand-col__body">
-            {group.items.length === 0 ? (
-              <div className="cand-col__empty">No applicants</div>
-            ) : (
-              group.items.map((a) => (
-                <article className="cand-card" key={a.id}>
-                  <div className="cand-card__name">{a.name || 'Unknown'}</div>
-                  <div className="cand-card__meta">
-                    <span className="cand-card__loc">{a.location || '—'}</span>
-                    <button
-                      type="button"
-                      className="cand-card__cv"
-                      onClick={() => onView(a)}
-                      aria-label={`View CV for ${a.name || 'applicant'}`}
-                    >
-                      <Icon name="eye" size={11} /> CV
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
 /* ----- Recruitee applicants + screened candidates ----- */
 function JobCandidatesPane({
   profile,
   rows,
-  recruiteeApps,
+  recruiteeData,
   recruiteeLoading,
   recruiteeError,
   completedRuns,
@@ -2403,30 +2444,37 @@ function JobCandidatesPane({
 }) {
   const [cvPreview, setCvPreview] = React.useState(null);
   const [view, setView] = React.useState('board');
+  const [pipelineView, setPipelineView] = React.useState('qualified');
+  const [evalSort, setEvalSort] = React.useState<EvalSortMode>('default');
+  const [applicantQuery, setApplicantQuery] = React.useState('');
+
+  const recruiteeApps = recruiteeData?.applicants ?? [];
+  const pipelineStages = recruiteeData?.pipeline?.stages ?? [];
+  const qualifiedCount = recruiteeData?.qualified_count ?? recruiteeApps.filter((a) => !a.disqualified).length;
+  const disqualifiedCount = recruiteeData?.disqualified_count ?? recruiteeApps.filter((a) => a.disqualified).length;
+
+  const searchedApps = React.useMemo(() => {
+    const q = applicantQuery.trim().toLowerCase();
+    if (!q) return recruiteeApps;
+    return recruiteeApps.filter(
+      (a) =>
+        (a.name || '').toLowerCase().includes(q) ||
+        (a.location || '').toLowerCase().includes(q),
+    );
+  }, [recruiteeApps, applicantQuery]);
+
+  const listColSpan = pipelineView === 'disqualified' ? 5 : 4;
+
+  const listGroups = React.useMemo(
+    () => buildPipelineListGroups(pipelineStages, searchedApps, pipelineView, evalSort),
+    [pipelineStages, searchedApps, pipelineView, evalSort],
+  );
 
   const uniquePeople = React.useMemo(() => {
     const s = new Set();
     rows.forEach((r) => s.add(r.name.toLowerCase()));
     return s.size;
   }, [rows]);
-
-  // Group applicants by their Recruitee pipeline stage, preserving the incoming
-  // order (the API returns them in pipeline order) so sections read top→bottom.
-  const stageGroups = React.useMemo(() => {
-    const groups = [];
-    const byStage = new Map();
-    for (const a of recruiteeApps) {
-      const key = a.status || 'No stage set';
-      let group = byStage.get(key);
-      if (!group) {
-        group = { stage: key, items: [] };
-        byStage.set(key, group);
-        groups.push(group);
-      }
-      group.items.push(a);
-    }
-    return groups;
-  }, [recruiteeApps]);
 
   const hasRecruitee = profile.source === 'recruitee' && profile.sourceRef;
   const hasScreened = rows.length > 0 && completedRuns.length > 0;
@@ -2503,13 +2551,57 @@ function JobCandidatesPane({
             ]}/>
           </div>
 
+          <RecruiteePipelineTabs
+            pipelineView={pipelineView}
+            onPipelineViewChange={setPipelineView}
+            qualifiedCount={qualifiedCount}
+            disqualifiedCount={disqualifiedCount}
+          />
+
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 300, minWidth: 160 }}>
+              <input
+                className="inp"
+                placeholder="Search applicants by name…"
+                style={{ paddingLeft: 32 }}
+                value={applicantQuery}
+                onChange={(e) => setApplicantQuery(e.target.value)}
+                aria-label="Search applicants"
+              />
+              <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
+            </div>
+            <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+              <span className="muted" style={{ fontSize: 12 }}>Sort within each stage</span>
+              <Segmented
+                value={evalSort}
+                onChange={setEvalSort}
+                options={[
+                  { value: 'default', label: 'Default' },
+                  { value: 'eval_desc', label: 'Eval ↓' },
+                  { value: 'eval_asc', label: 'Eval ↑' },
+                ]}
+              />
+            </div>
+          </div>
+
+          {applicantQuery.trim() && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              {searchedApps.length === 0
+                ? <>No applicants match “{applicantQuery.trim()}”.</>
+                : <><strong>{searchedApps.length}</strong> applicant{searchedApps.length === 1 ? '' : 's'} match “{applicantQuery.trim()}”.</>}
+            </div>
+          )}
+
           {recruiteeLoading && recruiteeApps.length === 0 ? (
             <div className="card">
               <div className="muted" style={{ padding: 20, fontSize: 12.5 }}>Loading applicants…</div>
             </div>
           ) : view === 'board' ? (
-            <CandidateBoard
-              stageGroups={stageGroups}
+            <RecruiteePipelineBoard
+              stages={pipelineStages}
+              applicants={searchedApps}
+              pipelineView={pipelineView}
+              sortMode={evalSort}
               canEdit={canEdit}
               onView={(a) => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
               onScreenStage={(stage) => onOpenRunSheet && onOpenRunSheet(stage)}
@@ -2521,29 +2613,34 @@ function JobCandidatesPane({
                   <tr>
                     <th>Applicant</th>
                     <th style={{ width: 160 }}>Location</th>
+                    <th style={{ width: 88 }}>Evaluation</th>
+                    {pipelineView === 'disqualified' && <th style={{ width: 200 }}>Reason</th>}
                     <th style={{ width: 100 }}>CV</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {stageGroups.map((group) => (
-                    <React.Fragment key={group.stage}>
+                  {listGroups.map(({ stage, items }) => (
+                    <React.Fragment key={stage.id}>
                       <tr className="tbl-group">
-                        <td colSpan={3}>
+                        <td colSpan={listColSpan}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="tbl-group__label">
-                              <span className="tbl-group__dot" />
-                              {group.stage}
+                              <span
+                                className="tbl-group__dot"
+                                data-category={(stage.category || 'other').toLowerCase()}
+                              />
+                              {stage.name}
                             </span>
                             <span className="tbl-group__count">
-                              {group.items.length} {group.items.length === 1 ? 'candidate' : 'candidates'}
+                              {items.length} {items.length === 1 ? 'candidate' : 'candidates'}
                             </span>
-                            {canEdit && onOpenRunSheet && (
+                            {canEdit && onOpenRunSheet && pipelineView === 'qualified' && items.length > 0 && (
                               <Btn
                                 size="sm"
                                 variant="ghost"
                                 icon="play"
                                 style={{ marginLeft: 'auto' }}
-                                onClick={() => onOpenRunSheet(group.stage)}
+                                onClick={() => onOpenRunSheet(stage.name)}
                               >
                                 Screen stage
                               </Btn>
@@ -2551,24 +2648,46 @@ function JobCandidatesPane({
                           </div>
                         </td>
                       </tr>
-                      {group.items.map((a) => (
-                        <tr key={a.id}>
-                          <td>
-                            <div style={{ fontWeight: 500, fontSize: 13.5 }}>{a.name || 'Unknown'}</div>
-                          </td>
-                          <td className="muted">{a.location || '—'}</td>
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <Btn
-                              size="sm"
-                              variant="ghost"
-                              icon="eye"
-                              onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
-                            >
-                              View
-                            </Btn>
+                      {items.length === 0 ? (
+                        <tr>
+                          <td colSpan={listColSpan} className="muted" style={{ fontSize: 12.5, padding: '10px 14px' }}>
+                            No applicants
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        items.map((a) => (
+                          <tr key={a.id}>
+                            <td>
+                              <div style={{ fontWeight: 500, fontSize: 13.5 }}>{a.name || 'Unknown'}</div>
+                            </td>
+                            <td className="muted">{a.location || '—'}</td>
+                            <td>
+                              <RecruiteeEvalBadge score={a.evaluation_score} inline />
+                            </td>
+                            {pipelineView === 'disqualified' && (
+                              <td>
+                                {a.disqualify_reason ? (
+                                  <span className="cand-card__disqualify cand-card__disqualify--inline">
+                                    {a.disqualify_reason}
+                                  </span>
+                                ) : (
+                                  <span className="muted">—</span>
+                                )}
+                              </td>
+                            )}
+                            <td onClick={(e) => e.stopPropagation()}>
+                              <Btn
+                                size="sm"
+                                variant="ghost"
+                                icon="eye"
+                                onClick={() => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
+                              >
+                                View
+                              </Btn>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </React.Fragment>
                   ))}
                 </tbody>
@@ -2785,7 +2904,7 @@ function AuditPane({ jobId, isHero, active, onCount, go }) {
 
 
 /* ----- Criteria list (shared) ----- */
-function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit = true }) {
+function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit = true, calibrationByCriterionId }) {
   const [input, setInput] = React.useState('');
   const [weight, setWeight] = React.useState(kind === 'must' ? 5 : 3);
   const [inputError, setInputError] = React.useState('');
@@ -2863,32 +2982,39 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit 
           {items.length === 0
             ? <span className="muted" style={{ fontSize: 12, padding: '6px 2px' }}>No criteria yet — add one below.</span>
             : items.map(it => (
-              <span key={it.id} className={`chip chip--${kind}`}>
-                {canEdit ? (
-                  <input
-                    className="chip__crit-name chip__crit-name--input"
-                    value={it.name}
-                    aria-label={`Edit criterion: ${it.name}`}
-                    onFocus={() => { focusNamesRef.current[it.id] = it.name; }}
-                    onChange={(e) => renameItem(it.id, e.target.value)}
-                    onBlur={(e) => commitRename(it.id, e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                  />
-                ) : (
-                  <span className="chip__crit-name">{it.name}</span>
-                )}
-                {renameErrors[it.id] && (
-                  <span style={{ flex: '1 1 100%', fontSize: 11, color: 'var(--bad)', lineHeight: 1.35 }}>
-                    {renameErrors[it.id]}
+              <React.Fragment key={it.id}>
+                <span className={`chip chip--${kind}`}>
+                  {canEdit ? (
+                    <input
+                      className="chip__crit-name chip__crit-name--input"
+                      value={it.name}
+                      aria-label={`Edit criterion: ${it.name}`}
+                      onFocus={() => { focusNamesRef.current[it.id] = it.name; }}
+                      onChange={(e) => renameItem(it.id, e.target.value)}
+                      onBlur={(e) => commitRename(it.id, e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    />
+                  ) : (
+                    <span className="chip__crit-name">{it.name}</span>
+                  )}
+                  {renameErrors[it.id] && (
+                    <span style={{ flex: '1 1 100%', fontSize: 11, color: 'var(--bad)', lineHeight: 1.35 }}>
+                      {renameErrors[it.id]}
+                    </span>
+                  )}
+                  <span className="chip__crit-actions">
+                    <WeightStepper value={it.weight} onChange={(w) => setWeightFor(it.id, w)} disabled={!canEdit}/>
+                    {canEdit && (
+                      <button type="button" className="chip__x" onClick={() => remove(it.id)} aria-label={`Remove ${it.name}`}><Icon name="x" size={10} stroke={2}/></button>
+                    )}
+                  </span>
+                </span>
+                {calibrationByCriterionId?.get(it.id) && (
+                  <span className="calibration-chip-hint">
+                    {Math.round(calibrationByCriterionId.get(it.id).override_rate * 100)}% override rate · consider rewording
                   </span>
                 )}
-                <span className="chip__crit-actions">
-                  <WeightStepper value={it.weight} onChange={(w) => setWeightFor(it.id, w)} disabled={!canEdit}/>
-                  {canEdit && (
-                    <button type="button" className="chip__x" onClick={() => remove(it.id)} aria-label={`Remove ${it.name}`}><Icon name="x" size={10} stroke={2}/></button>
-                  )}
-                </span>
-              </span>
+              </React.Fragment>
             ))}
         </div>
         {canEdit && (

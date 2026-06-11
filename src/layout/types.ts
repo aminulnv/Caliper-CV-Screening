@@ -10,6 +10,8 @@ export interface NavItem {
   label: string
   icon: LucideIcon
   end?: boolean
+  /** Non-navigable placeholder (e.g. pgvector not ready yet). */
+  comingSoon?: boolean
   /** Nested sub-items (no icons). Rendered indented under parent with expand/collapse. */
   children?: NavItemChild[]
 }

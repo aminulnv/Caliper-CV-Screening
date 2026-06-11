@@ -7,6 +7,7 @@ import {
   RunsPageRoute,
   JobsPageRoute,
   ResultsPageRoute,
+  TalentSearchPageRoute,
   CaliperSettingsRoute,
 } from '@/caliper/CaliperPageRoutes'
 
@@ -24,6 +25,7 @@ function App() {
               <Route path="runs" element={<RunsPageRoute />} />
               <Route path="runs/:runId" element={<ResultsPageRoute />} />
               <Route path="jobs" element={<JobsPageRoute />} />
+              <Route path="talent-search" element={<TalentSearchPageRoute />} />
               <Route path="settings" element={<CaliperSettingsRoute />} />
             </Route>
           </Route>
