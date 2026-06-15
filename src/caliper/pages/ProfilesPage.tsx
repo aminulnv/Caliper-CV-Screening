@@ -194,16 +194,22 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     return () => { cancelled = true; };
   }, [profile.id, profile.sourceRef, profile.source, initialStage]);
 
-  const rows = recruiteeApplicants.map((a) => ({
-    id: a.id,
-    name: a.name || 'Unknown',
-    email: a.email ?? null,
-    loc: a.location || '—',
-    stage: a.status || a.stage_name || 'No stage set',
-    cv_url: a.cv_url,
-    status: a.cv_url ? 'ok' : 'warn',
-    reason: a.cv_url ? '' : 'No CV attached in Recruitee',
-  }));
+  const rows = recruiteeApplicants.map((a) => {
+    const hasDirectCv = Boolean(a.cv_url?.startsWith('http'));
+    const hasFetchableCv =
+      hasDirectCv || Boolean(a.cv_url?.startsWith('recruitee-applicant:'));
+    return {
+      id: a.id,
+      name: a.name || 'Unknown',
+      email: a.email ?? null,
+      loc: a.location || '—',
+      stage: a.status || a.stage_name || 'No stage set',
+      cv_url: a.cv_url,
+      status: hasFetchableCv ? 'ok' : 'warn',
+      cvLabel: hasDirectCv ? 'Attached' : hasFetchableCv ? 'On Recruitee' : 'Missing',
+      reason: hasFetchableCv ? '' : 'No CV attached in Recruitee',
+    };
+  });
 
   const rowSel = recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true);
   const nSelectedRec = rowSel.filter(Boolean).length;
@@ -295,11 +301,13 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       } else {
         const sel = rowSel;
         cvSources = rows
-          .filter((r, i) => sel[i] && r.cv_url)
+          .filter((r, i) => sel[i] && r.status === 'ok')
           .map((r) => ({
             type: 'recruitee',
             applicant_id: r.id,
-            cv_url: r.cv_url.startsWith('http') ? r.cv_url : `recruitee-applicant:${r.id}`,
+            cv_url: r.cv_url?.startsWith('http')
+              ? r.cv_url
+              : `recruitee-applicant:${r.id}`,
             name: r.name,
             ...(r.email ? { email: r.email } : {}),
           }));
@@ -575,7 +583,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                                       <td className="muted">{c.loc}</td>
                                       <td>
                                         {c.status === 'ok'
-                                          ? <Badge tone="ok" dot>Attached</Badge>
+                                          ? <Badge tone="ok" dot>{c.cvLabel}</Badge>
                                           : <span className="row" style={{ gap: 6 }}><Badge tone="warn" dot>Missing</Badge><span className="muted" style={{ fontSize: 11 }}>{c.reason}</span></span>}
                                       </td>
                                     </tr>

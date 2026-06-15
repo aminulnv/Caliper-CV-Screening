@@ -366,8 +366,7 @@ async function enrichRecruiteeApplicant(
   stageById: Map<string, string>,
   locationById: Map<string, string>,
 ): Promise<RecruiteeApplicant> {
-  const fallback = mapCandidateToApplicant(candidate, offerId, stageById, locationById);
-  fallback.cv_url = null;
+  const fromList = mapCandidateToApplicant(candidate, offerId, stageById, locationById);
   try {
     const data = (await recruiteeGet(candidateRoot, apiKey, `/candidates/${candidate.id}`)) as {
       candidate?: CandidateRow;
@@ -375,7 +374,7 @@ async function enrichRecruiteeApplicant(
     const detail: CandidateRow = { ...candidate, ...(data.candidate ?? {}) };
     return mapCandidateToApplicant(detail, offerId, stageById, locationById);
   } catch {
-    return fallback;
+    return applyRecruiteeApplicantCvUrl(fromList, { assumeFetchable: true });
   }
 }
 
@@ -383,6 +382,24 @@ async function enrichRecruiteeApplicant(
 export function recruiteeApplicantCvSource(applicant: Pick<RecruiteeApplicant, 'id' | 'cv_url'>): string {
   if (applicant.cv_url?.startsWith('http')) return applicant.cv_url;
   return `${RECRUITEE_APPLICANT_CV_SENTINEL}:${applicant.id}`;
+}
+
+/** Keep list URLs; for applicants not detail-checked, allow fetch-by-id during screening. */
+function applyRecruiteeApplicantCvUrl(
+  applicant: RecruiteeApplicant,
+  options: { assumeFetchable?: boolean } = {},
+): RecruiteeApplicant {
+  if (applicant.cv_url?.startsWith('http')) return applicant;
+  if (options.assumeFetchable) {
+    applicant.cv_url = recruiteeApplicantCvSource(applicant);
+  }
+  return applicant;
+}
+
+export function recruiteeApplicantHasCv(cvUrl: string | null | undefined): boolean {
+  if (!cvUrl) return false;
+  if (cvUrl.startsWith('http')) return true;
+  return cvUrl.startsWith(`${RECRUITEE_APPLICANT_CV_SENTINEL}:`);
 }
 
 function resolveCvUrlFromRow(candidate: CandidateRow): string | null {
@@ -581,8 +598,7 @@ export async function fetchRecruiteeApplicants(
 
   const rest = remainder.map((candidate) => {
     const row = mapCandidateToApplicant(candidate, jobId, stageById, locationById);
-    row.cv_url = null;
-    return row;
+    return applyRecruiteeApplicantCvUrl(row, { assumeFetchable: true });
   });
 
   const applicants = [...enriched, ...rest];
