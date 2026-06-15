@@ -13,8 +13,13 @@ const outDir = '/tmp/caliper-email-previews';
 process.env.APP_URL = process.env.APP_URL || 'http://localhost:5173';
 process.env.CALIPER_EMAIL_PREVIEW = '1';
 
-const { renderWorkspaceInviteEmail, renderInviteAcceptedEmail, renderRunCompletedEmail, renderRunFailedEmail } =
-  await import('../dist/services/email-templates.js');
+const {
+  renderWorkspaceInviteEmail,
+  renderInviteAcceptedEmail,
+  renderRunCompletedEmail,
+  renderRunFailedEmail,
+  renderRunSharedEmail,
+} = await import('../dist/services/email-templates.js');
 
 const samples = [
   {
@@ -56,6 +61,16 @@ const samples = [
         cvCount: 142,
         errorMessage:
           'OpenAI API rate limit exceeded after 3 retries. Check your API key quota in Settings and retry the run.',
+      }),
+  },
+  {
+    name: 'run-shared',
+    render: () =>
+      renderRunSharedEmail({
+        jobName: 'Senior Product Manager',
+        runId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+        sharerName: 'Jordan Lee',
+        sharerEmail: 'jordan@nextventures.io',
       }),
   },
 ];

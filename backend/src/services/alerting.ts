@@ -3,6 +3,7 @@ import {
   renderInviteAcceptedEmail,
   renderRunCompletedEmail,
   renderRunFailedEmail,
+  renderRunSharedEmail,
   renderWorkspaceInviteEmail,
 } from './email-templates.js';
 import { createNotification, getUserEmail } from './notifications.js';
@@ -106,6 +107,39 @@ export async function alertRunCompleted(input: {
     linkPath,
     email: {
       subject: `Screening complete — ${input.jobName}`,
+      text,
+      html,
+    },
+  });
+}
+
+export async function alertRunShared(input: {
+  workspaceId: string;
+  recipientUserId: string;
+  runId: string;
+  jobName: string;
+  sharerName: string | null;
+  sharerEmail: string | null;
+}): Promise<void> {
+  const sharer = input.sharerName || input.sharerEmail || 'A teammate';
+  const message = `${sharer} shared screening results for ${input.jobName} with you.`;
+  const linkPath = `/runs/${input.runId}`;
+  const { html, text } = renderRunSharedEmail({
+    jobName: input.jobName,
+    runId: input.runId,
+    sharerName: input.sharerName,
+    sharerEmail: input.sharerEmail,
+  });
+
+  await notifyUser({
+    workspaceId: input.workspaceId,
+    userId: input.recipientUserId,
+    type: 'run.shared',
+    title: 'Screening run shared with you',
+    message,
+    linkPath,
+    email: {
+      subject: `${sharer} shared ${input.jobName} with you on Caliper`,
       text,
       html,
     },

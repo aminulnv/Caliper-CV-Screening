@@ -10,6 +10,9 @@ import { CandidateHistoryPanel } from '@/caliper/components/CandidateHistoryPane
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { CvQuotesPanel } from '@/caliper/components/CvQuotesPanel'
 import { countsFromCandidateRow } from '@/lib/criteria-checklist'
+import { RunAccessControl } from '@/caliper/components/RunAccessControl'
+import { useAuth } from '@/contexts/AuthContext'
+import type { WorkspaceMember } from '@/services/api'
 
 const confOrder = (c) => c === 'high' ? 3 : c === 'medium' ? 2 : 1;
 
@@ -49,7 +52,16 @@ function ScoreDeductionBreakdown({ candidate }) {
 
 const MAX_COMPARE = 4;
 
+function matchesStatusFilter(candidate, filterStatus) {
+  if (filterStatus === 'all') return true;
+  if (filterStatus === 'review_flagged') {
+    return candidate.status === 'review' || candidate.status === 'flagged';
+  }
+  return candidate.status === filterStatus;
+}
+
 function ResultsPage({ tweaks, route, go }) {
+  const { displayName, avatarUrl, user } = useAuth();
   const runId = route?.runId ?? route?.run;
 
   React.useEffect(() => {
@@ -67,6 +79,9 @@ function ResultsPage({ tweaks, route, go }) {
   const [compareData, setCompareData] = React.useState<CompareRunResponse | null>(null);
   const [sortBy, setSortBy] = React.useState('score');
   const [filterStatus, setFilterStatus] = React.useState('all');
+  const [shareOpen, setShareOpen] = React.useState(false);
+  const [members, setMembers] = React.useState<WorkspaceMember[] | null>(null);
+  const [membersLoading, setMembersLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (!runId) return;
@@ -95,7 +110,58 @@ function ResultsPage({ tweaks, route, go }) {
     setCompareSelection([]);
     setCompareOpen(false);
     setCompareData(null);
+    setFilterStatus('all');
+    setShareOpen(false);
   }, [runId]);
+
+  const openShareMenu = () => {
+    setShareOpen(true);
+    if (!members && !membersLoading) {
+      setMembersLoading(true);
+      api.workspace.listMembers()
+        .then((res) => setMembers(res.members))
+        .catch(() => setMembers([]))
+        .finally(() => setMembersLoading(false));
+    }
+  };
+
+  const toggleShare = (member) => {
+    const activeRunId = run?.id;
+    if (!activeRunId) return;
+
+    let nextIds;
+    let rollback;
+
+    setRun((prev) => {
+      if (!prev) return prev;
+
+      const current = Array.isArray(prev.shared_user_ids) ? prev.shared_user_ids : [];
+      const currentShared = Array.isArray(prev.shared_users) ? prev.shared_users : [];
+      rollback = { shared_user_ids: current, shared_users: currentShared };
+
+      const isRemoving = current.some((id) => String(id) === String(member.user_id));
+      nextIds = isRemoving
+        ? current.filter((id) => String(id) !== String(member.user_id))
+        : [...current, member.user_id];
+      const nextShared = isRemoving
+        ? currentShared.filter((u) => (u.user_id ?? u.userId) !== member.user_id)
+        : [...currentShared, {
+            user_id: member.user_id,
+            name: member.name,
+            email: member.email,
+            avatar_url: member.avatar_url,
+          }];
+
+      return { ...prev, shared_user_ids: nextIds, shared_users: nextShared };
+    });
+
+    if (!nextIds) return;
+
+    api.runs.setShares(activeRunId, nextIds).catch(() => {
+      if (!rollback) return;
+      setRun((prev) => (prev ? { ...prev, ...rollback } : prev));
+    });
+  };
 
   const toggleCompareSelect = (id: string) => {
     setCompareSelection((prev) => {
@@ -134,7 +200,7 @@ function ResultsPage({ tweaks, route, go }) {
   const candidates = run.candidates ?? [];
 
   const rows = candidates
-    .filter((c) => filterStatus === 'all' || c.status === filterStatus)
+    .filter((c) => matchesStatusFilter(c, filterStatus))
     .slice()
     .sort((a, b) =>
       sortBy === 'confidence'
@@ -148,6 +214,10 @@ function ResultsPage({ tweaks, route, go }) {
   const meanConfPct = candidates.length
     ? Math.round((candidates.reduce((s, c) => s + confOrder(c.confidence), 0) / candidates.length / 3) * 100)
     : 0;
+
+  const toggleStatFilter = (status) => {
+    setFilterStatus((prev) => (prev === status ? 'all' : status));
+  };
 
   const exportCsv = () => {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -169,6 +239,22 @@ function ResultsPage({ tweaks, route, go }) {
         <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
         <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv} disabled={run.status === 'in_progress'}>Export CSV</Btn>
         <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: run.job_id })}>Re-run</Btn>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <RunAccessControl
+          run={run}
+          currentUserName={displayName}
+          currentUserEmail={user?.email}
+          currentUserAvatar={avatarUrl}
+          members={members}
+          membersLoading={membersLoading}
+          open={shareOpen}
+          onOpen={openShareMenu}
+          onClose={() => setShareOpen(false)}
+          onToggleShare={toggleShare}
+          variant="detail"
+        />
       </div>
 
       {(run.status === 'in_progress' || run.status === 'queued') && (
@@ -217,10 +303,34 @@ function ResultsPage({ tweaks, route, go }) {
       )}
 
       <div className="stats stats--4" style={{ marginBottom: 22 }}>
-        <StatCell label="Strong matches"    value={String(nStrong)}      sub="≥ 85"                    tone="ok"/>
-        <StatCell label="Promising"         value={String(nPromising)}   sub="65 – 84"                 tone="info"/>
-        <StatCell label="Review / flagged"  value={String(nReviewOrFlag)} sub="parse warnings / flags" tone="warn"/>
-        <StatCell label="Mean confidence"   value={`${meanConfPct}%`}   sub="across all criteria"     tone="default"/>
+        <StatCell
+          label="Strong matches"
+          value={String(nStrong)}
+          sub="≥ 85"
+          tone="ok"
+          clickable={nStrong > 0}
+          active={filterStatus === 'strong'}
+          onClick={() => toggleStatFilter('strong')}
+        />
+        <StatCell
+          label="Promising"
+          value={String(nPromising)}
+          sub="65 – 84"
+          tone="info"
+          clickable={nPromising > 0}
+          active={filterStatus === 'promising'}
+          onClick={() => toggleStatFilter('promising')}
+        />
+        <StatCell
+          label="Review / flagged"
+          value={String(nReviewOrFlag)}
+          sub="parse warnings / flags"
+          tone="warn"
+          clickable={nReviewOrFlag > 0}
+          active={filterStatus === 'review_flagged'}
+          onClick={() => toggleStatFilter('review_flagged')}
+        />
+        <StatCell label="Mean confidence" value={`${meanConfPct}%`} sub="across all criteria" tone="default"/>
       </div>
 
       <div className="row" style={{ marginBottom: 16, borderBottom: '1px solid var(--line)', gap: 0, alignItems: 'center', paddingBottom: 6 }}>
@@ -238,6 +348,7 @@ function ResultsPage({ tweaks, route, go }) {
             <option value="all">All</option>
             <option value="strong">Strong match</option>
             <option value="promising">Promising</option>
+            <option value="review_flagged">Review / flagged</option>
             <option value="review">Review manually</option>
             <option value="flagged">Flagged</option>
           </select>
@@ -308,15 +419,39 @@ function ResultsPage({ tweaks, route, go }) {
   );
 }
 
-const StatCell = ({ label, value, sub, tone }) => (
-  <div className="stats__cell">
-    <div className="stats__lbl">{label}</div>
-    <div className="stats__val" style={{
-      color: tone === 'ok' ? 'var(--ok-ink)' : tone === 'warn' ? 'var(--warn-ink)' : tone === 'info' ? 'oklch(0.42 0.10 245)' : undefined
-    }}>{value}</div>
-    {sub && <div className="stats__delta">· {sub}</div>}
-  </div>
-);
+const StatCell = ({ label, value, sub, tone, clickable, active, onClick }) => {
+  const className = [
+    'stats__cell',
+    clickable ? 'stats__cell--clickable' : '',
+    active ? 'stats__cell--active' : '',
+  ].filter(Boolean).join(' ');
+
+  const content = (
+    <>
+      <div className="stats__lbl">{label}</div>
+      <div className="stats__val" style={{
+        color: tone === 'ok' ? 'var(--ok-ink)' : tone === 'warn' ? 'var(--warn-ink)' : tone === 'info' ? 'oklch(0.42 0.10 245)' : undefined,
+      }}>{value}</div>
+      {sub && <div className="stats__delta">· {sub}</div>}
+    </>
+  );
+
+  if (!clickable) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-pressed={active}
+      title={active ? 'Show all candidates' : `Show only ${label.toLowerCase()}`}
+    >
+      {content}
+    </button>
+  );
+};
 
 function RankedList({ rows, onOpen, tweaks, compareSelection = [], maxCompare = 4, onToggleCompare }) {
   if (rows.length === 0) {

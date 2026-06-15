@@ -420,21 +420,37 @@
 }
 
 .shell-dropdown--profile {
-  min-width: 12rem;
+  min-width: 13.5rem;
+  max-width: 16.5rem;
 }
 
 .shell-dropdown__head {
   padding: 0.625rem 0.875rem;
   border-bottom: 1px solid var(--line-soft);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+  min-width: 0;
 }
 
 .shell-dropdown__title {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--ink);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shell-dropdown__subtext {
+  font-size: 0.75rem;
+  color: var(--muted);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .shell-dropdown-item {

@@ -11,12 +11,13 @@ import {
 import { api, type UserRole } from '@/services/api'
 import { canEditWorkspace, isWorkspaceAdmin } from '@/lib/roles'
 
-export type AccessStatus = 'loading' | 'active' | 'denied'
+export type AccessStatus = 'loading' | 'active' | 'denied' | 'unavailable'
 
 type AuthContextValue = {
   user: AuthTokenUser | null
   loading: boolean
   accessStatus: AccessStatus
+  sessionError: string | null
   role: UserRole | null
   workspace: { id: string; name: string } | null
   canEdit: boolean
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthTokenUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [accessStatus, setAccessStatus] = useState<AccessStatus>('loading')
+  const [sessionError, setSessionError] = useState<string | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [workspace, setWorkspace] = useState<{ id: string; name: string } | null>(null)
 
@@ -47,12 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = getStoredIdToken()
     if (!token) {
       setAccessStatus('loading')
+      setSessionError(null)
       setRole(null)
       setWorkspace(null)
       return
     }
 
     setAccessStatus('loading')
+    setSessionError(null)
     try {
       const me = await api.me.get()
       if (me.access === 'none') {
@@ -70,8 +74,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           picture: me.user.picture ?? prev?.picture ?? null,
         }))
       }
-    } catch {
-      setAccessStatus('denied')
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Could not verify your session'
+      setAccessStatus('unavailable')
+      setSessionError(message)
       setRole(null)
       setWorkspace(null)
     }
@@ -102,6 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRole(null)
     setWorkspace(null)
     setAccessStatus('loading')
+    setSessionError(null)
   }, [])
 
   return (
@@ -110,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         loading,
         accessStatus,
+        sessionError,
         role,
         workspace,
         canEdit: canEditWorkspace(role),

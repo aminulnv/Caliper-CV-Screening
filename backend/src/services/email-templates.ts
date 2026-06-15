@@ -13,7 +13,8 @@ export type EmailVariant =
   | 'workspace_invite'
   | 'invite_accepted'
   | 'run_completed'
-  | 'run_failed';
+  | 'run_failed'
+  | 'run_shared';
 
 const BRAND = {
   purple: '#510eaa',
@@ -62,6 +63,12 @@ const VARIANT_STYLE: Record<
     accent: BRAND.bad,
     chipBg: BRAND.badSoft,
     chipInk: BRAND.bad,
+  },
+  run_shared: {
+    label: 'RUN SHARED',
+    accent: BRAND.info,
+    chipBg: BRAND.infoSoft,
+    chipInk: BRAND.info,
   },
 };
 
@@ -359,6 +366,30 @@ export function renderRunCompletedEmail(input: {
       { label: 'Run ID', value: input.runId },
     ],
     cta: { label: 'View results', href: `${base}/runs/${encodeURIComponent(input.runId)}` },
+  });
+}
+
+export function renderRunSharedEmail(input: {
+  jobName: string;
+  runId: string;
+  sharerName: string | null;
+  sharerEmail: string | null;
+}): { html: string; text: string } {
+  const base = appBaseUrl();
+  const sharer = input.sharerName || input.sharerEmail || 'A teammate';
+  const bodyHtml = `<p style="margin:0;">${escapeHtml(sharer)} shared screening results for <strong style="color:${BRAND.ink};">${escapeHtml(input.jobName)}</strong> with you. Open the run in Caliper to review ranked candidates and scores.</p>`;
+
+  return renderCaliperEmail({
+    variant: 'run_shared',
+    preheader: `${sharer} shared ${input.jobName} screening results with you`,
+    headline: 'A screening run was shared with you',
+    bodyHtml,
+    meta: [
+      { label: 'Job', value: input.jobName },
+      { label: 'Shared by', value: sharer },
+      { label: 'Run ID', value: input.runId },
+    ],
+    cta: { label: 'View run', href: `${base}/runs/${encodeURIComponent(input.runId)}` },
   });
 }
 

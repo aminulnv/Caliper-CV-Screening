@@ -140,9 +140,9 @@ function ProfileDropdown({
       {open && (
         <div className="shell-dropdown shell-dropdown--profile" role="menu" aria-label="Profile menu">
           <div className="shell-dropdown__head">
-            <div className="shell-dropdown__title">{userName ?? 'User'}</div>
+            <div className="shell-dropdown__title" title={userName ?? undefined}>{userName ?? 'User'}</div>
             {profileSubtext && (
-              <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.125rem' }}>{profileSubtext}</div>
+              <div className="shell-dropdown__subtext" title={profileSubtext}>{profileSubtext}</div>
             )}
           </div>
           <button type="button" className="shell-dropdown-item" onClick={() => { setOpen(false); navigate('/profile') }} role="menuitem">

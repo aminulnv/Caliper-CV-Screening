@@ -13,12 +13,13 @@ import { countJobCriteria } from '../services/job-criteria.js';
 import { mapCriterionRows, pickRunnableModel } from '../services/screening-model.js';
 import { isWorkspaceStoragePath } from '../lib/storage-path.js';
 import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
+import { formatRunResponse } from '../lib/run-format.js';
 import {
   buildEmbeddingDocument,
   upsertCandidateEmbedding,
 } from '../services/cv-embedding.js';
 import { semanticCvSearchEnabled } from '../config/features.js';
-import { alertRunCompleted, alertRunFailed } from '../services/alerting.js';
+import { alertRunCompleted, alertRunFailed, alertRunShared } from '../services/alerting.js';
 
 /** Align with Recruitee applicant fetch cap; override via MAX_CV_SOURCES_PER_RUN env. */
 const MAX_CV_SOURCES_PER_RUN = Number(process.env.MAX_CV_SOURCES_PER_RUN) || 10_000;
@@ -50,8 +51,9 @@ export async function runsRoutes(app: FastifyInstance) {
       SELECT sr.id, sr.job_id, sr.model_used, sr.status, sr.owner_id, sr.cv_count,
              sr.score_range, sr.error_message, sr.started_at, sr.completed_at, sr.created_at,
              jp.name AS job_name, jp.dept AS job_dept,
-             u.name AS owner_name, u.email AS owner_email,
-             COALESCE(shares.user_ids, '{}') AS shared_user_ids
+             u.name AS owner_name, u.email AS owner_email, u.avatar_url AS owner_avatar_url,
+             COALESCE(shares.user_ids, '{}') AS shared_user_ids,
+             COALESCE(shared.shared_users, '[]'::json) AS shared_users
       FROM screening_runs sr
       LEFT JOIN job_profiles jp ON sr.job_id = jp.id
       LEFT JOIN users u ON u.sub = sr.owner_id
@@ -60,6 +62,17 @@ export async function runsRoutes(app: FastifyInstance) {
         FROM run_shares rs
         WHERE rs.run_id = sr.id
       ) shares ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'user_id', rs.user_id,
+          'name', su.name,
+          'email', su.email,
+          'avatar_url', su.avatar_url
+        ) ORDER BY su.name) AS shared_users
+        FROM run_shares rs
+        JOIN users su ON su.sub = rs.user_id
+        WHERE rs.run_id = sr.id
+      ) shared ON true
       WHERE sr.workspace_id = ${req.workspaceId}
         AND (
           sr.owner_id = ${req.userId}
@@ -70,21 +83,34 @@ export async function runsRoutes(app: FastifyInstance) {
         )
       ORDER BY sr.created_at DESC
     `;
-    return runs.map((r) => ({
-      ...r,
-      is_owner: (r.ownerId ?? r.owner_id) === req.userId,
-      shared_user_ids: (r.sharedUserIds ?? r.shared_user_ids ?? []) as string[],
-      job_profiles: r.jobName ? { name: r.jobName, dept: r.jobDept } : null,
-    }));
+    return runs.map((r) => formatRunResponse(r as Record<string, unknown>, req.userId));
   });
 
   app.get<{ Params: { id: string } }>('/runs/:id', async (req, reply) => {
     const [run] = await sql`
       SELECT sr.*, jp.name AS job_name, jp.dept AS job_dept,
-             u.name AS owner_name, u.email AS owner_email
+             u.name AS owner_name, u.email AS owner_email, u.avatar_url AS owner_avatar_url,
+             COALESCE(shares.user_ids, '{}') AS shared_user_ids,
+             COALESCE(shared.shared_users, '[]'::json) AS shared_users
       FROM screening_runs sr
       LEFT JOIN job_profiles jp ON sr.job_id = jp.id
       LEFT JOIN users u ON u.sub = sr.owner_id
+      LEFT JOIN LATERAL (
+        SELECT array_agg(rs.user_id) AS user_ids
+        FROM run_shares rs
+        WHERE rs.run_id = sr.id
+      ) shares ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object(
+          'user_id', rs.user_id,
+          'name', su.name,
+          'email', su.email,
+          'avatar_url', su.avatar_url
+        ) ORDER BY su.name) AS shared_users
+        FROM run_shares rs
+        JOIN users su ON su.sub = rs.user_id
+        WHERE rs.run_id = sr.id
+      ) shared ON true
       WHERE sr.id = ${req.params.id} AND sr.workspace_id = ${req.workspaceId}
         AND (
           sr.owner_id = ${req.userId}
@@ -108,9 +134,7 @@ export async function runsRoutes(app: FastifyInstance) {
     `;
 
     return {
-      ...run,
-      is_owner: (run.ownerId ?? run.owner_id) === req.userId,
-      job_profiles: run.jobName ? { name: run.jobName, dept: run.jobDept } : null,
+      ...formatRunResponse(run as Record<string, unknown>, req.userId),
       candidates: candidates.map((c) => formatRunCandidateRow(c as Record<string, unknown>)),
     };
   });
@@ -232,8 +256,10 @@ export async function runsRoutes(app: FastifyInstance) {
     '/runs/:id/shares',
     async (req, reply) => {
       const [run] = await sql`
-        SELECT id, owner_id FROM screening_runs
-        WHERE id = ${req.params.id} AND workspace_id = ${req.workspaceId}
+        SELECT sr.id, sr.owner_id, jp.name AS job_name
+        FROM screening_runs sr
+        LEFT JOIN job_profiles jp ON sr.job_id = jp.id
+        WHERE sr.id = ${req.params.id} AND sr.workspace_id = ${req.workspaceId}
       `;
       if (!run) return reply.status(404).send({ error: 'Run not found' });
       if ((run.ownerId ?? run.owner_id) !== req.userId) {
@@ -256,6 +282,14 @@ export async function runsRoutes(app: FastifyInstance) {
         }
       }
 
+      const previousShares = await sql`
+        SELECT user_id FROM run_shares WHERE run_id = ${req.params.id}
+      `;
+      const previousIds = new Set(
+        previousShares.map((row) => String(row.userId ?? row.user_id)),
+      );
+      const newlySharedIds = memberIds.filter((id) => !previousIds.has(id));
+
       await sql.begin(async (tx) => {
         await tx`DELETE FROM run_shares WHERE run_id = ${req.params.id}`;
         if (memberIds.length > 0) {
@@ -275,6 +309,27 @@ export async function runsRoutes(app: FastifyInstance) {
         entityId: req.params.id,
         payload: { run_id: req.params.id, shared_with: memberIds },
       });
+
+      if (newlySharedIds.length > 0) {
+        const runId = req.params.id;
+        const jobName = String((run.jobName ?? run.job_name) || runId);
+        const [sharer] = await sql`
+          SELECT name, email FROM users WHERE sub = ${req.userId} LIMIT 1
+        `;
+        const sharerName = (sharer?.name as string | null) ?? null;
+        const sharerEmail = (sharer?.email as string | null) ?? null;
+
+        for (const recipientUserId of newlySharedIds) {
+          void alertRunShared({
+            workspaceId: req.workspaceId!,
+            recipientUserId,
+            runId,
+            jobName,
+            sharerName,
+            sharerEmail,
+          }).catch((err) => console.error('[alert] run shared:', err));
+        }
+      }
 
       return { success: true, shared_user_ids: memberIds };
     },

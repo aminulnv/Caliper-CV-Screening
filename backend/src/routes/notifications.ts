@@ -11,15 +11,19 @@ export async function notificationsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/notifications', async (req) => {
     const rows = await listNotifications(req.userId);
-    return rows.map((row) => ({
-      id: row.id,
-      type: row.type,
-      title: row.title,
-      message: row.message,
-      link_path: row.link_path,
-      read: row.read_at != null,
-      created_at: row.created_at,
-    }));
+    return rows.map((row) => {
+      const record = row as Record<string, unknown>;
+      const readAt = record.readAt ?? record.read_at;
+      return {
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        message: row.message,
+        link_path: (record.linkPath ?? record.link_path) as string | null,
+        read: readAt != null,
+        created_at: (record.createdAt ?? record.created_at) as string,
+      };
+    });
   });
 
   app.patch<{ Params: { id: string } }>('/notifications/:id/read', async (req, reply) => {

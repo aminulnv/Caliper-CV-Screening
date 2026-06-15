@@ -725,7 +725,41 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   );
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function HighlightMatches({ text, query }) {
+  const q = query.trim();
+  if (!q || text == null || text === '') return text;
+  const parts = String(text).split(new RegExp(`(${escapeRegExp(q)})`, 'gi'));
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <mark key={i} className="job-picker-hit">{part}</mark>
+      : part,
+  );
+}
+
 function PickJobToRunModal({ onClose, onPick, profiles }) {
+  const [query, setQuery] = React.useState('');
+  const searchRef = React.useRef(null);
+
+  React.useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+
+  const filteredProfiles = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = profiles ?? [];
+    if (!q) return list;
+    return list.filter((p) =>
+      p.name.toLowerCase().includes(q)
+      || p.id.toLowerCase().includes(q)
+      || (p.dept && p.dept.toLowerCase().includes(q)),
+    );
+  }, [profiles, query]);
+
   return (
     <div className="detail" onClick={onClose}>
       <div
@@ -748,8 +782,29 @@ function PickJobToRunModal({ onClose, onPick, profiles }) {
           <div className="spacer"/>
           <IconBtn name="x" size={14} onClick={onClose}/>
         </div>
+        <div
+          style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ position: 'relative' }}>
+            <input
+              ref={searchRef}
+              className="inp"
+              placeholder="Search jobs by title…"
+              style={{ paddingLeft: 32, width: '100%' }}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search jobs"
+            />
+            <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
+          </div>
+        </div>
         <div style={{ overflowY: 'auto', padding: 8 }}>
-          {(profiles ?? []).map((p) => (
+          {filteredProfiles.length === 0 ? (
+            <div className="muted" style={{ padding: '18px 14px', fontSize: 12.5 }}>
+              No jobs match your search.
+            </div>
+          ) : filteredProfiles.map((p) => (
             <button
               key={p.id}
               type="button"
@@ -761,8 +816,12 @@ function PickJobToRunModal({ onClose, onPick, profiles }) {
                 borderBottom: '1px solid var(--line-soft)',
               }}
             >
-              <div style={{ fontWeight: 500 }}>{p.name}</div>
-              <div className="muted mono" style={{ fontSize: 11, marginTop: 2 }}>{p.id} · {p.dept}</div>
+              <div style={{ fontWeight: 500 }}><HighlightMatches text={p.name} query={query} /></div>
+              <div className="muted mono" style={{ fontSize: 11, marginTop: 2 }}>
+                <HighlightMatches text={p.id} query={query} />
+                {' · '}
+                <HighlightMatches text={p.dept} query={query} />
+              </div>
             </button>
           ))}
         </div>

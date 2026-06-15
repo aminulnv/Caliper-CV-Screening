@@ -347,6 +347,13 @@ export interface InviteMemberBody {
   role: UserRole;
 }
 
+export interface RunSharedUser {
+  user_id: string;
+  name: string | null;
+  email: string;
+  avatar_url: string | null;
+}
+
 export interface RunListItem {
   id: string;
   job_id: string;
@@ -363,7 +370,9 @@ export interface RunListItem {
   is_owner: boolean;
   owner_name: string | null;
   owner_email: string | null;
+  owner_avatar_url: string | null;
   shared_user_ids: string[];
+  shared_users: RunSharedUser[];
   job_profiles: { name: string; dept: string | null } | null;
 }
 
