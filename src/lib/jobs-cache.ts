@@ -1,10 +1,11 @@
-/** Session cache for the jobs list — avoids full Recruitee sync on every navigation. */
+/** Session cache for the jobs list — throttles Recruitee sync; jobs list always refetched from API. */
 
 import { api } from '@/services/api';
 
 export const JOBS_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
-const CACHE_KEY = 'caliper:jobs-cache:v1';
+const CACHE_KEY_PREFIX = 'caliper:jobs-cache:v2';
+const LEGACY_CACHE_KEY = 'caliper:jobs-cache:v1';
 
 export type JobsCacheEntry = {
   /** Raw rows from GET /jobs (before shapeJobRow). */
@@ -14,10 +15,15 @@ export type JobsCacheEntry = {
   syncNote: string;
 };
 
-export function readJobsCache(): JobsCacheEntry | null {
+function jobsCacheKey(userId: string | null | undefined): string {
+  return userId ? `${CACHE_KEY_PREFIX}:${userId}` : `${CACHE_KEY_PREFIX}:anonymous`;
+}
+
+export function readJobsCache(userId?: string | null): JobsCacheEntry | null {
   if (typeof sessionStorage === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
+    sessionStorage.removeItem(LEGACY_CACHE_KEY);
+    const raw = sessionStorage.getItem(jobsCacheKey(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as JobsCacheEntry;
     if (!parsed?.jobs || !Array.isArray(parsed.jobs) || typeof parsed.fetchedAt !== 'number') {
@@ -29,19 +35,22 @@ export function readJobsCache(): JobsCacheEntry | null {
   }
 }
 
-export function writeJobsCache(entry: JobsCacheEntry): void {
+export function writeJobsCache(entry: JobsCacheEntry, userId?: string | null): void {
   if (typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+    sessionStorage.setItem(jobsCacheKey(userId), JSON.stringify(entry));
   } catch {
     // Quota exceeded or private mode — ignore.
   }
 }
 
-export function clearJobsCache(): void {
+export function clearJobsCache(userId?: string | null): void {
   if (typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.removeItem(CACHE_KEY);
+    sessionStorage.removeItem(LEGACY_CACHE_KEY);
+    if (userId) {
+      sessionStorage.removeItem(jobsCacheKey(userId));
+    }
   } catch {
     // ignore
   }
@@ -65,10 +74,13 @@ export function formatSyncNote(sync: {
   return parts.join(' · ');
 }
 
-let inflight: Promise<JobsCacheEntry> | null = null;
+const inflightByUser = new Map<string, Promise<JobsCacheEntry>>();
 
-async function fetchJobsEntry(forceSync: boolean): Promise<JobsCacheEntry> {
-  const cache = readJobsCache();
+async function fetchJobsEntry(
+  forceSync: boolean,
+  userId: string | null | undefined,
+): Promise<JobsCacheEntry> {
+  const cache = readJobsCache(userId);
   const runSync = shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, forceSync);
   let syncNote = cache?.syncNote ?? '';
   let lastSyncAt = cache?.lastSyncAt ?? null;
@@ -90,32 +102,34 @@ async function fetchJobsEntry(forceSync: boolean): Promise<JobsCacheEntry> {
     lastSyncAt: runSync ? lastSyncAt : cache?.lastSyncAt ?? lastSyncAt,
     syncNote,
   };
-  writeJobsCache(entry);
+  writeJobsCache(entry, userId);
   return entry;
 }
 
-/** Load jobs (Recruitee sync + list). Dedupes concurrent calls; returns session cache when fresh. */
-export async function loadJobs(options?: { forceSync?: boolean }): Promise<JobsCacheEntry> {
+/** Load jobs (optional Recruitee sync + always GET /jobs). Dedupes concurrent calls per user. */
+export async function loadJobs(options?: {
+  forceSync?: boolean;
+  userId?: string | null;
+}): Promise<JobsCacheEntry> {
   const forceSync = Boolean(options?.forceSync);
+  const userId = options?.userId ?? null;
+  const inflightKey = userId ?? '__anon__';
 
   if (forceSync) {
-    inflight = null;
+    inflightByUser.delete(inflightKey);
   } else {
-    const cache = readJobsCache();
-    if (cache?.jobs?.length && !shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, false)) {
-      return cache;
-    }
-    if (inflight) return inflight;
+    const pending = inflightByUser.get(inflightKey);
+    if (pending) return pending;
   }
 
-  const promise = fetchJobsEntry(forceSync).finally(() => {
-    inflight = null;
+  const promise = fetchJobsEntry(forceSync, userId).finally(() => {
+    inflightByUser.delete(inflightKey);
   });
-  inflight = promise;
+  inflightByUser.set(inflightKey, promise);
   return promise;
 }
 
 /** Warm jobs data in the background (e.g. while the runs page is visible). */
-export function prefetchJobs(options?: { forceSync?: boolean }): void {
+export function prefetchJobs(options?: { forceSync?: boolean; userId?: string | null }): void {
   void loadJobs(options).catch(() => {});
 }

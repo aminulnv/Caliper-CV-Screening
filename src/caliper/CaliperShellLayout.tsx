@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { prefetchJobs } from '@/lib/jobs-cache'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   useTweaks,
   TweaksPanel,
@@ -37,6 +38,7 @@ export function useCaliperTweaks(): CaliperTweaksState {
 
 export default function CaliperShellLayout() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS)
+  const { user } = useAuth()
 
   useEffect(() => {
     applyBrandTheme(assets.layoutBackgroundValue)
@@ -47,9 +49,10 @@ export default function CaliperShellLayout() {
   }, [t.accent, t.accentSoft, t.accentInk, t.density])
 
   useEffect(() => {
-    prefetchJobs()
+    if (!user?.sub) return
+    prefetchJobs({ userId: user.sub })
     void import('@/caliper/pages/ProfilesPage')
-  }, [])
+  }, [user?.sub])
 
   return (
     <>

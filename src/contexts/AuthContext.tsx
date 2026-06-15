@@ -10,6 +10,7 @@ import {
 } from '@/lib/auth'
 import { api, type UserRole } from '@/services/api'
 import { canEditWorkspace, isWorkspaceAdmin } from '@/lib/roles'
+import { clearJobsCache } from '@/lib/jobs-cache'
 
 export type AccessStatus = 'loading' | 'active' | 'denied' | 'unavailable'
 
@@ -102,15 +103,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshSession])
 
   const signOut = useCallback(async () => {
+    const sub = user?.sub
     await signOutUser()
     googleLogout()
     clearIdToken()
+    clearJobsCache(sub)
     setUser(null)
     setRole(null)
     setWorkspace(null)
     setAccessStatus('loading')
     setSessionError(null)
-  }, [])
+  }, [user?.sub])
 
   return (
     <AuthContext.Provider

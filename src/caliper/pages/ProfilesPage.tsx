@@ -1014,8 +1014,9 @@ function JobsPageLoading({ phase, onRetry }) {
 }
 
 function ProfilesPage({ go, route }) {
-  const { canEdit } = useAuth();
-  const initialCache = React.useMemo(() => readJobsCache(), []);
+  const { canEdit, user } = useAuth();
+  const userId = user?.sub ?? null;
+  const initialCache = React.useMemo(() => readJobsCache(userId), [userId]);
   const [selectedId, setSelectedId] = React.useState(null);
   const [editorInitialTab, setEditorInitialTab] = React.useState(null);
   const [refreshToken, setRefreshToken] = React.useState({ n: 0, forceSync: false });
@@ -1043,11 +1044,13 @@ function ProfilesPage({ go, route }) {
   React.useEffect(() => {
     let cancelled = false;
     const hadList = liveProfiles !== null;
-    const cache = readJobsCache();
+    const cache = readJobsCache(userId);
     const needsSync = shouldRunRecruiteeSync(
       cache?.lastSyncAt ?? null,
       refreshToken.forceSync,
     );
+
+    if (!userId) return;
 
     if (!hadList) {
       setProfilesLoading(true);
@@ -1058,7 +1061,7 @@ function ProfilesPage({ go, route }) {
       setBackgroundRefreshing(true);
     }
 
-    loadJobs({ forceSync: refreshToken.forceSync })
+    loadJobs({ forceSync: refreshToken.forceSync, userId })
       .then((entry) => {
         if (cancelled) return;
         setLiveProfiles(shapeJobsList(entry.jobs));
@@ -1078,7 +1081,7 @@ function ProfilesPage({ go, route }) {
       });
 
     return () => { cancelled = true; };
-  }, [refreshToken.n, refreshToken.forceSync]);
+  }, [refreshToken.n, refreshToken.forceSync, userId]);
 
   const jobs = liveProfiles ?? [];
   const profile = selectedId && liveProfiles ? liveProfiles.find((p) => p.id === selectedId) : null;
@@ -1633,6 +1636,8 @@ function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId
 }
 
 function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpenRunSheet, canEdit = true }) {
+  const { user } = useAuth();
+  const userId = user?.sub ?? null;
   const isHero = initialProfile.id === HERO_PROFILE.id;
   const [profile, setProfile] = React.useState(initialProfile);
   const [detailRefreshing, setDetailRefreshing] = React.useState(false);
@@ -1849,7 +1854,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
       profile.redFlags = rf;
       profile.description = desc;
       criteriaDirtyRef.current = false;
-      clearJobsCache();
+      clearJobsCache(userId);
       setSaveState({ status: 'saved', message: 'Saved.' });
       setTimeout(() => setSaveState({ status: 'idle', message: '' }), 2500);
     } catch (err) {
