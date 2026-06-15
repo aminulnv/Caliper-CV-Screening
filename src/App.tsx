@@ -21,7 +21,7 @@ function App() {
             element={<AuthenticatedLayout />}
           >
             <Route element={<CaliperNavProvider><CaliperShellLayout /></CaliperNavProvider>}>
-              <Route index element={<Navigate to="/runs" replace />} />
+              <Route index element={<Navigate to="/jobs" replace />} />
               <Route path="runs" element={<RunsPageRoute />} />
               <Route path="runs/:runId" element={<ResultsPageRoute />} />
               <Route path="jobs" element={<JobsPageRoute />} />
@@ -29,7 +29,7 @@ function App() {
               <Route path="settings" element={<CaliperSettingsRoute />} />
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to="/runs" replace />} />
+          <Route path="*" element={<Navigate to="/jobs" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthGuard>

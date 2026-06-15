@@ -127,7 +127,7 @@ function SettingsPage() {
     }
   };
 
-  if (!isAdmin) return <Navigate to="/runs" replace />;
+  if (!isAdmin) return <Navigate to="/jobs" replace />;
 
   if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading settings…</div></div>;
 

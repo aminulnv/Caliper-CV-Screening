@@ -41,7 +41,7 @@ export function CaliperNavProvider({ children }: { children: ReactNode }) {
       navigate('/settings')
       return
     }
-    navigate('/runs')
+    navigate('/jobs')
   }, [navigate])
 
   return <CaliperNavContext.Provider value={go}>{children}</CaliperNavContext.Provider>

@@ -54,6 +54,91 @@ function shapeJobsList(jobs: unknown[]) {
   return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
 }
 
+const JOB_TABLE_SORT_KEYS = {
+  name: 'name',
+  posted: 'posted',
+  source: 'source',
+  dept: 'dept',
+  applicants: 'applicants',
+  criteria: 'criteria',
+  runs: 'runs',
+  lastRun: 'lastRun',
+  status: 'status',
+};
+
+function jobSortValue(profile, key) {
+  switch (key) {
+    case JOB_TABLE_SORT_KEYS.name:
+      return profile.name?.toLowerCase() ?? '';
+    case JOB_TABLE_SORT_KEYS.posted:
+      return profile.postedOn ?? '';
+    case JOB_TABLE_SORT_KEYS.source:
+      return profile.source ?? '';
+    case JOB_TABLE_SORT_KEYS.dept:
+      return profile.dept?.toLowerCase() ?? '';
+    case JOB_TABLE_SORT_KEYS.applicants:
+      return profile.applicantsCount ?? -1;
+    case JOB_TABLE_SORT_KEYS.criteria:
+      return (profile.mustHave?.length ?? 0)
+        + (profile.niceToHave?.length ?? 0)
+        + (profile.redFlags?.length ?? 0);
+    case JOB_TABLE_SORT_KEYS.runs:
+      return profile.runsCount ?? 0;
+    case JOB_TABLE_SORT_KEYS.lastRun:
+      return profile.screeningRuns?.[0]?.createdAt ?? '';
+    case JOB_TABLE_SORT_KEYS.status:
+      return profile.status ?? '';
+    default:
+      return '';
+  }
+}
+
+function compareJobSortValues(a, b) {
+  const aNum = typeof a === 'number';
+  const bNum = typeof b === 'number';
+  if (aNum && bNum) return a - b;
+  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
+}
+
+function sortJobProfiles(list, sortState) {
+  if (!sortState) return list;
+  const mult = sortState.dir === 'asc' ? 1 : -1;
+  return [...list].sort((a, b) => (
+    mult * compareJobSortValues(jobSortValue(a, sortState.key), jobSortValue(b, sortState.key))
+  ));
+}
+
+function cycleJobTableSort(prev, key) {
+  if (prev?.key !== key) return { key, dir: 'desc' };
+  if (prev.dir === 'desc') return { key, dir: 'asc' };
+  return null;
+}
+
+function JobsSortableTh({ label, sortKey, sortState, onSort, style, className }) {
+  const active = sortState?.key === sortKey;
+  const dir = active ? sortState.dir : null;
+  return (
+    <th
+      className={[
+        'tbl-sort-th',
+        active ? 'tbl-sort-th--active' : '',
+        className ?? '',
+      ].filter(Boolean).join(' ')}
+      style={style}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button type="button" className="tbl-sort-btn" onClick={() => onSort(sortKey)}>
+        <span>{label}</span>
+        {active && (
+          <span className="tbl-sort-indicator" aria-hidden>
+            {dir === 'desc' ? '↓' : '↑'}
+          </span>
+        )}
+      </button>
+    </th>
+  );
+}
+
 const StatCell = ({ label, value, delta, deltaTone, sub }) => (
   <div className="stats__cell">
     <div className="stats__lbl">{label}</div>
@@ -919,6 +1004,7 @@ function ProfilesPage({ go, route }) {
   const [showNew, setShowNew] = React.useState(false);
   const [filter, setFilter] = React.useState('all');
   const [searchQuery, setSearchQuery] = React.useState('');
+  const [jobTableSort, setJobTableSort] = React.useState(null);
   const [runSheetProfileId, setRunSheetProfileId] = React.useState(null);
   const [runSheetStage, setRunSheetStage] = React.useState(null);
   const [showRunPicker, setShowRunPicker] = React.useState(false);
@@ -1050,6 +1136,12 @@ function ProfilesPage({ go, route }) {
     return true;
   });
 
+  const visibleJobs = sortJobProfiles(filtered, jobTableSort);
+
+  const cycleJobSort = (key) => {
+    setJobTableSort((prev) => cycleJobTableSort(prev, key));
+  };
+
   const openCount = jobs.filter((p) => p.status === 'open').length;
   const totalRuns = jobs.reduce((sum, p) => sum + (p.runsCount || 0), 0);
   const avgRunsPerJob = jobs.length ? Math.round(totalRuns / jobs.length) : 0;
@@ -1110,20 +1202,75 @@ function ProfilesPage({ go, route }) {
         <table className="tbl tbl--fixed">
           <thead>
             <tr>
-              <th>Job announcement</th>
-              <th style={{ width: 112 }}>Posted</th>
-              <th style={{ width: 120 }}>Source</th>
-              <th style={{ width: 140 }}>Department</th>
-              <th style={{ width: 88 }} className="col-right">Applicants</th>
-              <th style={{ width: 160 }}>Criteria</th>
-              <th style={{ width: 90 }} className="col-right">Runs</th>
-              <th style={{ width: 130 }}>Last run</th>
-              <th style={{ width: 100 }}>Status</th>
+              <JobsSortableTh
+                label="Job announcement"
+                sortKey={JOB_TABLE_SORT_KEYS.name}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+              />
+              <JobsSortableTh
+                label="Posted"
+                sortKey={JOB_TABLE_SORT_KEYS.posted}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 112 }}
+              />
+              <JobsSortableTh
+                label="Source"
+                sortKey={JOB_TABLE_SORT_KEYS.source}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 120 }}
+              />
+              <JobsSortableTh
+                label="Department"
+                sortKey={JOB_TABLE_SORT_KEYS.dept}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 140 }}
+              />
+              <JobsSortableTh
+                label="Applicants"
+                sortKey={JOB_TABLE_SORT_KEYS.applicants}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 88 }}
+                className="col-right"
+              />
+              <JobsSortableTh
+                label="Criteria"
+                sortKey={JOB_TABLE_SORT_KEYS.criteria}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 160 }}
+              />
+              <JobsSortableTh
+                label="Runs"
+                sortKey={JOB_TABLE_SORT_KEYS.runs}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 90 }}
+                className="col-right"
+              />
+              <JobsSortableTh
+                label="Last run"
+                sortKey={JOB_TABLE_SORT_KEYS.lastRun}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 130 }}
+              />
+              <JobsSortableTh
+                label="Status"
+                sortKey={JOB_TABLE_SORT_KEYS.status}
+                sortState={jobTableSort}
+                onSort={cycleJobSort}
+                style={{ width: 100 }}
+              />
               <th style={{ width: 36 }}/>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((p) => {
+            {visibleJobs.map((p) => {
               const mc = (p.mustHave || []).length;
               const nc = (p.niceToHave || []).length;
               const fc = (p.redFlags || []).length;
