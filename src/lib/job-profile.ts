@@ -7,6 +7,14 @@ export function formatJobDate(value: string | Date | null | undefined): string |
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** Numeric timestamp for sorting; missing/invalid dates sort last. */
+export function jobDateSortKey(value: string | Date | null | undefined): number {
+  if (value == null || value === '') return -1;
+  const d = value instanceof Date ? value : new Date(value);
+  const t = d.getTime();
+  return Number.isNaN(t) ? -1 : t;
+}
+
 function mapCriteria(criteria: Array<Record<string, unknown>>) {
   return {
     mustHave: criteria
@@ -66,6 +74,7 @@ export function shapeJobRow(j: Record<string, unknown>) {
     sourceRef: sourceRef ?? (id?.startsWith('REC-') ? id.replace(/^REC-/, '') : null),
     status: j.status as string,
     postedOn: formatJobDate(postedRaw as string | Date | null),
+    postedOnAt: postedRaw != null && postedRaw !== '' ? String(postedRaw) : null,
     description: (j.description as string) ?? '',
     runsCount: screeningRuns.length,
     lastRun: sortedRuns[0] ? formatJobDate(sortedRuns[0].createdAt) : null,

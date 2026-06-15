@@ -11,8 +11,107 @@ import {
   formatRunDuration,
   runCreatedAt,
   runCvCount,
+  runDateSortKey,
+  runDurationSortKey,
   runScoreRange,
 } from '@/lib/run-display'
+
+const RUN_TABLE_SORT_KEYS = {
+  id: 'id',
+  job: 'job',
+  date: 'date',
+  cvs: 'cvs',
+  scoreRange: 'scoreRange',
+  duration: 'duration',
+  status: 'status',
+};
+
+function runSortValue(run, key) {
+  switch (key) {
+    case RUN_TABLE_SORT_KEYS.id:
+      return run.id?.toLowerCase() ?? '';
+    case RUN_TABLE_SORT_KEYS.job:
+      return (run.job_profiles?.name ?? run.job_id ?? '').toLowerCase();
+    case RUN_TABLE_SORT_KEYS.date:
+      return runDateSortKey(run);
+    case RUN_TABLE_SORT_KEYS.cvs:
+      return runCvCount(run);
+    case RUN_TABLE_SORT_KEYS.scoreRange: {
+      const range = runScoreRange(run);
+      return range ? range[1] : -1;
+    }
+    case RUN_TABLE_SORT_KEYS.duration:
+      return runDurationSortKey(run);
+    case RUN_TABLE_SORT_KEYS.status:
+      return run.status ?? '';
+    default:
+      return '';
+  }
+}
+
+function compareRunSortValues(a, b) {
+  const aNum = typeof a === 'number';
+  const bNum = typeof b === 'number';
+  if (aNum && bNum) return a - b;
+  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
+}
+
+function isRunDateSortKey(key) {
+  return key === RUN_TABLE_SORT_KEYS.date || key === RUN_TABLE_SORT_KEYS.duration;
+}
+
+function compareRunDateSortValues(a, b, dir) {
+  const aEmpty = a <= 0;
+  const bEmpty = b <= 0;
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+  return dir === 'asc' ? a - b : b - a;
+}
+
+function sortRuns(list, sortState) {
+  if (!sortState) return list;
+  return [...list].sort((a, b) => {
+    const va = runSortValue(a, sortState.key);
+    const vb = runSortValue(b, sortState.key);
+    if (isRunDateSortKey(sortState.key)) {
+      return compareRunDateSortValues(va, vb, sortState.dir);
+    }
+    const mult = sortState.dir === 'asc' ? 1 : -1;
+    return mult * compareRunSortValues(va, vb);
+  });
+}
+
+function cycleRunTableSort(prev, key) {
+  if (prev?.key !== key) return { key, dir: 'desc' };
+  if (prev.dir === 'desc') return { key, dir: 'asc' };
+  return null;
+}
+
+function RunsSortableTh({ label, sortKey, sortState, onSort, style, className }) {
+  const active = sortState?.key === sortKey;
+  const dir = active ? sortState.dir : null;
+  return (
+    <th
+      className={[
+        'tbl-sort-th',
+        active ? 'tbl-sort-th--active' : '',
+        className ?? '',
+      ].filter(Boolean).join(' ')}
+      style={style}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button type="button" className="tbl-sort-btn" onClick={() => onSort(sortKey)}>
+        <span>{label}</span>
+        {active && (
+          <span className="tbl-sort-indicator" aria-hidden>
+            {dir === 'desc' ? '↓' : '↑'}
+          </span>
+        )}
+      </button>
+    </th>
+  );
+}
 
 const StatCell = ({ label, value, delta, deltaTone, sub }) => (
   <div className="stats__cell">
@@ -36,6 +135,7 @@ function RunsPage({ go }) {
   const [shareMenuRunId, setShareMenuRunId] = React.useState<string | null>(null);
   const [members, setMembers] = React.useState<WorkspaceMember[] | null>(null);
   const [membersLoading, setMembersLoading] = React.useState(false);
+  const [sortState, setSortState] = React.useState(null);
 
   React.useEffect(() => {
     api.runs.list()
@@ -115,6 +215,11 @@ function RunsPage({ go }) {
   };
 
   const filtered = runs.filter((r) => filter === 'all' || r.status === filter);
+  const displayRuns = sortRuns(filtered, sortState);
+
+  const handleSort = (key) => {
+    setSortState((prev) => cycleRunTableSort(prev, key));
+  };
 
   const thisMonth = runs.filter((r) => {
     const d = runCreatedAt(r);
@@ -155,22 +260,64 @@ function RunsPage({ go }) {
         <table className="tbl">
           <thead>
             <tr>
-              <th style={{ width: 140 }}>Run ID</th>
-              <th>Job</th>
+              <RunsSortableTh
+                label="Run ID"
+                sortKey={RUN_TABLE_SORT_KEYS.id}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 140 }}
+              />
+              <RunsSortableTh
+                label="Job"
+                sortKey={RUN_TABLE_SORT_KEYS.job}
+                sortState={sortState}
+                onSort={handleSort}
+              />
               <th style={{ width: 200 }}>Access</th>
-              <th style={{ width: 110 }}>Date</th>
-              <th style={{ width: 70 }} className="col-right">CVs</th>
-              <th style={{ width: 130 }}>Score range</th>
-              <th style={{ width: 110 }}>Duration</th>
-              <th style={{ width: 140 }}>Status</th>
+              <RunsSortableTh
+                label="Date"
+                sortKey={RUN_TABLE_SORT_KEYS.date}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 110 }}
+              />
+              <RunsSortableTh
+                label="CVs"
+                sortKey={RUN_TABLE_SORT_KEYS.cvs}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 70 }}
+                className="col-right"
+              />
+              <RunsSortableTh
+                label="Score range"
+                sortKey={RUN_TABLE_SORT_KEYS.scoreRange}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 130 }}
+              />
+              <RunsSortableTh
+                label="Duration"
+                sortKey={RUN_TABLE_SORT_KEYS.duration}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 110 }}
+              />
+              <RunsSortableTh
+                label="Status"
+                sortKey={RUN_TABLE_SORT_KEYS.status}
+                sortState={sortState}
+                onSort={handleSort}
+                style={{ width: 140 }}
+              />
               <th style={{ width: 36 }}/>
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {displayRuns.length === 0 && (
               <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 32 }}>No runs yet.</td></tr>
             )}
-            {filtered.map((r) => {
+            {displayRuns.map((r) => {
               const scoreRange = runScoreRange(r);
               return (
               <tr
@@ -251,7 +398,7 @@ function RunsPage({ go }) {
 
       <div className="row" style={{ marginTop: 14, justifyContent: 'space-between' }}>
         <div className="muted" style={{ fontSize: 11.5 }}>
-          Showing {filtered.length} of {runs.length} runs
+          Showing {displayRuns.length} of {runs.length} runs
         </div>
       </div>
     </div>

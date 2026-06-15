@@ -35,7 +35,7 @@ import {
 } from '@/lib/jobs-cache'
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { useAuth } from '@/contexts/AuthContext'
-import { runsForDisplay, shapeJobRow } from '@/lib/job-profile'
+import { jobDateSortKey, runsForDisplay, shapeJobRow } from '@/lib/job-profile'
 import {
   getBiasWarning,
   getProtectedAttributeError,
@@ -71,7 +71,7 @@ function jobSortValue(profile, key) {
     case JOB_TABLE_SORT_KEYS.name:
       return profile.name?.toLowerCase() ?? '';
     case JOB_TABLE_SORT_KEYS.posted:
-      return profile.postedOn ?? '';
+      return jobDateSortKey(profile.postedOnAt);
     case JOB_TABLE_SORT_KEYS.source:
       return profile.source ?? '';
     case JOB_TABLE_SORT_KEYS.dept:
@@ -85,7 +85,7 @@ function jobSortValue(profile, key) {
     case JOB_TABLE_SORT_KEYS.runs:
       return profile.runsCount ?? 0;
     case JOB_TABLE_SORT_KEYS.lastRun:
-      return profile.screeningRuns?.[0]?.createdAt ?? '';
+      return jobDateSortKey(profile.screeningRuns?.[0]?.createdAt);
     case JOB_TABLE_SORT_KEYS.status:
       return profile.status ?? '';
     default:
@@ -100,12 +100,30 @@ function compareJobSortValues(a, b) {
   return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
 }
 
+function isJobDateSortKey(key) {
+  return key === JOB_TABLE_SORT_KEYS.posted || key === JOB_TABLE_SORT_KEYS.lastRun;
+}
+
+function compareJobDateSortValues(a, b, dir) {
+  const aEmpty = a <= 0;
+  const bEmpty = b <= 0;
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+  return dir === 'asc' ? a - b : b - a;
+}
+
 function sortJobProfiles(list, sortState) {
   if (!sortState) return list;
-  const mult = sortState.dir === 'asc' ? 1 : -1;
-  return [...list].sort((a, b) => (
-    mult * compareJobSortValues(jobSortValue(a, sortState.key), jobSortValue(b, sortState.key))
-  ));
+  return [...list].sort((a, b) => {
+    const va = jobSortValue(a, sortState.key);
+    const vb = jobSortValue(b, sortState.key);
+    if (isJobDateSortKey(sortState.key)) {
+      return compareJobDateSortValues(va, vb, sortState.dir);
+    }
+    const mult = sortState.dir === 'asc' ? 1 : -1;
+    return mult * compareJobSortValues(va, vb);
+  });
 }
 
 function cycleJobTableSort(prev, key) {

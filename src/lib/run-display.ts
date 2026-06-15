@@ -10,7 +10,6 @@ type RunTimestamps = {
   completed_at?: string | null;
 };
 
-/** Run ids are prefixed with DDMMYYYY (see backend run creation). */
 export function runCreatedAt(run: RunTimestamps): Date | null {
   const raw = run.createdAt ?? run.created_at;
   if (raw) {
@@ -28,6 +27,20 @@ export function runCreatedAt(run: RunTimestamps): Date | null {
   }
 
   return null;
+}
+
+/** Numeric timestamp for sorting; missing/invalid dates sort last. */
+export function runDateSortKey(run: RunTimestamps): number {
+  const d = runCreatedAt(run);
+  return d ? d.getTime() : -1;
+}
+
+export function runDurationSortKey(run: RunTimestamps): number {
+  const started = run.startedAt ?? run.started_at;
+  const completed = run.completedAt ?? run.completed_at;
+  if (!started || !completed) return -1;
+  const ms = new Date(completed).getTime() - new Date(started).getTime();
+  return Number.isNaN(ms) || ms < 0 ? -1 : ms;
 }
 
 export function formatRunDate(run: RunTimestamps): string {
