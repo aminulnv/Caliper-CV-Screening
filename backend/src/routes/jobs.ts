@@ -12,8 +12,9 @@ import { getJobCalibration } from '../services/criterion-calibration.js';
 import { generateCriteriaFromJobDescription } from '../services/criteria-generation.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
+import { screeningRunAccessible } from '../lib/run-access.js';
 
-async function fetchJobDetail(workspaceId: string, jobId: string) {
+async function fetchJobDetail(workspaceId: string, jobId: string, userId: string) {
   const [job] = await sql`
     SELECT jp.*,
       COALESCE(
@@ -27,7 +28,7 @@ async function fetchJobDetail(workspaceId: string, jobId: string) {
       ) AS screening_runs
     FROM job_profiles jp
     LEFT JOIN job_criteria jc ON jc.job_id = jp.id AND jc.archived = false
-    LEFT JOIN screening_runs sr ON sr.job_id = jp.id
+    LEFT JOIN screening_runs sr ON sr.job_id = jp.id AND ${screeningRunAccessible(userId)}
     WHERE jp.id = ${jobId} AND jp.workspace_id = ${workspaceId}
     GROUP BY jp.id
   `;
@@ -60,7 +61,7 @@ export async function jobsRoutes(app: FastifyInstance) {
         ) AS screening_runs
       FROM job_profiles jp
       LEFT JOIN job_criteria jc ON jc.job_id = jp.id AND jc.archived = false
-      LEFT JOIN screening_runs sr ON sr.job_id = jp.id
+      LEFT JOIN screening_runs sr ON sr.job_id = jp.id AND ${screeningRunAccessible(req.userId)}
       WHERE jp.workspace_id = ${req.workspaceId}
       GROUP BY jp.id
       ORDER BY jp.updated_at DESC
@@ -68,7 +69,7 @@ export async function jobsRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>('/jobs/:id', async (req, reply) => {
-    const job = await fetchJobDetail(req.workspaceId, req.params.id);
+    const job = await fetchJobDetail(req.workspaceId, req.params.id, req.userId);
     if (!job) return reply.status(404).send({ error: 'Job not found' });
     return job;
   });
@@ -132,7 +133,7 @@ export async function jobsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: `Recruitee refresh failed: ${message}` });
       }
 
-      const job = await fetchJobDetail(req.workspaceId, jobId);
+      const job = await fetchJobDetail(req.workspaceId, jobId, req.userId);
       if (!job) return reply.status(404).send({ error: 'Job not found' });
       return job;
     },
