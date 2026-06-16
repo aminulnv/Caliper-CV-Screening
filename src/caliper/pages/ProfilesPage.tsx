@@ -9,7 +9,6 @@ import {
   RECRUITEE_JOBS,
   JOB_DESC_PREVIEW,
   getCandidateRowsForJob,
-  getCompletedRunsForProfile,
 } from '@/caliper/data'
 import { api } from '@/services/api'
 import {
@@ -35,7 +34,7 @@ import {
 } from '@/lib/jobs-cache'
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { useAuth } from '@/contexts/AuthContext'
-import { jobDateSortKey, runsForDisplay, shapeJobRow } from '@/lib/job-profile'
+import { jobDateSortKey, runsForDisplay, shapeJobRow, formatJobDate } from '@/lib/job-profile'
 import {
   getBiasWarning,
   getProtectedAttributeError,
@@ -49,6 +48,8 @@ import {
 } from '@/caliper/components/RecruiteePipelineBoard'
 import { RecruiteeEvalBadge } from '@/caliper/components/RecruiteeEvalBadge'
 import type { EvalSortMode } from '@/lib/recruitee-eval-sort'
+import { RerunConflictAlert, formatPriorScreeningMeta } from '@/caliper/components/RerunConflictAlert'
+import type { JobPriorScreening } from '@/services/api'
 
 function shapeJobsList(jobs: unknown[]) {
   return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
@@ -205,6 +206,51 @@ function delayJob(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function buildPriorScreeningIndex(screenings: JobPriorScreening[]) {
+  const byRecruiteeId = new Map();
+  const byEmail = new Map();
+
+  for (const s of screenings ?? []) {
+    if (s.recruitee_applicant_id) {
+      const key = String(s.recruitee_applicant_id);
+      const existing = byRecruiteeId.get(key);
+      if (existing) existing.count += 1;
+      else byRecruiteeId.set(key, { latest: s, count: 1 });
+    }
+    if (s.applicant_email) {
+      const key = s.applicant_email.trim().toLowerCase();
+      const existing = byEmail.get(key);
+      if (existing) existing.count += 1;
+      else byEmail.set(key, { latest: s, count: 1 });
+    }
+  }
+  return { byRecruiteeId, byEmail };
+}
+
+function lookupPriorForRow(row, priorIndex) {
+  const byId = priorIndex.byRecruiteeId.get(String(row.id));
+  if (byId) return byId;
+  if (row.email) {
+    const byEm = priorIndex.byEmail.get(row.email.trim().toLowerCase());
+    if (byEm) return byEm;
+  }
+  return null;
+}
+
+function lookupPriorConflict(row, rowIndex, priorIndex) {
+  const hit = lookupPriorForRow(row, priorIndex);
+  if (!hit?.latest?.run_id) return null;
+  return {
+    rowIndex,
+    name: row.name,
+    run_id: hit.latest.run_id,
+    run_status: hit.latest.run_status,
+    run_created_at: hit.latest.run_created_at,
+    score: hit.latest.score,
+    priorRunCount: hit.count,
+  };
+}
+
 function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
   const [profile, setProfile] = React.useState(initialProfile);
   const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
@@ -249,8 +295,10 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const [runProcessing, setRunProcessing] = React.useState(null);
   const [runError, setRunError] = React.useState(null);
   const [runNote, setRunNote] = React.useState('');
+  const [priorScreenings, setPriorScreenings] = React.useState([]);
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
+  const isHero = profile.id === HERO_PROFILE.id;
 
   React.useEffect(() => {
     setStep(1);
@@ -264,6 +312,22 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   }, [profile.id]);
 
   React.useEffect(() => () => { runCancelRef.current = true; }, []);
+
+  React.useEffect(() => {
+    if (isHero || !profile?.id) {
+      setPriorScreenings([]);
+      return;
+    }
+    let cancelled = false;
+    api.jobs.priorScreenings(profile.id)
+      .then(({ screenings }) => {
+        if (!cancelled) setPriorScreenings(screenings ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setPriorScreenings([]);
+      });
+    return () => { cancelled = true; };
+  }, [profile.id, isHero]);
 
   React.useEffect(() => {
     if (!profile.sourceRef || profile.source !== 'recruitee') {
@@ -349,6 +413,37 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setRecruiteeRowSelected(rows.map((r, i) => (r.stage === stage ? select : rowSel[i])));
     setStageScope('custom');
   };
+
+  const priorIndex = React.useMemo(
+    () => buildPriorScreeningIndex(priorScreenings),
+    [priorScreenings],
+  );
+
+  const rerunConflicts = React.useMemo(() => {
+    if (cvMode !== 'recruitee') return [];
+    const list = [];
+    rows.forEach((row, i) => {
+      if (!rowSel[i] || row.status !== 'ok') return;
+      const conflict = lookupPriorConflict(row, i, priorIndex);
+      if (conflict) list.push(conflict);
+    });
+    return list;
+  }, [cvMode, rows, rowSel, priorIndex]);
+
+  const deselectConflict = React.useCallback((rowIndex) => {
+    const next = (recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true)).slice();
+    next[rowIndex] = false;
+    setRecruiteeRowSelected(next);
+    setStageScope('custom');
+  }, [recruiteeRowSelected, rows]);
+
+  const deselectAllConflicts = React.useCallback(() => {
+    const indices = new Set(rerunConflicts.map((c) => c.rowIndex));
+    const next = (recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true)).slice();
+    indices.forEach((i) => { next[i] = false; });
+    setRecruiteeRowSelected(next);
+    setStageScope('custom');
+  }, [rerunConflicts, recruiteeRowSelected, rows]);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
@@ -632,6 +727,13 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                           ? <Badge tone="warn" dot>{nWarnSelected} without CV</Badge>
                           : <Badge tone="ok" dot>All have CVs</Badge>}
                       </div>
+                      {rerunConflicts.length > 0 && (
+                        <RerunConflictAlert
+                          conflicts={rerunConflicts}
+                          onRemove={deselectConflict}
+                          onRemoveAll={deselectAllConflicts}
+                        />
+                      )}
                       <div className="card" style={{ maxHeight: 320, overflow: 'auto' }}>
                         <table className="tbl">
                           <thead>
@@ -682,7 +784,15 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                                           borderRadius: 3, color: 'var(--bg)',
                                         }}>{rowSel[i] && <Icon name="check" size={10} stroke={2.4}/>}</span>
                                       </td>
-                                      <td><strong style={{ fontWeight: 500 }}>{c.name}</strong></td>
+                                      <td>
+                                        <strong style={{ fontWeight: 500 }}>{c.name}</strong>
+                                        {(() => {
+                                          const priorMeta = formatPriorScreeningMeta(lookupPriorForRow(c, priorIndex)?.latest);
+                                          return priorMeta ? (
+                                            <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{priorMeta}</div>
+                                          ) : null;
+                                        })()}
+                                      </td>
                                       <td className="muted">{c.loc}</td>
                                       <td>
                                         {c.status === 'ok'
@@ -714,6 +824,13 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                   Screening will use <strong>{labelForModel(runnable.modelId)}</strong> because the job&apos;s
                   model has no API key configured. Add keys in Settings → AI provider.
                 </div>
+              )}
+              {cvMode === 'recruitee' && rerunConflicts.length > 0 && (
+                <RerunConflictAlert
+                  conflicts={rerunConflicts}
+                  onRemove={deselectConflict}
+                  onRemoveAll={deselectAllConflicts}
+                />
               )}
               <div className="card">
                 <div className="card__head">
@@ -1997,14 +2114,64 @@ function ProfileTabs({
     }
     return map;
   }, [calibration]);
-  const candidateRows = React.useMemo(
-    () => (typeof getCandidateRowsForJob === 'function' ? getCandidateRowsForJob(profile.id) : []),
-    [profile.id],
-  );
+
   const completedRunsForJob = React.useMemo(
-    () => (typeof getCompletedRunsForProfile === 'function' ? getCompletedRunsForProfile(profile.id) : []),
-    [profile.id],
+    () => (profile.screeningRuns ?? []).filter((r) => r.status === 'completed'),
+    [profile.screeningRuns],
   );
+  const completedRunCount = completedRunsForJob.length;
+
+  const [scoredRows, setScoredRows] = React.useState([]);
+  const [scoredLoading, setScoredLoading] = React.useState(false);
+  const [scoredError, setScoredError] = React.useState(null);
+
+  React.useEffect(() => {
+    if (isHero || !profile?.id) {
+      setScoredRows([]);
+      setScoredLoading(false);
+      setScoredError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setScoredLoading(true);
+    setScoredError(null);
+
+    api.jobs.scoredCandidates(profile.id)
+      .then(({ candidates }) => {
+        if (cancelled) return;
+        setScoredRows(
+          candidates.map((c) => ({
+            key: `${c.run_id}-${c.id}`,
+            candidateId: c.id,
+            name: c.name ?? 'Unknown',
+            title: c.title ?? '—',
+            loc: c.location ?? '—',
+            score: c.score ?? '—',
+            status: c.status ?? 'review',
+            confidence: c.confidence ?? 'medium',
+            runId: c.run_id,
+            runDate: formatJobDate(c.run_created_at) ?? '—',
+          })),
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setScoredRows([]);
+          setScoredError(err?.message ?? 'Failed to load scored candidates.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setScoredLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [profile.id, isHero, completedRunCount]);
+
+  const candidateRows = isHero
+    ? (typeof getCandidateRowsForJob === 'function' ? getCandidateRowsForJob(profile.id) : [])
+    : scoredRows;
+
   const initialApplicants = React.useMemo(
     () => (profile.sourceRef ? getCachedApplicants(profile.sourceRef) : null),
     [profile.sourceRef],
@@ -2129,6 +2296,8 @@ function ProfileTabs({
           recruiteeData={recruiteeData}
           recruiteeLoading={recruiteeAppsLoading}
           recruiteeError={recruiteeAppsError}
+          scoredLoading={scoredLoading}
+          scoredError={scoredError}
           completedRuns={completedRunsForJob}
           go={go}
           canEdit={canEdit}
@@ -2674,6 +2843,8 @@ function JobCandidatesPane({
   recruiteeData,
   recruiteeLoading,
   recruiteeError,
+  scoredLoading = false,
+  scoredError = null,
   completedRuns,
   go,
   canEdit = true,
@@ -2714,7 +2885,7 @@ function JobCandidatesPane({
   }, [rows]);
 
   const hasRecruitee = profile.source === 'recruitee' && profile.sourceRef;
-  const hasScreened = rows.length > 0 && completedRuns.length > 0;
+  const hasScreened = completedRuns.length > 0 && (rows.length > 0 || scoredLoading || scoredError);
   const showRecruitee = hasRecruitee && (recruiteeLoading || recruiteeApps.length > 0);
 
   if (!showRecruitee && !hasScreened) {
@@ -2944,6 +3115,16 @@ function JobCandidatesPane({
 
       {hasScreened && (
         <>
+          {scoredError && (
+            <div className="callout" style={{ fontSize: 12.5 }}>
+              {scoredError}
+            </div>
+          )}
+          {scoredLoading && (
+            <div className="muted" style={{ fontSize: 12.5 }}>Loading screened candidates…</div>
+          )}
+          {!scoredLoading && rows.length > 0 && (
+          <>
           <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
             <strong>{rows.length}</strong> scored candidate row{rows.length === 1 ? '' : 's'} across{' '}
             <strong>{completedRuns.length}</strong> completed run{completedRuns.length === 1 ? '' : 's'}
@@ -3016,6 +3197,8 @@ function JobCandidatesPane({
               </tbody>
             </table>
           </div>
+          </>
+          )}
         </>
       )}
     </div>

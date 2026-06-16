@@ -182,6 +182,10 @@ export const api = {
   jobs: {
     list: () => request<JobProfile[]>('GET', '/api/v1/jobs'),
     get: (id: string) => request<JobProfileDetail>('GET', `/api/v1/jobs/${id}`),
+    scoredCandidates: (id: string) =>
+      request<JobScoredCandidatesResponse>('GET', `/api/v1/jobs/${id}/scored-candidates`),
+    priorScreenings: (id: string) =>
+      request<JobPriorScreeningsResponse>('GET', `/api/v1/jobs/${id}/prior-screenings`),
     refreshFromRecruitee: (id: string) =>
       request<JobProfileDetail>('POST', `/api/v1/jobs/${id}/refresh-recruitee`, {}),
     upsert: (id: string, body: UpsertJobBody) => request<{ success: boolean }>('PUT', `/api/v1/jobs/${id}`, body),
@@ -462,6 +466,36 @@ export interface JobProfile {
 
 export interface JobProfileDetail extends JobProfile {
   screening_runs: { id: string; status: string; cv_count: number; created_at: string; score_range: number[] | null }[];
+}
+
+export interface JobScoredCandidate {
+  id: string;
+  name: string | null;
+  title: string | null;
+  location: string | null;
+  score: number | null;
+  confidence: string | null;
+  status: string | null;
+  run_id: string | null;
+  run_created_at: string;
+}
+
+export interface JobScoredCandidatesResponse {
+  candidates: JobScoredCandidate[];
+}
+
+export interface JobPriorScreening {
+  recruitee_applicant_id: string | null;
+  applicant_email: string | null;
+  name: string | null;
+  run_id: string | null;
+  run_status: string;
+  run_created_at: string;
+  score: number | null;
+}
+
+export interface JobPriorScreeningsResponse {
+  screenings: JobPriorScreening[];
 }
 
 export interface CriterionItem {

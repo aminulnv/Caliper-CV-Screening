@@ -13,6 +13,7 @@ import { generateCriteriaFromJobDescription } from '../services/criteria-generat
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
 import { screeningRunAccessible } from '../lib/run-access.js';
+import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
 
 async function fetchJobDetail(workspaceId: string, jobId: string, userId: string) {
   const [job] = await sql`
@@ -72,6 +73,73 @@ export async function jobsRoutes(app: FastifyInstance) {
     const job = await fetchJobDetail(req.workspaceId, req.params.id, req.userId);
     if (!job) return reply.status(404).send({ error: 'Job not found' });
     return job;
+  });
+
+  app.get<{ Params: { id: string } }>('/jobs/:id/scored-candidates', async (req, reply) => {
+    const jobId = req.params.id;
+
+    const [job] = await sql`
+      SELECT id FROM job_profiles
+      WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+    `;
+    if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+    const rows = await sql`
+      SELECT rc.*, sr.created_at AS run_created_at
+      FROM run_candidates rc
+      JOIN screening_runs sr ON rc.run_id = sr.id
+      WHERE sr.job_id = ${jobId}
+        AND sr.workspace_id = ${req.workspaceId}
+        AND sr.status = 'completed'
+        AND ${screeningRunAccessible(req.userId)}
+      ORDER BY sr.created_at DESC, rc.score DESC NULLS LAST
+    `;
+
+    return {
+      candidates: rows.map((row) => {
+        const formatted = formatRunCandidateRow(row as Record<string, unknown>);
+        return {
+          ...formatted,
+          run_created_at: (row.runCreatedAt ?? row.run_created_at) as string,
+        };
+      }),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>('/jobs/:id/prior-screenings', async (req, reply) => {
+    const jobId = req.params.id;
+
+    const [job] = await sql`
+      SELECT id FROM job_profiles
+      WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+    `;
+    if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+    const rows = await sql`
+      SELECT rc.*, sr.status AS run_status, sr.created_at AS run_created_at
+      FROM run_candidates rc
+      JOIN screening_runs sr ON rc.run_id = sr.id
+      WHERE sr.job_id = ${jobId}
+        AND sr.workspace_id = ${req.workspaceId}
+        AND sr.status IN ('completed', 'in_progress', 'queued')
+        AND ${screeningRunAccessible(req.userId)}
+      ORDER BY sr.created_at DESC
+    `;
+
+    return {
+      screenings: rows.map((row) => {
+        const formatted = formatRunCandidateRow(row as Record<string, unknown>);
+        return {
+          recruitee_applicant_id: formatted.recruitee_applicant_id,
+          applicant_email: formatted.applicant_email,
+          name: formatted.name,
+          run_id: formatted.run_id,
+          run_status: (row.runStatus ?? row.run_status) as string,
+          run_created_at: (row.runCreatedAt ?? row.run_created_at) as string,
+          score: formatted.score,
+        };
+      }),
+    };
   });
 
   app.post<{ Params: { id: string } }>(
