@@ -153,6 +153,17 @@ function effectiveApplicantIdSet(selectedIds, rows) {
   return selectedIds === null ? new Set(allIds) : new Set(selectedIds);
 }
 
+/** Build selection for run sheet, skipping applicants already screened on this job. */
+function buildRunSheetSelection(rows, priorIndex, mode, stage) {
+  const next = new Set();
+  for (const row of rows) {
+    if (mode === 'stage' && row.stage !== stage) continue;
+    if (isPriorScreenedRow(row, priorIndex)) continue;
+    next.add(applicantIdForRow(row));
+  }
+  return next;
+}
+
 function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
   const [profile, setProfile] = React.useState(initialProfile);
   const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
@@ -201,6 +212,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const [usageEstimate, setUsageEstimate] = React.useState(null);
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
+  const autoExcludedPriorRef = React.useRef(false);
   const isHero = profile.id === HERO_PROFILE.id;
 
   React.useEffect(() => {
@@ -211,6 +223,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setRunProcessing(null);
     setRunError(null);
     setRunNote('');
+    autoExcludedPriorRef.current = false;
     runCancelRef.current = false;
   }, [profile.id]);
 
@@ -310,6 +323,44 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     return counts;
   }, [rows, runSheetVisibleRows]);
 
+  const nExcludedScreened = React.useMemo(
+    () => rows.filter((r, i) => isPriorScreenedRow(r, priorIndex) && !rowSel[i]).length,
+    [rows, priorIndex, rowSel],
+  );
+
+  React.useEffect(() => {
+    if (autoExcludedPriorRef.current) return;
+    if (cvMode !== 'recruitee' || recruiteeLoading || isHero) return;
+    if (!recruiteeApplicants.length) return;
+
+    const index = buildPriorScreeningIndex(priorScreenings);
+    autoExcludedPriorRef.current = true;
+    if (index.byRecruiteeId.size === 0) return;
+
+    const next = effectiveApplicantIdSet(selectedApplicantIds, rows);
+    let changed = false;
+    for (const row of rows) {
+      const id = applicantIdForRow(row);
+      if (!index.byRecruiteeId.has(id)) continue;
+      if (next.has(id)) {
+        next.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setSelectedApplicantIds(next);
+      setStageScope('custom');
+    }
+  }, [
+    cvMode,
+    recruiteeLoading,
+    isHero,
+    priorScreenings,
+    recruiteeApplicants,
+    rows,
+    selectedApplicantIds,
+  ]);
+
   // Pipeline stages (segments), preserving the incoming order from Recruitee.
   const stageOrder = [];
   const stageCounts = {};
@@ -332,14 +383,10 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const applyStageScope = (stage) => {
     setStageScope(stage);
     if (stage === 'all') {
-      setSelectedApplicantIds(null);
+      setSelectedApplicantIds(buildRunSheetSelection(rows, priorIndex, 'all'));
       return;
     }
-    const ids = new Set();
-    for (const r of rows) {
-      if (r.stage === stage) ids.add(String(r.id));
-    }
-    setSelectedApplicantIds(ids);
+    setSelectedApplicantIds(buildRunSheetSelection(rows, priorIndex, 'stage', stage));
   };
   const toggleRecruiteeRow = (i) => {
     const id = applicantIdForRow(rows[i]);
@@ -359,8 +406,11 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
         if (rows[idx].stage !== stage) continue;
         const id = applicantIdForRow(rows[idx]);
         if (!id || id === 'undefined') continue;
-        if (select) next.add(id);
-        else next.delete(id);
+        if (select) {
+          if (!isPriorScreenedRow(rows[idx], priorIndex)) next.add(id);
+        } else {
+          next.delete(id);
+        }
       }
       return next;
     });
@@ -728,6 +778,11 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                           ? <Badge tone="warn" dot>{nWarnSelected} without CV</Badge>
                           : <Badge tone="ok" dot>All have CVs</Badge>}
                       </div>
+                      {nExcludedScreened > 0 && (
+                        <div className="callout" style={{ fontSize: 12, marginBottom: 0 }}>
+                          <strong>{nExcludedScreened}</strong> applicants were already screened on this job and are hidden from this list.
+                        </div>
+                      )}
                       {rerunConflicts.length > 0 && (
                         <RerunConflictAlert
                           conflicts={rerunConflicts}
