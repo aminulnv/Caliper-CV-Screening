@@ -4899,13 +4899,13 @@ button.wiz__step {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid var(--line-soft);
-  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--warn-ink) 14%, var(--line-soft));
+  background: color-mix(in srgb, var(--warn-soft) 28%, transparent);
   font-size: 12.5px;
 }
 
 .rerun-conflict__row:hover {
-  background: color-mix(in srgb, var(--bg) 88%, var(--warn-soft) 12%);
+  background: color-mix(in srgb, var(--warn-soft) 42%, transparent);
 }
 
 .rerun-conflict__candidate {

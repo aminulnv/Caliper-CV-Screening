@@ -91,34 +91,21 @@ function delayJob(ms) {
 
 function buildPriorScreeningIndex(screenings: JobPriorScreening[]) {
   const byRecruiteeId = new Map();
-  const byEmail = new Map();
 
   for (const s of screenings ?? []) {
-    if (s.recruitee_applicant_id) {
-      const key = String(s.recruitee_applicant_id);
-      const existing = byRecruiteeId.get(key);
-      if (existing) existing.count += 1;
-      else byRecruiteeId.set(key, { latest: s, count: 1 });
-    }
-    if (s.applicant_email) {
-      const key = s.applicant_email.trim().toLowerCase();
-      const existing = byEmail.get(key);
-      if (existing) existing.count += 1;
-      else byEmail.set(key, { latest: s, count: 1 });
-    }
+    const id = s.recruitee_applicant_id;
+    if (!id || String(id) === 'undefined') continue;
+    const key = String(id);
+    const existing = byRecruiteeId.get(key);
+    if (existing) existing.count += 1;
+    else byRecruiteeId.set(key, { latest: s, count: 1 });
   }
-  return { byRecruiteeId, byEmail };
+  return { byRecruiteeId };
 }
 
+/** Match prior screenings by Recruitee applicant id only (never email — avoids false positives). */
 function lookupPriorForRow(row, priorIndex) {
-  const byId = priorIndex.byRecruiteeId.get(String(row.id));
-  if (byId) return byId;
-  const email = row.email?.trim().toLowerCase();
-  if (email) {
-    const byEm = priorIndex.byEmail.get(email);
-    if (byEm) return byEm;
-  }
-  return null;
+  return priorIndex.byRecruiteeId.get(String(row.id)) ?? null;
 }
 
 function lookupPriorConflict(row, rowIndex, priorIndex) {
@@ -378,16 +365,18 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   }, [rows, allApplicantIds]);
 
   const deselectAllConflicts = React.useCallback(() => {
-    const conflictIds = new Set(
-      rerunConflicts.map((c) => String(c.applicantId)).filter((id) => id && id !== 'undefined'),
-    );
     setSelectedApplicantIds((prev) => {
       const next = effectiveApplicantIdSet(prev, allApplicantIds);
-      for (const id of conflictIds) next.delete(id);
+      rows.forEach((row) => {
+        if (row.status !== 'ok') return;
+        const id = String(row.id);
+        if (!id || id === 'undefined') return;
+        if (priorIndex.byRecruiteeId.has(id)) next.delete(id);
+      });
       return next;
     });
     setStageScope('custom');
-  }, [rerunConflicts, allApplicantIds]);
+  }, [rows, allApplicantIds, priorIndex]);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
