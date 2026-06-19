@@ -12,6 +12,10 @@ export interface NavItem {
   end?: boolean
   /** Non-navigable placeholder (e.g. pgvector not ready yet). */
   comingSoon?: boolean
+  /** Visible only to admin role. */
+  requiresAdmin?: boolean
+  /** Visible only to editor (recruiter) and admin roles. */
+  requiresEdit?: boolean
   /** Nested sub-items (no icons). Rendered indented under parent with expand/collapse. */
   children?: NavItemChild[]
 }

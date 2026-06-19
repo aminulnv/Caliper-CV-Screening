@@ -23,22 +23,195 @@ function memberInitials(name, email) {
   return (email?.[0] ?? '?').toUpperCase();
 }
 
-function MemberAvatar({ name, email, avatarUrl }) {
+function MemberAvatar({ name, email, avatarUrl, pending = false }) {
   const [failed, setFailed] = React.useState(false);
   React.useEffect(() => { setFailed(false); }, [avatarUrl]);
   const showImage = Boolean(avatarUrl) && !failed;
   return (
-    <span style={{
-      width: 28, height: 28, borderRadius: '50%',
-      background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
-      fontSize: 10, fontWeight: 600, flexShrink: 0, overflow: 'hidden',
-    }}>
+    <span className={`team-member__avatar${pending ? ' team-member__avatar--pending' : ''}`}>
       {showImage
         ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer"
-            onError={() => setFailed(true)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            onError={() => setFailed(true)} />
         : memberInitials(name, email)}
     </span>
+  );
+}
+
+function TeamRoleSelect({ value, onChange, email, disabled = false }) {
+  return (
+    <select
+      className="sel team-role-select"
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      aria-label={`Role for ${email}`}
+    >
+      <option value="viewer">{labelForRole('viewer')}</option>
+      <option value="recruiter">{labelForRole('recruiter')}</option>
+      <option value="admin">{labelForRole('admin')}</option>
+    </select>
+  );
+}
+
+function TeamBudgetField({ member, budgetDrafts, budgetSaving, onDraftChange, onSave }) {
+  if (member.role === 'viewer') {
+    return <span className="team-cell__na">Not applicable</span>;
+  }
+  return (
+    <div className="team-budget">
+      <span className="team-budget__prefix" aria-hidden>$</span>
+      <input
+        className="inp team-budget__input mono"
+        type="number"
+        min="0"
+        step="0.01"
+        placeholder="Unlimited"
+        value={budgetDrafts[member.id] !== undefined ? budgetDrafts[member.id] : (member.ai_budget_usd ?? '')}
+        onChange={(e) => onDraftChange(member.id, e.target.value)}
+        onBlur={() => onSave(member)}
+        disabled={budgetSaving === member.id}
+        aria-label={`AI budget for ${member.email}`}
+      />
+    </div>
+  );
+}
+
+function TeamAccessPanel({
+  team,
+  teamLoading,
+  teamError,
+  budgetDrafts,
+  budgetSaving,
+  onInviteClick,
+  onRoleChange,
+  onBudgetDraftChange,
+  onBudgetSave,
+  onRemoveMember,
+  onRevokeInvite,
+}) {
+  const members = team?.members ?? [];
+  const pending = team?.pending_invites ?? [];
+  const isEmpty = !members.length && !pending.length;
+
+  return (
+    <div className="team-panel">
+      <div className="team-panel__toolbar">
+        <div className="team-panel__meta">
+          {team?.seats && (
+            <span className="team-panel__seats">
+              {team.seats.used} of {team.seats.max} seats
+            </span>
+          )}
+          <span className="team-panel__hint muted">
+            {members.length} active{pending.length > 0 ? ` · ${pending.length} pending` : ''}
+          </span>
+        </div>
+        <Btn icon="plus" variant="primary" size="sm" onClick={onInviteClick}>
+          Invite member
+        </Btn>
+      </div>
+
+      {teamError && (
+        <div className="team-panel__error" role="alert">{teamError}</div>
+      )}
+
+      {teamLoading ? (
+        <div className="team-panel__empty muted">Loading team…</div>
+      ) : isEmpty ? (
+        <div className="team-panel__empty">
+          <p className="team-panel__empty-title">No members yet</p>
+          <p className="team-panel__empty-sub muted">Invite colleagues to share screening runs and job profiles.</p>
+          <Btn icon="plus" variant="primary" size="sm" onClick={onInviteClick}>Invite member</Btn>
+        </div>
+      ) : (
+        <div className="team-grid-scroll">
+          <div className="team-grid" role="table" aria-label="Workspace members">
+            <div className="team-grid__head" role="row">
+              <span role="columnheader">Member</span>
+              <span role="columnheader">Role</span>
+              <span role="columnheader">Budget</span>
+              <span role="columnheader" className="col-num">Spent</span>
+              <span role="columnheader">Joined</span>
+              <span className="sr-only" role="columnheader">Actions</span>
+            </div>
+
+            {members.map((m) => (
+              <div key={m.id} className="team-row" role="row">
+                <div className="team-row__member" role="cell">
+                  <MemberAvatar name={m.name} email={m.email} avatarUrl={m.avatar_url} />
+                  <div className="team-member__copy">
+                    <div className="team-member__name">
+                      {m.name || m.email}
+                      {m.is_current_user && <span className="team-member__you">You</span>}
+                    </div>
+                    {m.name && <div className="team-member__email">{m.email}</div>}
+                  </div>
+                </div>
+                <div role="cell">
+                  <TeamRoleSelect
+                    value={m.role}
+                    email={m.email}
+                    onChange={(e) => onRoleChange(m.id, e.target.value)}
+                  />
+                </div>
+                <div role="cell">
+                  <TeamBudgetField
+                    member={m}
+                    budgetDrafts={budgetDrafts}
+                    budgetSaving={budgetSaving}
+                    onDraftChange={onBudgetDraftChange}
+                    onSave={onBudgetSave}
+                  />
+                </div>
+                <div className="team-spent col-num" role="cell" style={{ color: spentColor(m.ai_status) }}>
+                  {m.role === 'viewer' ? '—' : formatUsd(m.ai_spent_usd ?? 0)}
+                </div>
+                <div className="team-joined" role="cell">{formatJoined(m.joined_at)}</div>
+                <div className="team-row__actions" role="cell">
+                  <IconBtn
+                    name="trash"
+                    title="Remove member"
+                    onClick={() => onRemoveMember({ type: 'member', id: m.id, label: m.name || m.email })}
+                  />
+                </div>
+              </div>
+            ))}
+
+            {pending.length > 0 && (
+              <>
+                <div className="team-grid__divider" role="row">
+                  <span>Pending invitations</span>
+                </div>
+                {pending.map((inv) => (
+                  <div key={inv.id} className="team-row team-row--pending" role="row">
+                    <div className="team-row__member" role="cell">
+                      <MemberAvatar name={null} email={inv.email} pending />
+                      <div className="team-member__copy">
+                        <div className="team-member__name">{inv.email}</div>
+                        <Badge tone="info">Pending</Badge>
+                      </div>
+                    </div>
+                    <div role="cell">
+                      <span className="team-role-readonly">{labelForRole(inv.role)}</span>
+                    </div>
+                    <div role="cell"><span className="team-cell__na">—</span></div>
+                    <div className="team-spent col-num" role="cell">—</div>
+                    <div className="team-joined" role="cell">{formatJoined(inv.invited_at)}</div>
+                    <div className="team-row__actions" role="cell">
+                      <IconBtn
+                        name="trash"
+                        title="Revoke invite"
+                        onClick={() => onRevokeInvite({ type: 'invite', id: inv.id, label: inv.email })}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -50,10 +223,18 @@ function formatJoined(iso) {
   }
 }
 
-function roleBadgeTone(role) {
-  if (role === 'admin') return 'solid';
-  if (role === 'viewer') return 'ghost';
-  return 'default';
+function formatUsd(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '—';
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+function spentColor(status) {
+  if (status === 'blocked') return 'var(--bad-ink)';
+  if (status === 'warn') return 'var(--warn-ink, #b45309)';
+  return undefined;
 }
 
 function SettingsPage() {
@@ -69,6 +250,8 @@ function SettingsPage() {
   const [showInvite, setShowInvite] = React.useState(false);
   const [inviting, setInviting] = React.useState(false);
   const [confirmRemove, setConfirmRemove] = React.useState(null);
+  const [budgetDrafts, setBudgetDrafts] = React.useState({});
+  const [budgetSaving, setBudgetSaving] = React.useState(null);
 
   // AI section
   const [anthropicKey, setAnthropicKey] = React.useState('');
@@ -149,6 +332,32 @@ function SettingsPage() {
       loadTeam();
     } catch (e) {
       setTeamError(e?.message ?? 'Could not update role.');
+    }
+  };
+
+  const handleBudgetSave = async (member) => {
+    const draft = budgetDrafts[member.id];
+    const raw = draft !== undefined ? draft : (member.ai_budget_usd ?? '');
+    const trimmed = String(raw).trim();
+    const value = trimmed === '' ? null : Number(trimmed);
+    if (trimmed !== '' && (!Number.isFinite(value) || value < 0)) {
+      setTeamError('Budget must be a non-negative number or empty for unlimited.');
+      return;
+    }
+    setBudgetSaving(member.id);
+    setTeamError(null);
+    try {
+      await api.workspace.updateMemberBudget(member.id, value);
+      loadTeam();
+      setBudgetDrafts((prev) => {
+        const next = { ...prev };
+        delete next[member.id];
+        return next;
+      });
+    } catch (e) {
+      setTeamError(e?.message ?? 'Could not save budget.');
+    } finally {
+      setBudgetSaving(null);
     }
   };
 
@@ -269,109 +478,21 @@ function SettingsPage() {
 
       <Section
         title="Team &amp; access"
-        sub="Editors can run screenings and manage jobs. Viewers see results only. Admins manage settings and access."
+        sub="Editors run screenings and manage jobs. Viewers see results only. Admins control settings and membership."
       >
-        {teamError && (
-          <div style={{ fontSize: 13, color: 'var(--bad)', marginBottom: 12 }}>{teamError}</div>
-        )}
-        <div className="card" style={{ border: 'none' }}>
-          {teamLoading ? (
-            <div className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>Loading team…</div>
-          ) : (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Member</th>
-                  <th style={{ width: 160 }}>Role</th>
-                  <th style={{ width: 140 }}>Joined</th>
-                  <th style={{ width: 48 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {(team?.members ?? []).map((m) => (
-                  <tr key={m.id}>
-                    <td>
-                      <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-                        <MemberAvatar name={m.name} email={m.email} avatarUrl={m.avatar_url} />
-                        <div>
-                          <div style={{ fontWeight: 500 }}>
-                            {m.name || m.email}
-                            {m.is_current_user && <span className="muted" style={{ fontWeight: 400 }}> · you</span>}
-                          </div>
-                          {m.name && <div className="team-member__email">{m.email}</div>}
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <select
-                        className="sel team-role-select"
-                        value={m.role}
-                        onChange={(e) => handleRoleChange(m.id, e.target.value)}
-                        aria-label={`Role for ${m.email}`}
-                      >
-                        <option value="viewer">{labelForRole('viewer')}</option>
-                        <option value="recruiter">{labelForRole('recruiter')}</option>
-                        <option value="admin">{labelForRole('admin')}</option>
-                      </select>
-                    </td>
-                    <td className="mono muted" style={{ fontSize: 11.5 }}>{formatJoined(m.joined_at)}</td>
-                    <td>
-                      <IconBtn
-                        name="trash"
-                        title="Remove member"
-                        onClick={() => setConfirmRemove({ type: 'member', id: m.id, label: m.name || m.email })}
-                      />
-                    </td>
-                  </tr>
-                ))}
-                {(team?.pending_invites ?? []).map((inv) => (
-                  <tr key={inv.id} className="team-row--pending">
-                    <td>
-                      <div className="row" style={{ gap: 10, alignItems: 'center' }}>
-                        <span style={{
-                          width: 28, height: 28, borderRadius: '50%',
-                          background: 'var(--bg-sunk)', display: 'grid', placeItems: 'center',
-                          fontSize: 10, fontWeight: 600, flexShrink: 0,
-                        }}>{memberInitials(null, inv.email)}</span>
-                        <div>
-                          <div style={{ fontWeight: 500 }}>{inv.email}</div>
-                          <Badge tone="info" style={{ marginTop: 4 }}>Pending</Badge>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <Badge tone={roleBadgeTone(inv.role)}>{labelForRole(inv.role)}</Badge>
-                    </td>
-                    <td className="mono muted" style={{ fontSize: 11.5 }}>{formatJoined(inv.invited_at)}</td>
-                    <td>
-                      <IconBtn
-                        name="trash"
-                        title="Revoke invite"
-                        onClick={() => setConfirmRemove({ type: 'invite', id: inv.id, label: inv.email })}
-                      />
-                    </td>
-                  </tr>
-                ))}
-                {!team?.members?.length && !team?.pending_invites?.length && (
-                  <tr>
-                    <td colSpan={4} className="muted" style={{ padding: 24, textAlign: 'center', fontSize: 13 }}>
-                      No members yet. Invite someone to get started.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          )}
-        </div>
-        <div className="row" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-soft)' }}>
-          <Btn icon="plus" variant="ghost" onClick={() => setShowInvite(true)}>Invite member</Btn>
-          <div className="spacer"/>
-          {team?.seats && (
-            <span className="muted mono" style={{ fontSize: 11 }}>
-              {team.seats.used} of {team.seats.max} seats
-            </span>
-          )}
-        </div>
+        <TeamAccessPanel
+          team={team}
+          teamLoading={teamLoading}
+          teamError={teamError}
+          budgetDrafts={budgetDrafts}
+          budgetSaving={budgetSaving}
+          onInviteClick={() => setShowInvite(true)}
+          onRoleChange={handleRoleChange}
+          onBudgetDraftChange={(id, value) => setBudgetDrafts((prev) => ({ ...prev, [id]: value }))}
+          onBudgetSave={handleBudgetSave}
+          onRemoveMember={setConfirmRemove}
+          onRevokeInvite={setConfirmRemove}
+        />
 
         <InviteMemberModal
           open={showInvite}
@@ -394,6 +515,20 @@ function SettingsPage() {
           variant="danger"
         />
       </Section>
+
+      {settings?.has_recruitee_key && (
+        <Section
+          title="Integrations"
+          sub="Recruitee is connected via a platform-managed API token."
+        >
+          <div className="callout" style={{ fontSize: 13, lineHeight: 1.55 }}>
+            Pipeline pushes from screening results update Recruitee using the shared integration token.
+            Recruitee audit logs will show{' '}
+            <strong>{settings.recruitee_platform_actor_label ?? 'the platform integration account'}</strong>,
+            not the Caliper user who clicked. Caliper always records who made each disposition decision.
+          </div>
+        </Section>
+      )}
 
       <Section
         title="Data retention"

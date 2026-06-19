@@ -5,6 +5,7 @@ import { writeAuditLog } from '../middleware/audit.js';
 import { sql } from '../services/db.js';
 import {
   getPlatformRecruiteeBaseUrl,
+  getPlatformRecruiteeActorLabel,
   isPlatformRecruiteeConfigured,
 } from '../config/recruitee.js';
 import { encryptKey } from '../services/key-manager.js';
@@ -45,6 +46,7 @@ function formatSettingsResponse(row: Record<string, unknown>, workspaceId: strin
     has_openai_key: Boolean(row.hasOpenaiKey ?? row.has_openai_key),
     has_recruitee_key: platformRecruitee,
     recruitee_managed_by_platform: true,
+    recruitee_platform_actor_label: platformRecruitee ? getPlatformRecruiteeActorLabel() : null,
     supported_models: SUPPORTED_MODELS,
   };
 }

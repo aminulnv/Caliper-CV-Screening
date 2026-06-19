@@ -10,6 +10,8 @@ import {
 } from '../services/workspace-access.js';
 import type { UserRole } from '../types/index.js';
 import { alertWorkspaceInvite } from '../services/alerting.js';
+import { updateMemberBudget, getMemberUsage } from '../services/ai-usage.js';
+import type { BudgetStatus } from '../services/ai-usage.js';
 
 const VALID_ROLES: UserRole[] = ['admin', 'recruiter', 'viewer'];
 
@@ -23,6 +25,16 @@ function isValidEmail(email: string): boolean {
 
 function formatMember(row: Record<string, unknown>, currentUserId: string) {
   const userId = (row.userId ?? row.user_id) as string;
+  const budgetRaw = row.aiBudgetUsd ?? row.ai_budget_usd;
+  const budget = budgetRaw == null ? null : Number(budgetRaw);
+  const spentUsd = Number(row.spentUsd ?? row.spent_usd ?? 0);
+  let aiStatus: BudgetStatus = 'unlimited';
+  if (budget != null && budget > 0) {
+    const pct = (spentUsd / budget) * 100;
+    if (pct >= 100) aiStatus = 'blocked';
+    else if (pct >= 80) aiStatus = 'warn';
+    else aiStatus = 'ok';
+  }
   return {
     id: (row.id) as string,
     user_id: userId,
@@ -32,6 +44,9 @@ function formatMember(row: Record<string, unknown>, currentUserId: string) {
     role: (row.role) as UserRole,
     joined_at: (row.joinedAt ?? row.joined_at ?? row.createdAt ?? row.created_at) as string,
     is_current_user: userId === currentUserId,
+    ai_budget_usd: budget,
+    ai_spent_usd: spentUsd,
+    ai_status: aiStatus,
   };
 }
 
@@ -99,10 +114,16 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
         const workspaceId = req.workspaceId;
 
         const memberRows = await sql`
-          SELECT ur.id, ur.user_id, ur.role, ur.created_at,
-                 u.email, u.name, u.avatar_url
+          SELECT ur.id, ur.user_id, ur.role, ur.created_at, ur.ai_budget_usd,
+                 u.email, u.name, u.avatar_url,
+                 COALESCE(spent.total, 0) AS spent_usd
           FROM user_roles ur
           JOIN users u ON u.sub = ur.user_id
+          LEFT JOIN LATERAL (
+            SELECT SUM(cost_usd) AS total
+            FROM ai_usage_events e
+            WHERE e.workspace_id = ${workspaceId} AND e.user_id = ur.user_id
+          ) spent ON true
           WHERE ur.workspace_id = ${workspaceId}
           ORDER BY ur.created_at ASC
         `;
@@ -243,6 +264,51 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
         `;
 
         return reply.send({ success: true, user_id: memberUserId, role });
+      },
+    );
+
+    protectedRoutes.put(
+      '/workspace/members/:id/budget',
+      { preHandler: requireRole('admin') },
+      async (req, reply) => {
+        const { id } = req.params as { id: string };
+        const body = req.body as { ai_budget_usd?: number | null };
+        const workspaceId = req.workspaceId;
+
+        let budgetUsd: number | null = null;
+        if (body.ai_budget_usd != null) {
+          const n = Number(body.ai_budget_usd);
+          if (!Number.isFinite(n) || n < 0) {
+            return reply.status(400).send({ error: 'Budget must be a non-negative number or null.' });
+          }
+          budgetUsd = Math.round(n * 100) / 100;
+        }
+
+        try {
+          await updateMemberBudget(workspaceId, id, budgetUsd);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not update budget.';
+          return reply.status(400).send({ error: message });
+        }
+
+        const [member] = await sql`
+          SELECT ur.user_id FROM user_roles ur
+          WHERE ur.id = ${id} AND ur.workspace_id = ${workspaceId}
+          LIMIT 1
+        `;
+        if (!member) return reply.status(404).send({ error: 'Member not found.' });
+
+        const usage = await getMemberUsage(
+          workspaceId,
+          (member.userId ?? member.user_id) as string,
+        );
+
+        return reply.send({
+          success: true,
+          ai_budget_usd: usage.budget_usd,
+          ai_spent_usd: usage.spent_usd,
+          ai_status: usage.status,
+        });
       },
     );
 

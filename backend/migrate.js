@@ -63,6 +63,9 @@ const migrations = [
   './migrate-candidate-email.sql',
   './migrate-eval-ai-met.sql',
   './migrate-cv-embeddings.sql',
+  './migrate-ai-budget.sql',
+  './migrate-candidate-disposition.sql',
+  './migrate-cv-quality.sql',
 ];
 
 let failed = false;

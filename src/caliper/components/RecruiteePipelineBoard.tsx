@@ -2,7 +2,9 @@ import React from 'react';
 import type { RecruiteeApplicant, RecruiteePipelineStage } from '@/services/api';
 import { Icon } from '@/caliper/ui';
 import { RecruiteeEvalBadge } from '@/caliper/components/RecruiteeEvalBadge';
+import { DispositionBadge } from '@/caliper/components/DispositionBadge';
 import { sortApplicantsByEval, type EvalSortMode } from '@/lib/recruitee-eval-sort';
+import type { CandidateDisposition } from '@/services/api';
 
 export type { EvalSortMode };
 export type PipelineView = 'qualified' | 'disqualified';
@@ -82,12 +84,19 @@ function ApplicantAvatar({ name, photoUrl }: { name: string; photoUrl: string | 
   return <span className="cand-card__avatar cand-card__avatar--initials">{applicantInitials(name)}</span>;
 }
 
+export type ApplicantDispositionOverlay = {
+  disposition: CandidateDisposition;
+  target_stage_name?: string | null;
+  recruitee_sync_status?: string | null;
+};
+
 export function RecruiteePipelineBoard({
   stages,
   applicants,
   pipelineView,
   sortMode = 'default',
   canEdit = true,
+  dispositionByApplicantId,
   onView,
   onScreenStage,
 }: {
@@ -96,6 +105,7 @@ export function RecruiteePipelineBoard({
   pipelineView: PipelineView;
   sortMode?: EvalSortMode;
   canEdit?: boolean;
+  dispositionByApplicantId?: Map<string, ApplicantDispositionOverlay>;
   onView: (applicant: RecruiteeApplicant) => void;
   onScreenStage?: (stageName: string) => void;
 }) {
@@ -158,6 +168,7 @@ export function RecruiteePipelineBoard({
             ) : (
               items.map((a) => {
                 const age = formatRelativeDays(a.created_at);
+                const caliperDisposition = dispositionByApplicantId?.get(String(a.id));
                 return (
                   <article className="cand-card" key={a.id}>
                     <div className="cand-card__top">
@@ -165,6 +176,15 @@ export function RecruiteePipelineBoard({
                       <div className="cand-card__main">
                         <div className="cand-card__name-row">
                           <div className="cand-card__name">{a.name || 'Unknown'}</div>
+                          {caliperDisposition && (
+                            <DispositionBadge
+                              disposition={caliperDisposition.disposition}
+                              targetStageName={caliperDisposition.target_stage_name}
+                              syncStatus={caliperDisposition.recruitee_sync_status}
+                              compact
+                              recruiteePipeline
+                            />
+                          )}
                           {age && pipelineView === 'qualified' && (
                             <span className={`cand-card__age${age === 'NEW' ? ' is-new' : ''}`}>
                               {age}

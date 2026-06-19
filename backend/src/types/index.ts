@@ -120,6 +120,8 @@ export interface ScoringResult {
   criteria_met_pct: number;
   base_score: number;
   flag_penalty: number;
+  quality_adjustment: number;
+  cv_quality_score: number | null;
   parse_warning: string | null;
   criteria_results: CriterionResult[];
 }
@@ -151,6 +153,7 @@ export interface RecruiteeApplicantsPayload {
 
 export interface RecruiteeApplicant {
   id: string;
+  placement_id: string | null;
   name: string;
   email: string | null;
   location: string | null;

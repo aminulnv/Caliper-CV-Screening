@@ -15,6 +15,8 @@ export function formatRunCandidateRow(row: Record<string, unknown>) {
     flag_triggered: (row.flagTriggered ?? row.flag_triggered ?? 0) as number,
     score_base: (row.scoreBase ?? row.score_base ?? null) as number | null,
     penalty_flag: (row.penaltyFlag ?? row.penalty_flag ?? null) as number | null,
+    cv_quality_score: (row.cvQualityScore ?? row.cv_quality_score ?? null) as number | null,
+    quality_adjustment: (row.qualityAdjustment ?? row.quality_adjustment ?? null) as number | null,
     must_total: (row.mustTotal ?? row.must_total ?? null) as number | null,
     nice_total: (row.niceTotal ?? row.nice_total ?? null) as number | null,
     flag_total: (row.flagTotal ?? row.flag_total ?? null) as number | null,
@@ -25,7 +27,23 @@ export function formatRunCandidateRow(row: Record<string, unknown>) {
     recruitee_applicant_id: (row.recruiteeApplicantId ?? row.recruitee_applicant_id ?? null) as
       | string
       | null,
+    recruitee_placement_id: (row.recruiteePlacementId ?? row.recruitee_placement_id ?? null) as
+      | string
+      | null,
     applicant_email: (row.applicantEmail ?? row.applicant_email ?? null) as string | null,
     run_id: (row.runId ?? row.run_id ?? null) as string | null,
+    disposition: (row.disposition as string | null) ?? null,
+    target_stage_id: (row.targetStageId ?? row.target_stage_id ?? null) as string | null,
+    target_stage_name: (row.targetStageName ?? row.target_stage_name ?? null) as string | null,
+    disposition_note: (row.dispositionNote ?? row.disposition_note ?? null) as string | null,
+    disposition_by: (row.dispositionBy ?? row.disposition_by ?? null) as string | null,
+    disposition_at: (row.dispositionAt ?? row.disposition_at ?? null) as string | null,
+    recruitee_sync_status: (row.recruiteeSyncStatus ?? row.recruitee_sync_status ?? null) as
+      | string
+      | null,
+    recruitee_synced_at: (row.recruiteeSyncedAt ?? row.recruitee_synced_at ?? null) as string | null,
+    recruitee_sync_error: (row.recruiteeSyncError ?? row.recruitee_sync_error ?? null) as
+      | string
+      | null,
   };
 }

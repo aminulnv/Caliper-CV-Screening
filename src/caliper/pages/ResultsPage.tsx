@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Page — Run results for /runs/:runId
 import React from 'react'
-import { Icon, Btn, IconBtn, Segmented, ScoreBar, Confidence, StatusBadge } from '@/caliper/ui'
+import { Icon, Btn, IconBtn, ScoreBar, Confidence, StatusBadge, Badge } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunDetail, CandidateRow, CandidateEvaluationResponse, EvaluationItem, CompareRunResponse } from '@/services/api'
 import { CriteriaChecklistPanel, ChecklistSummary } from '@/caliper/components/CriteriaChecklist'
@@ -11,8 +11,19 @@ import { CvViewer } from '@/caliper/components/CvViewer'
 import { CvQuotesPanel } from '@/caliper/components/CvQuotesPanel'
 import { countsFromCandidateRow } from '@/lib/criteria-checklist'
 import { RunAccessControl } from '@/caliper/components/RunAccessControl'
+import { DispositionBadge } from '@/caliper/components/DispositionBadge'
+import { PushRecruiteeModal } from '@/caliper/components/PushRecruiteeModal'
+import { PipelineStageActions } from '@/caliper/components/PipelineStageActions'
 import { useAuth } from '@/contexts/AuthContext'
-import type { WorkspaceMember } from '@/services/api'
+import type { WorkspaceMember, CandidateDisposition, RecruiteePipelineStage, SetDispositionBody } from '@/services/api'
+import { groupPipelineStages } from '@/lib/recruitee-pipeline'
+import {
+  dispositionDisplayLabel,
+  matchesPipelineFilter,
+  countCandidatesByStage,
+} from '@/lib/candidate-disposition-display'
+import { shapeJobRow } from '@/lib/job-profile'
+import { getCachedApplicants, loadRecruiteeApplicants, invalidateApplicants } from '@/lib/applicants-cache'
 
 const confOrder = (c) => c === 'high' ? 3 : c === 'medium' ? 2 : 1;
 
@@ -25,15 +36,29 @@ function candidateMetrics(c) {
     criteriaMetPct: c.criteria_met_pct ?? c.criteriaMetPct ?? counts?.criteriaMetPct ?? null,
     scoreBase: c.score_base ?? c.scoreBase ?? null,
     penaltyFlag: c.penalty_flag ?? c.penaltyFlag ?? 0,
+    qualityAdjustment: c.quality_adjustment ?? c.qualityAdjustment ?? 0,
+    cvQualityScore: c.cv_quality_score ?? c.cvQualityScore ?? null,
   };
 }
 
 function ScoreDeductionBreakdown({ candidate }) {
-  const { criteriaMetPct, scoreBase, penaltyFlag } = candidateMetrics(candidate);
+  const { criteriaMetPct, scoreBase, penaltyFlag, cvQualityScore } = candidateMetrics(candidate);
   const pct = criteriaMetPct ?? scoreBase;
   if (pct == null) return null;
   const flagPen = penaltyFlag;
   const final = candidate.score ?? 0;
+
+  if (cvQualityScore != null) {
+    return (
+      <span className="score-deduction mono" style={{ fontSize: 11 }}>
+        Checklist <strong>{pct}%</strong>
+        {' · '}CV quality <strong style={{ color: cvQualityScore < 55 ? 'var(--warn-ink)' : 'var(--ink)' }}>{cvQualityScore}/100</strong>
+        {flagPen > 0 && <> · Flags −<strong style={{ color: 'var(--bad-ink)' }}>{flagPen}</strong></>}
+        {' → '}<strong style={{ color: 'var(--ink)' }}>{final}</strong>
+      </span>
+    );
+  }
+
   if (flagPen === 0) {
     return (
       <span className="mono muted" style={{ fontSize: 11 }}>
@@ -60,8 +85,154 @@ function matchesStatusFilter(candidate, filterStatus) {
   return candidate.status === filterStatus;
 }
 
+function matchesDispositionFilter(candidate, filterDisposition) {
+  return matchesPipelineFilter(candidate, filterDisposition);
+}
+
+/** Live Recruitee state for a run candidate, keyed by its Recruitee applicant id. */
+function recruiteeStateFor(candidate, stateById) {
+  const applicantId = candidate?.recruitee_applicant_id ?? candidate?.recruiteeApplicantId ?? null;
+  if (!applicantId || !stateById) return null;
+  return stateById.get(String(applicantId)) ?? null;
+}
+
+function selectionNeedsRequalify(candidateIds, candidates, stateById) {
+  return candidateIds.some((id) => {
+    const candidate = candidates.find((c) => c.id === id);
+    return candidateShowsDisqualified(candidate, stateById, true);
+  });
+}
+
+/** True when the candidate is in Recruitee's disqualified pipeline (live state preferred). */
+function candidateShowsDisqualified(candidate, stateById, useRecruiteePipeline = false) {
+  const rState = recruiteeStateFor(candidate, stateById);
+  if (rState) return Boolean(rState.disqualified);
+  if (useRecruiteePipeline && candidate?.disposition === 'reject') return true;
+  return false;
+}
+
+const STATUS_SORT_ORDER = { strong: 0, promising: 1, review: 2, flagged: 3 };
+
+function candidateSortValue(candidate, key, stateById) {
+  const metrics = candidateMetrics(candidate);
+  switch (key) {
+    case 'rank':
+    case 'score':
+      return candidate.score ?? -1;
+    case 'candidate':
+      return (candidate.name ?? '').toLowerCase();
+    case 'pct_met':
+      return metrics.criteriaMetPct ?? -1;
+    case 'confidence':
+      return confOrder(candidate.confidence);
+    case 'status':
+      return STATUS_SORT_ORDER[candidate.status] ?? 9;
+    case 'pipeline': {
+      const state = recruiteeStateFor(candidate, stateById);
+      if (state?.disqualified) return '\u0000disqualified';
+      return (state?.stageName ?? candidate.target_stage_name ?? 'zzz').toLowerCase();
+    }
+    default:
+      return 0;
+  }
+}
+
+function sortCandidates(list, sortState, stateById) {
+  if (!sortState) return list;
+  const mult = sortState.dir === 'asc' ? 1 : -1;
+  return [...list].sort((a, b) => {
+    const va = candidateSortValue(a, sortState.key, stateById);
+    const vb = candidateSortValue(b, sortState.key, stateById);
+    if (typeof va === 'string' && typeof vb === 'string') {
+      return mult * va.localeCompare(vb);
+    }
+    return mult * (Number(va) - Number(vb));
+  });
+}
+
+function cycleTableSort(prev, key) {
+  if (prev?.key !== key) return { key, dir: 'desc' };
+  if (prev.dir === 'desc') return { key, dir: 'asc' };
+  return null;
+}
+
+function ResultsSortableTh({ label, sortKey, sortState, onSort, style, className }) {
+  const active = sortState?.key === sortKey;
+  const dir = active ? sortState.dir : null;
+  return (
+    <th
+      className={[
+        'tbl-sort-th',
+        active ? 'tbl-sort-th--active' : '',
+        className ?? '',
+      ].filter(Boolean).join(' ')}
+      style={style}
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button type="button" className="tbl-sort-btn" onClick={() => onSort(sortKey)}>
+        <span>{label}</span>
+        {active && (
+          <span className="tbl-sort-indicator" aria-hidden>
+            {dir === 'desc' ? '↓' : '↑'}
+          </span>
+        )}
+      </button>
+    </th>
+  );
+}
+
+/** Reflects where a candidate actually sits in Recruitee right now (stage or disqualified). */
+function RecruiteeStatusBadge({ state, compact = false }) {
+  if (!state) return null;
+  if (state.disqualified) {
+    return (
+      <span
+        className="disposition-badge-wrap"
+        title={state.disqualifyReason ? `Disqualified in Recruitee — ${state.disqualifyReason}` : 'Disqualified in Recruitee'}
+      >
+        <Badge tone="bad" dot>Disqualified</Badge>
+      </span>
+    );
+  }
+  if (state.stageName) {
+    const label = compact && state.stageName.length > 22 ? `${state.stageName.slice(0, 20)}…` : state.stageName;
+    return (
+      <span className="disposition-badge-wrap" title={`In Recruitee — ${state.stageName}`}>
+        <Badge tone="default" dot>{label}</Badge>
+      </span>
+    );
+  }
+  return null;
+}
+
+const DISPOSITION_LABELS = {
+  shortlist: 'Shortlist',
+  hold: 'Hold',
+  reject: 'Reject',
+  advanced: 'Move to stage',
+};
+
+function dispositionSuccessLabel(
+  body: SetDispositionBody,
+  candidateName?: string | null,
+  useRecruiteePipeline?: boolean,
+): string {
+  const who = candidateName ?? 'Candidate';
+  if (body.requalify && body.target_stage_name) {
+    return `${who} re-qualified to ${body.target_stage_name}.`;
+  }
+  if (body.target_stage_name) {
+    return `${who} moved to ${body.target_stage_name}.`;
+  }
+  if (body.disposition === 'reject') {
+    return `${who} marked as ${useRecruiteePipeline ? 'disqualified' : 'rejected'}.`;
+  }
+  const label = DISPOSITION_LABELS[body.disposition] ?? body.disposition;
+  return `${who} marked as ${label}.`;
+}
+
 function ResultsPage({ tweaks, route, go }) {
-  const { displayName, avatarUrl, user } = useAuth();
+  const { displayName, avatarUrl, user, canEdit } = useAuth();
   const runId = route?.runId ?? route?.run;
 
   React.useEffect(() => {
@@ -77,8 +248,32 @@ function ResultsPage({ tweaks, route, go }) {
   const [compareLoading, setCompareLoading] = React.useState(false);
   const [compareError, setCompareError] = React.useState<string | null>(null);
   const [compareData, setCompareData] = React.useState<CompareRunResponse | null>(null);
-  const [sortBy, setSortBy] = React.useState('score');
+  const [sortState, setSortState] = React.useState({ key: 'score', dir: 'desc' });
   const [filterStatus, setFilterStatus] = React.useState('all');
+  const [filterDisposition, setFilterDisposition] = React.useState('all');
+  const [pipelineStages, setPipelineStages] = React.useState<RecruiteePipelineStage[]>([]);
+  const [pipelineStagesLoading, setPipelineStagesLoading] = React.useState(false);
+  const [pipelineStagesError, setPipelineStagesError] = React.useState<string | null>(null);
+  const [recruiteeStateById, setRecruiteeStateById] = React.useState<Map<string, {
+    disqualified: boolean;
+    stageId: string | null;
+    stageName: string | null;
+    disqualifyReason: string | null;
+  }>>(() => new Map());
+  const [recruiteeQual, setRecruiteeQual] = React.useState<'all' | 'qualified' | 'disqualified'>('all');
+  const [platformActor, setPlatformActor] = React.useState('platform integration account');
+  const [jobSource, setJobSource] = React.useState<string | null>(null);
+  const [jobSourceRef, setJobSourceRef] = React.useState<string | null>(null);
+  const [dispositionBusy, setDispositionBusy] = React.useState(false);
+  const [dispositionError, setDispositionError] = React.useState<string | null>(null);
+  const [dispositionSuccess, setDispositionSuccess] = React.useState<string | null>(null);
+  const [pushModal, setPushModal] = React.useState<{
+    disposition: CandidateDisposition;
+    candidateIds: string[];
+    targetStageId?: string;
+    targetStageName?: string;
+    requalify?: boolean;
+  } | null>(null);
   const [shareOpen, setShareOpen] = React.useState(false);
   const [members, setMembers] = React.useState<WorkspaceMember[] | null>(null);
   const [membersLoading, setMembersLoading] = React.useState(false);
@@ -111,8 +306,145 @@ function ResultsPage({ tweaks, route, go }) {
     setCompareOpen(false);
     setCompareData(null);
     setFilterStatus('all');
+    setFilterDisposition('all');
+    setRecruiteeQual('all');
+    setSortState({ key: 'score', dir: 'desc' });
     setShareOpen(false);
+    setDispositionError(null);
+    setDispositionSuccess(null);
   }, [runId]);
+
+  const loadPipelineStages = React.useCallback(async (
+    jobId: string,
+    source: string | null,
+    sourceRef: string | null,
+  ) => {
+    const recruiteeLinked = source === 'recruitee' && Boolean(sourceRef);
+    setPipelineStagesLoading(true);
+    setPipelineStagesError(null);
+
+    const applyStages = (stages: RecruiteePipelineStage[]) => {
+      setPipelineStages(stages);
+      if (stages.length === 0 && recruiteeLinked) {
+        setPipelineStagesError(
+          'No pipeline stages returned from Recruitee for this job. Open the job in Jobs → Applicants to verify the connection.',
+        );
+      }
+    };
+
+    const tryApplicantsFallback = async (): Promise<RecruiteePipelineStage[]> => {
+      if (!sourceRef) return [];
+      const cached = getCachedApplicants(sourceRef);
+      const data = cached ?? await loadRecruiteeApplicants(sourceRef);
+      return data.pipeline?.stages ?? [];
+    };
+
+    try {
+      const res = await api.jobs.pipelineStages(jobId);
+      if (res.platform_actor) setPlatformActor(res.platform_actor);
+      let stages = res.stages ?? [];
+
+      if (stages.length === 0 && recruiteeLinked && sourceRef) {
+        try {
+          stages = await tryApplicantsFallback();
+        } catch {
+          // Keep primary error messaging below if both paths fail.
+        }
+      }
+
+      applyStages(stages);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not load Recruitee pipeline stages';
+      setPipelineStages([]);
+
+      if (recruiteeLinked && sourceRef) {
+        try {
+          const stages = await tryApplicantsFallback();
+          if (stages.length > 0) {
+            applyStages(stages);
+            return;
+          }
+        } catch {
+          // Fall through to error banner.
+        }
+        setPipelineStagesError(message);
+      }
+    } finally {
+      setPipelineStagesLoading(false);
+    }
+  }, []);
+
+  const jobId = run?.job_id ?? run?.jobId ?? null;
+
+  React.useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+
+    api.jobs.get(jobId)
+      .then((job) => {
+        if (cancelled) return;
+        const shaped = shapeJobRow(job as Record<string, unknown>);
+        setJobSource(shaped.source ?? null);
+        setJobSourceRef(shaped.sourceRef ?? null);
+        void loadPipelineStages(jobId, shaped.source ?? null, shaped.sourceRef ?? null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setJobSource(null);
+        setJobSourceRef(null);
+        setPipelineStages([]);
+        setPipelineStagesError(null);
+      });
+
+    api.settings.get()
+      .then((s) => {
+        if (!cancelled && s.recruitee_platform_actor_label) {
+          setPlatformActor(s.recruitee_platform_actor_label);
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [jobId, loadPipelineStages]);
+
+  // Overlay each candidate's live Recruitee state (current stage / disqualified)
+  // so the page reflects the ATS instead of only the last Caliper decision.
+  React.useEffect(() => {
+    const linked = jobSource === 'recruitee' && Boolean(jobSourceRef);
+    if (!linked || !jobSourceRef) {
+      setRecruiteeStateById(new Map());
+      return;
+    }
+    let cancelled = false;
+    const sourceRef = jobSourceRef;
+
+    const buildMap = (applicants: Array<Record<string, unknown>>) => {
+      const map = new Map();
+      for (const applicant of applicants ?? []) {
+        if (applicant?.id == null) continue;
+        map.set(String(applicant.id), {
+          disqualified: Boolean(applicant.disqualified),
+          stageId: (applicant.stage_id as string | null) ?? null,
+          stageName: (applicant.stage_name as string | null) ?? null,
+          disqualifyReason: (applicant.disqualify_reason as string | null) ?? null,
+        });
+      }
+      return map;
+    };
+
+    const cached = getCachedApplicants(sourceRef);
+    if (cached) setRecruiteeStateById(buildMap(cached.applicants));
+
+    loadRecruiteeApplicants(sourceRef, { force: true })
+      .then((data) => {
+        if (!cancelled) setRecruiteeStateById(buildMap(data.applicants));
+      })
+      .catch(() => {
+        if (!cancelled && !cached) setRecruiteeStateById(new Map());
+      });
+
+    return () => { cancelled = true; };
+  }, [jobSource, jobSourceRef]);
 
   const openShareMenu = () => {
     setShareOpen(true);
@@ -192,6 +524,215 @@ function ResultsPage({ tweaks, route, go }) {
     setSelected(candidateId);
   };
 
+  const updateCandidateInRun = (updated, scoreRange) => {
+    setRun((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        score_range: scoreRange ?? prev.score_range,
+        candidates: (prev.candidates ?? []).map((c) =>
+          c.id === updated.id ? { ...c, ...updated } : c
+        ),
+      };
+    });
+  };
+
+  // Reflect a synced Caliper action on the live Recruitee overlay immediately,
+  // so a just-disqualified/moved candidate updates without waiting on the cache.
+  const applyLiveRecruiteeOverlay = (candidateIds: string[], body: SetDispositionBody) => {
+    if (body.disposition === 'hold') return; // Caliper-only; no Recruitee state change
+    const list = run?.candidates ?? [];
+    const updates = new Map<string, {
+      disqualified: boolean;
+      stageId: string | null;
+      stageName: string | null;
+      disqualifyReason: string | null;
+    }>();
+    for (const cand of list) {
+      if (!candidateIds.includes(cand.id)) continue;
+      const applicantId = cand.recruitee_applicant_id ?? cand.recruiteeApplicantId ?? null;
+      if (!applicantId) continue;
+      const prior = recruiteeStateById.get(String(applicantId)) ?? null;
+      if (body.disposition === 'reject') {
+        updates.set(String(applicantId), {
+          disqualified: true,
+          stageId: prior?.stageId ?? null,
+          stageName: prior?.stageName ?? null,
+          disqualifyReason: prior?.disqualifyReason ?? null,
+        });
+      } else if (body.target_stage_id) {
+        const requalifying = Boolean(body.requalify);
+        updates.set(String(applicantId), {
+          disqualified: requalifying ? false : (prior?.disqualified ?? false),
+          stageId: String(body.target_stage_id),
+          stageName: body.target_stage_name ?? null,
+          disqualifyReason: requalifying ? null : (prior?.disqualifyReason ?? null),
+        });
+      }
+    }
+    if (updates.size === 0) return;
+    setRecruiteeStateById((prev) => {
+      const next = new Map(prev);
+      for (const [key, value] of updates) next.set(key, value);
+      return next;
+    });
+    invalidateApplicants(jobSourceRef);
+  };
+
+  const applyDisposition = async (
+    candidateIds: string[],
+    body: SetDispositionBody,
+    pushToRecruitee = false,
+  ) => {
+    if (!runId || candidateIds.length === 0) return;
+    setDispositionBusy(true);
+    setDispositionError(null);
+    setDispositionSuccess(null);
+    try {
+      const payload = { ...body, push_to_recruitee: pushToRecruitee };
+      if (candidateIds.length === 1) {
+        const res = await api.runs.setDisposition(runId, candidateIds[0], payload);
+        updateCandidateInRun(res.candidate, run?.score_range ?? null);
+        const baseLabel = dispositionSuccessLabel(body, res.candidate.name, jobSource === 'recruitee');
+        if (pushToRecruitee && res.sync_status === 'failed') {
+          setDispositionError(
+            `Saved in Caliper, but Recruitee sync failed: ${res.sync_error ?? 'unknown error'}`,
+          );
+        } else if (pushToRecruitee && res.sync_status === 'synced') {
+          applyLiveRecruiteeOverlay(candidateIds, body);
+          setDispositionSuccess(`${baseLabel} Pushed to Recruitee.`);
+        } else {
+          setDispositionSuccess(baseLabel);
+        }
+      } else {
+        const res = await api.runs.bulkDisposition(runId, {
+          ...payload,
+          candidate_ids: candidateIds,
+        });
+        setRun((prev) => {
+          if (!prev) return prev;
+          const byId = new Map(res.candidates.map((c) => [c.id, c]));
+          return {
+            ...prev,
+            candidates: (prev.candidates ?? []).map((c) =>
+              byId.has(c.id) ? { ...c, ...byId.get(c.id) } : c
+            ),
+          };
+        });
+        const failedSync = pushToRecruitee
+          ? res.candidates.filter((c) => c.recruitee_sync_status === 'failed')
+          : [];
+        const movedLabel = body.requalify && body.target_stage_name
+          ? `Re-qualified ${res.updated_count} candidate${res.updated_count === 1 ? '' : 's'} to ${body.target_stage_name}`
+          : body.target_stage_name
+            ? `Moved ${res.updated_count} candidate${res.updated_count === 1 ? '' : 's'} to ${body.target_stage_name}`
+            : `Marked ${res.updated_count} candidate${res.updated_count === 1 ? '' : 's'} as ${DISPOSITION_LABELS[body.disposition] ?? body.disposition}`;
+        if (res.errors?.length) {
+          setDispositionError(
+            `Updated ${res.updated_count} of ${candidateIds.length}. ${res.errors[0]?.error ?? 'Some updates failed.'}`,
+          );
+        } else if (failedSync.length) {
+          setDispositionError(
+            `${movedLabel} in Caliper, but ${failedSync.length} failed to sync to Recruitee: ${failedSync[0]?.recruitee_sync_error ?? 'unknown error'}`,
+          );
+        } else {
+          if (pushToRecruitee) {
+            const syncedIds = res.candidates
+              .filter((c) => c.recruitee_sync_status === 'synced')
+              .map((c) => c.id);
+            applyLiveRecruiteeOverlay(syncedIds.length ? syncedIds : candidateIds, body);
+          }
+          setDispositionSuccess(
+            `${movedLabel}${pushToRecruitee ? ' and pushed to Recruitee' : ''}.`,
+          );
+        }
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not save pipeline decision';
+      setDispositionError(message);
+    } finally {
+      setDispositionBusy(false);
+      setPushModal(null);
+    }
+  };
+
+  const guardDispositionSelection = (
+    candidateIds: string[],
+    disposition: CandidateDisposition,
+    options?: { targetStageId?: string; targetStageName?: string; push?: boolean; requalify?: boolean },
+  ) => {
+    if (candidateIds.length === 0) {
+      const hint = useRecruiteePipeline
+        ? 'Select at least one candidate using the checkboxes, or use the pipeline menu in the Decision column.'
+        : 'Select at least one candidate using the checkboxes in the table, or use the links in the Decision column.';
+      setDispositionError(hint);
+      setDispositionSuccess(null);
+      return;
+    }
+    requestDisposition(candidateIds, disposition, options);
+  };
+
+  const moveToStage = (
+    candidateIds: string[],
+    stage: RecruiteePipelineStage,
+    push?: boolean,
+  ) => {
+    const list = run?.candidates ?? [];
+    const requalify = selectionNeedsRequalify(candidateIds, list, recruiteeStateById);
+    guardDispositionSelection(candidateIds, 'advanced', {
+      targetStageId: stage.id,
+      targetStageName: stage.name,
+      push: push ?? useRecruiteePipeline,
+      requalify,
+    });
+  };
+
+  const requestDisposition = (
+    candidateIds: string[],
+    disposition: CandidateDisposition,
+    options?: { targetStageId?: string; targetStageName?: string; push?: boolean; requalify?: boolean },
+  ) => {
+    const body: SetDispositionBody = {
+      disposition,
+      ...(options?.targetStageId ? { target_stage_id: options.targetStageId } : {}),
+      ...(options?.targetStageName ? { target_stage_name: options.targetStageName } : {}),
+      ...(options?.requalify ? { requalify: true } : {}),
+    };
+    const recruiteeLinked = isRecruiteeJob
+      && candidates.some(
+        (c) => candidateIds.includes(c.id) && c.recruitee_applicant_id,
+      );
+    // Pipeline-mode actions (stage move / disqualify) push by default; hold never syncs.
+    const wantsPush = options?.push ?? useRecruiteePipeline;
+
+    if (wantsPush && recruiteeLinked && disposition !== 'hold') {
+      setPushModal({
+        disposition,
+        candidateIds,
+        targetStageId: options?.targetStageId,
+        targetStageName: options?.targetStageName,
+        requalify: options?.requalify,
+      });
+      return;
+    }
+
+    void applyDisposition(candidateIds, body, false);
+  };
+
+  const confirmPushModal = () => {
+    if (!pushModal) return;
+    void applyDisposition(
+      pushModal.candidateIds,
+      {
+        disposition: pushModal.disposition,
+        ...(pushModal.targetStageId ? { target_stage_id: pushModal.targetStageId } : {}),
+        ...(pushModal.targetStageName ? { target_stage_name: pushModal.targetStageName } : {}),
+        ...(pushModal.requalify ? { requalify: true } : {}),
+      },
+      true,
+    );
+  };
+
   if (!runId) return null;
   if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading results…</div></div>;
   if (error) return <div className="page"><div style={{ color: 'var(--bad)', padding: 32 }}>{error}</div></div>;
@@ -199,21 +740,41 @@ function ResultsPage({ tweaks, route, go }) {
 
   const candidates = run.candidates ?? [];
 
-  const rows = candidates
+  const filteredRows = candidates
     .filter((c) => matchesStatusFilter(c, filterStatus))
-    .slice()
-    .sort((a, b) =>
-      sortBy === 'confidence'
-        ? confOrder(b.confidence) - confOrder(a.confidence)
-        : (b.score ?? 0) - (a.score ?? 0)
-    );
+    .filter((c) => matchesDispositionFilter(c, filterDisposition))
+    .filter((c) => {
+      if (recruiteeQual === 'all') return true;
+      const state = recruiteeStateFor(c, recruiteeStateById);
+      if (recruiteeQual === 'disqualified') return Boolean(state?.disqualified);
+      return Boolean(state) && !state.disqualified;
+    });
+  const rows = sortCandidates(filteredRows, sortState, recruiteeStateById);
 
   const nStrong = candidates.filter((c) => c.status === 'strong').length;
   const nPromising = candidates.filter((c) => c.status === 'promising').length;
   const nReviewOrFlag = candidates.filter((c) => c.status === 'review' || c.status === 'flagged').length;
+  const nShortlisted = candidates.filter((c) => c.disposition === 'shortlist').length;
+  const nOnHold = candidates.filter((c) => c.disposition === 'hold').length;
+  const nRejected = candidates.filter((c) => c.disposition === 'reject').length;
+  const nUndecided = candidates.filter((c) => !c.disposition).length;
+  const isRecruiteeJob = jobSource === 'recruitee' && Boolean(jobSourceRef);
+  const hasRecruiteeCandidates = candidates.some((c) => c.recruitee_applicant_id);
+  const useRecruiteePipeline = isRecruiteeJob && pipelineStages.length > 0;
+  const recruiteeDisqualifiedCount = candidates.filter(
+    (c) => candidateShowsDisqualified(c, recruiteeStateById, useRecruiteePipeline),
+  ).length;
+  const recruiteeQualifiedCount = candidates.filter((c) => {
+    const state = recruiteeStateFor(c, recruiteeStateById);
+    return Boolean(state) && !state.disqualified;
+  }).length;
+  const pipelineStageGroups = useRecruiteePipeline ? groupPipelineStages(pipelineStages) : [];
+  const canPushRecruitee = isRecruiteeJob;
   const meanConfPct = candidates.length
     ? Math.round((candidates.reduce((s, c) => s + confOrder(c.confidence), 0) / candidates.length / 3) * 100)
     : 0;
+
+  const bulkNeedsRequalify = selectionNeedsRequalify(compareSelection, candidates, recruiteeStateById);
 
   const toggleStatFilter = (status) => {
     setFilterStatus((prev) => (prev === status ? 'all' : status));
@@ -238,7 +799,7 @@ function ResultsPage({ tweaks, route, go }) {
       <div className="row" style={{ marginBottom: 16, justifyContent: 'flex-end', gap: 8 }}>
         <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
         <Btn variant="ghost" icon="download" size="sm" onClick={exportCsv} disabled={run.status === 'in_progress'}>Export CSV</Btn>
-        <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: run.job_id })}>Re-run</Btn>
+        <Btn variant="default" icon="copy" onClick={() => go && go('profiles', { job: jobId })}>Re-run</Btn>
       </div>
 
       <div style={{ marginBottom: 18 }}>
@@ -337,12 +898,7 @@ function ResultsPage({ tweaks, route, go }) {
         <span className="mono muted" style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Ranked list</span>
         <div className="spacer"/>
         <div className="row" style={{ gap: 8 }}>
-          <span className="mono muted" style={{ fontSize: 11 }}>Sort</span>
-          <Segmented value={sortBy} onChange={setSortBy} options={[
-            { value: 'score', label: 'Score' },
-            { value: 'confidence', label: 'Confidence' },
-          ]}/>
-          <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>Status</span>
+          <span className="mono muted" style={{ fontSize: 11 }}>Status</span>
           <select className="sel" style={{ height: 30, padding: '0 10px', fontSize: 12 }}
                   value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
             <option value="all">All</option>
@@ -352,14 +908,151 @@ function ResultsPage({ tweaks, route, go }) {
             <option value="review">Review manually</option>
             <option value="flagged">Flagged</option>
           </select>
+          <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>
+            {useRecruiteePipeline ? 'Pipeline' : 'Decision'}
+          </span>
+          <select className="sel" style={{ height: 30, padding: '0 10px', fontSize: 12, maxWidth: 200 }}
+                  value={filterDisposition} onChange={(e) => setFilterDisposition(e.target.value)}>
+            <option value="all">All</option>
+            <option value="undecided">Undecided</option>
+            {useRecruiteePipeline ? (
+              <>
+                {pipelineStageGroups.map((group) => (
+                  <optgroup key={group.category} label={group.label}>
+                    {group.stages.map((stage) => (
+                      <option key={stage.id} value={`stage:${stage.id}`}>
+                        {stage.name} ({countCandidatesByStage(candidates, stage.id)})
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <option value="reject">Disqualified ({nRejected})</option>
+                <option value="hold">On hold · Caliper ({nOnHold})</option>
+              </>
+            ) : (
+              <>
+                <option value="shortlist">Shortlisted</option>
+                <option value="hold">On hold</option>
+                <option value="reject">Rejected</option>
+                <option value="advanced">Advanced</option>
+              </>
+            )}
+          </select>
+          {isRecruiteeJob && (
+            <>
+              <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>Recruitee</span>
+              <select className="sel" style={{ height: 30, padding: '0 10px', fontSize: 12 }}
+                      value={recruiteeQual} onChange={(e) => setRecruiteeQual(e.target.value as typeof recruiteeQual)}>
+                <option value="all">All</option>
+                <option value="qualified">Qualified ({recruiteeQualifiedCount})</option>
+                <option value="disqualified">Disqualified ({recruiteeDisqualifiedCount})</option>
+              </select>
+            </>
+          )}
         </div>
       </div>
+
+      {run.status !== 'in_progress' && (
+        <div className="pipeline-decisions-panel card">
+          {isRecruiteeJob && !useRecruiteePipeline && (
+            <div className="pipeline-decisions-panel__alert">
+              <div className="pipeline-decisions-panel__alert-text">
+                {pipelineStagesLoading
+                  ? 'Loading this job\'s Recruitee pipeline stages…'
+                  : pipelineStagesError
+                    ?? 'Recruitee pipeline stages could not be loaded for this job.'}
+              </div>
+              {!pipelineStagesLoading && jobId && (
+                <Btn
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => loadPipelineStages(jobId, jobSource, jobSourceRef)}
+                >
+                  Retry
+                </Btn>
+              )}
+            </div>
+          )}
+          {!isRecruiteeJob && hasRecruiteeCandidates && (
+            <div className="pipeline-decisions-panel__alert pipeline-decisions-panel__alert--info">
+              These candidates came from Recruitee, but this job is not linked to a Recruitee role.
+              Sync or import the job from Recruitee in <strong>Jobs</strong> to use its real pipeline stages here.
+            </div>
+          )}
+
+          <div className="pipeline-decisions-panel__header">
+            <div className="pipeline-decisions-panel__intro">
+              <span className="pipeline-decisions-panel__label">
+                {useRecruiteePipeline ? 'Recruitee pipeline' : 'Pipeline decisions'}
+              </span>
+              {useRecruiteePipeline && isRecruiteeJob && (
+                <span className="pipeline-decisions-panel__counts">
+                  {recruiteeQualifiedCount} qualified · {recruiteeDisqualifiedCount} disqualified
+                </span>
+              )}
+              <p className="pipeline-decisions-panel__hint">
+                {canEdit
+                  ? useRecruiteePipeline
+                    ? compareSelection.length > 0
+                      ? bulkNeedsRequalify
+                        ? 'Selected candidates are disqualified — pick a stage to re-qualify them in Recruitee.'
+                        : `Move ${compareSelection.length} selected candidate${compareSelection.length === 1 ? '' : 's'} to a stage.`
+                      : 'Use Move to… per row, or select rows for bulk stage moves. Disqualified candidates can be re-qualified via Re-qualify to….'
+                    : 'Record who you shortlisted, held, or rejected after AI review.'
+                  : useRecruiteePipeline
+                    ? 'Pipeline status reflects each candidate\'s live Recruitee state.'
+                    : 'Editors can set pipeline decisions on this run.'}
+              </p>
+            </div>
+          </div>
+
+          {canEdit && compareSelection.length > 0 && (
+            <div className="pipeline-decisions-panel__bulk">
+              <span className="pipeline-decisions-panel__bulk-label">
+                {bulkNeedsRequalify ? 'Re-qualify selected to' : 'Move selected to'}
+              </span>
+              {useRecruiteePipeline ? (
+                <PipelineStageActions
+                  stages={pipelineStages}
+                  disabled={dispositionBusy}
+                  onStage={(stage) => moveToStage(compareSelection, stage)}
+                  onHold={() => guardDispositionSelection(compareSelection, 'hold')}
+                  onDisqualify={() => guardDispositionSelection(compareSelection, 'reject')}
+                />
+              ) : (
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => guardDispositionSelection(compareSelection, 'shortlist')}>Shortlist</Btn>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => guardDispositionSelection(compareSelection, 'hold')}>Hold</Btn>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => guardDispositionSelection(compareSelection, 'reject')}>Reject</Btn>
+                  {canPushRecruitee && (
+                    <Btn size="sm" variant="default" disabled={dispositionBusy}
+                         onClick={() => guardDispositionSelection(compareSelection, 'shortlist', { push: true })}>
+                      Shortlist + push
+                    </Btn>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {(dispositionError || dispositionSuccess) && (
+            <div className={`pipeline-decisions-panel__feedback${dispositionError ? ' pipeline-decisions-panel__feedback--error' : ''}`}>
+              {dispositionError ?? dispositionSuccess}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="row" style={{ marginBottom: 10, gap: 8, alignItems: 'center' }}>
         <span className="muted" style={{ fontSize: 12 }}>
           {compareSelection.length === 0
-            ? 'Select 2–4 candidates to compare'
-            : `${compareSelection.length} selected for compare${compareSelection.length >= MAX_COMPARE ? ' (max)' : ''}`}
+            ? useRecruiteePipeline
+              ? 'Check rows for bulk pipeline moves, or use Move to… in the Pipeline column'
+              : 'Check rows for bulk actions, or use Shortlist/Hold/Reject in the Decision column'
+            : `${compareSelection.length} selected${compareSelection.length >= MAX_COMPARE ? ' (max)' : ''}`}
         </span>
         <div className="spacer"/>
         <Btn
@@ -380,6 +1073,36 @@ function ResultsPage({ tweaks, route, go }) {
         compareSelection={compareSelection}
         maxCompare={MAX_COMPARE}
         onToggleCompare={toggleCompareSelect}
+        canEdit={canEdit && run.status !== 'in_progress'}
+        onDisposition={requestDisposition}
+        onMoveToStage={moveToStage}
+        useRecruiteePipeline={useRecruiteePipeline}
+        pipelineStages={pipelineStages}
+        canPushRecruitee={canPushRecruitee}
+        dispositionBusy={dispositionBusy}
+        recruiteeStateById={recruiteeStateById}
+        sortState={sortState}
+        onSort={(key) => setSortState((prev) => cycleTableSort(prev, key) ?? { key, dir: 'desc' })}
+      />
+
+      <PushRecruiteeModal
+        open={Boolean(pushModal)}
+        platformActor={platformActor}
+        userName={displayName ?? user?.email ?? 'You'}
+        dispositionLabel={
+          pushModal
+            ? (pushModal.requalify && pushModal.targetStageName
+              ? `Re-qualify to ${pushModal.targetStageName}`
+              : pushModal.targetStageName
+                ?? (pushModal.disposition === 'reject' && useRecruiteePipeline
+                  ? 'Disqualify'
+                  : DISPOSITION_LABELS[pushModal.disposition]))
+            : ''
+        }
+        candidateCount={pushModal?.candidateIds.length ?? 1}
+        loading={dispositionBusy}
+        onCancel={() => setPushModal(null)}
+        onConfirm={confirmPushModal}
       />
 
       <CandidateCompareSheet
@@ -399,18 +1122,27 @@ function ResultsPage({ tweaks, route, go }) {
           allCandidates={candidates}
           onClose={() => setSelected(null)}
           onCandidateChange={setSelected}
-          onCandidateUpdated={(updated, scoreRange) => {
-            setRun((prev) => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                score_range: scoreRange ?? prev.score_range,
-                candidates: (prev.candidates ?? []).map((c) =>
-                  c.id === updated.id ? { ...c, ...updated } : c
-                ),
-              };
+          onCandidateUpdated={updateCandidateInRun}
+          canEdit={canEdit}
+          onDisposition={requestDisposition}
+          onMoveToStage={moveToStage}
+          useRecruiteePipeline={useRecruiteePipeline}
+          pipelineStages={pipelineStages}
+          canPushRecruitee={canPushRecruitee}
+          recruiteeState={recruiteeStateFor({ recruitee_applicant_id: candidates.find((c) => c.id === selected)?.recruitee_applicant_id }, recruiteeStateById)}
+          onPushRecruitee={(candidateId) => {
+            void api.runs.pushRecruitee(run.id, candidateId).then((res) => {
+              updateCandidateInRun(res.candidate, run.score_range ?? null);
+              if (res.candidate?.recruitee_sync_status !== 'failed' && res.candidate?.disposition) {
+                applyLiveRecruiteeOverlay([candidateId], {
+                  disposition: res.candidate.disposition,
+                  target_stage_id: res.candidate.target_stage_id,
+                  target_stage_name: res.candidate.target_stage_name,
+                });
+              }
             });
           }}
+          dispositionBusy={dispositionBusy}
           tweaks={tweaks}
           go={go}
         />
@@ -453,24 +1185,49 @@ const StatCell = ({ label, value, sub, tone, clickable, active, onClick }) => {
   );
 };
 
-function RankedList({ rows, onOpen, tweaks, compareSelection = [], maxCompare = 4, onToggleCompare }) {
+function RankedList({
+  rows,
+  onOpen,
+  tweaks,
+  compareSelection = [],
+  maxCompare = 4,
+  onToggleCompare,
+  canEdit = false,
+  onDisposition,
+  onMoveToStage,
+  useRecruiteePipeline = false,
+  pipelineStages = [],
+  canPushRecruitee = false,
+  dispositionBusy = false,
+  recruiteeStateById,
+  sortState,
+  onSort,
+}) {
   if (rows.length === 0) {
     return <div className="card"><div className="muted" style={{ textAlign: 'center', padding: 32 }}>No candidates yet.</div></div>;
   }
   const atMax = compareSelection.length >= maxCompare;
   return (
     <div className="card">
+      <div className="tbl-wrap">
       <table className="tbl">
         <thead>
           <tr>
             <th className="compare-select-cell" style={{ width: 36 }} aria-label="Compare selection"/>
             <th style={{ width: 36 }}/>
-            <th style={{ width: 56 }}>Rank</th>
-            <th>Candidate</th>
-            <th style={{ width: 88 }}>% met</th>
-            <th style={{ width: 200 }}>Score</th>
-            <th style={{ width: 100 }}>Confidence</th>
-            <th style={{ width: 160 }}>Status</th>
+            <ResultsSortableTh label="Rank" sortKey="rank" sortState={sortState} onSort={onSort} style={{ width: 56 }}/>
+            <ResultsSortableTh label="Candidate" sortKey="candidate" sortState={sortState} onSort={onSort}/>
+            <ResultsSortableTh label="% met" sortKey="pct_met" sortState={sortState} onSort={onSort} style={{ width: 88 }} className="col-num"/>
+            <ResultsSortableTh label="Score" sortKey="score" sortState={sortState} onSort={onSort} style={{ width: 200 }}/>
+            <ResultsSortableTh label="Confidence" sortKey="confidence" sortState={sortState} onSort={onSort} style={{ width: 100 }}/>
+            <ResultsSortableTh label="Status" sortKey="status" sortState={sortState} onSort={onSort} style={{ width: 160 }}/>
+            <ResultsSortableTh
+              label={useRecruiteePipeline ? 'Pipeline' : 'Decision'}
+              sortKey="pipeline"
+              sortState={sortState}
+              onSort={onSort}
+              style={{ width: 160 }}
+            />
             <th style={{ width: 36 }}/>
           </tr>
         </thead>
@@ -479,6 +1236,8 @@ function RankedList({ rows, onOpen, tweaks, compareSelection = [], maxCompare = 
             const m = candidateMetrics(c);
             const isCompareSelected = compareSelection.includes(c.id);
             const compareDisabled = !isCompareSelected && atMax;
+            const rState = recruiteeStateFor(c, recruiteeStateById);
+            const isDisqualified = candidateShowsDisqualified(c, recruiteeStateById, useRecruiteePipeline);
             return (
             <tr
               key={c.id}
@@ -524,17 +1283,84 @@ function RankedList({ rows, onOpen, tweaks, compareSelection = [], maxCompare = 
               </td>
               <td><Confidence level={c.confidence}/></td>
               <td><StatusBadge s={c.status}/></td>
+              <td onClick={(e) => e.stopPropagation()}>
+                <div className="decision-cell">
+                  {rState ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <RecruiteeStatusBadge state={rState} compact />
+                      {c.disposition && c.recruitee_sync_status === 'failed' && (
+                        <span className="disposition-badge-wrap__sync-failed" title="Last Caliper push to Recruitee failed">!</span>
+                      )}
+                    </span>
+                  ) : isDisqualified ? (
+                    <Badge tone="bad" dot>Disqualified</Badge>
+                  ) : (
+                    <DispositionBadge
+                      disposition={c.disposition}
+                      targetStageName={c.target_stage_name}
+                      syncStatus={c.recruitee_sync_status}
+                      compact
+                      recruiteePipeline={useRecruiteePipeline}
+                    />
+                  )}
+                  {!c.disposition && !rState && !isDisqualified && (
+                    <span className="muted" style={{ fontSize: 11 }}>Undecided</span>
+                  )}
+                  {canEdit && (
+                    useRecruiteePipeline && pipelineStages.length > 0 ? (
+                      <PipelineStageActions
+                        compact
+                        stages={pipelineStages}
+                        disabled={dispositionBusy}
+                        onStage={(stage) => onMoveToStage?.([c.id], stage)}
+                        onDisqualify={isDisqualified ? undefined : () => onDisposition?.([c.id], 'reject')}
+                        showHold={false}
+                        showDisqualify={!isDisqualified}
+                        moveLabel={isDisqualified ? 'Re-qualify to…' : 'Move to…'}
+                      />
+                    ) : (
+                      <div className="decision-cell__actions">
+                        <button type="button" disabled={dispositionBusy}
+                                onClick={() => onDisposition?.([c.id], 'shortlist')}>Shortlist</button>
+                        <button type="button" disabled={dispositionBusy}
+                                onClick={() => onDisposition?.([c.id], 'hold')}>Hold</button>
+                        <button type="button" disabled={dispositionBusy}
+                                onClick={() => onDisposition?.([c.id], 'reject')}>Reject</button>
+                      </div>
+                    )
+                  )}
+                </div>
+              </td>
               <td><Icon name="chevron-right" size={14} className="muted"/></td>
             </tr>
             );
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
 
-function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandidateChange, onCandidateUpdated, tweaks, go }) {
+function CandidateDetail({
+  candidateId,
+  runId,
+  allCandidates,
+  onClose,
+  onCandidateChange,
+  onCandidateUpdated,
+  tweaks,
+  go,
+  canEdit = false,
+  onDisposition,
+  onMoveToStage,
+  useRecruiteePipeline = false,
+  pipelineStages = [],
+  canPushRecruitee = false,
+  recruiteeState = null,
+  onPushRecruitee,
+  dispositionBusy = false,
+}) {
   const [evalData, setEvalData] = React.useState<CandidateEvaluationResponse | null>(null);
   const [evalLoading, setEvalLoading] = React.useState(true);
   const [decisions, setDecisions] = React.useState<Record<string, 'agree' | 'override' | null>>({});
@@ -647,6 +1473,21 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
               <ScoreDeductionBreakdown candidate={candidate}/>
             </div>
             <StatusBadge s={candidate.status}/>
+            {recruiteeState ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <RecruiteeStatusBadge state={recruiteeState} />
+                {candidate.disposition && candidate.recruitee_sync_status === 'failed' && (
+                  <span className="disposition-badge-wrap__sync-failed" title="Last Caliper push to Recruitee failed">!</span>
+                )}
+              </span>
+            ) : (
+              <DispositionBadge
+                disposition={candidate.disposition}
+                targetStageName={candidate.target_stage_name}
+                syncStatus={candidate.recruitee_sync_status}
+                recruiteePipeline={useRecruiteePipeline}
+              />
+            )}
             <Confidence level={candidate.confidence}/>
             <IconBtn name="x" size={16} onClick={onClose}/>
           </div>
@@ -670,6 +1511,24 @@ function CandidateDetail({ candidateId, runId, allCandidates, onClose, onCandida
               if (typeof go === 'function') go('results', targetRunId);
             }}
           />
+
+          {canEdit && !useRecruiteePipeline && (
+            <div className="disposition-actions" style={{ padding: '12px 22px', borderBottom: '1px solid var(--line)' }}>
+              <div className="col" style={{ gap: 10 }}>
+                <span className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Pipeline decision
+                </span>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => onDisposition?.([candidateId], 'shortlist')}>Shortlist</Btn>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => onDisposition?.([candidateId], 'hold')}>Hold</Btn>
+                  <Btn size="sm" variant="ghost" disabled={dispositionBusy}
+                       onClick={() => onDisposition?.([candidateId], 'reject')}>Reject</Btn>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

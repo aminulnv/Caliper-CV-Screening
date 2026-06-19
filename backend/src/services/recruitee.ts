@@ -208,6 +208,7 @@ function normalizeOffers(data: unknown): OfferRow[] {
 }
 
 type PlacementRow = {
+  id?: number | string;
   offer_id?: number | string;
   stage_id?: number | string;
   stage_name?: string;
@@ -270,28 +271,32 @@ function placementForOffer(
   return candidate.placements?.find((p) => p.offer_id != null && String(p.offer_id) === target);
 }
 
-async function fetchOfferPipeline(
-  apiRoot: string,
+export async function fetchOfferPipeline(
+  baseUrl: string,
   apiKey: string,
   offerId: string,
 ): Promise<RecruiteePipelineStage[]> {
-  try {
-    const data = (await recruiteeGet(apiRoot, apiKey, `/offers/${offerId}`)) as {
-      offer?: { pipeline_template?: { stages?: PipelineStageRow[] } };
-    };
-    const stages = data.offer?.pipeline_template?.stages ?? [];
-    return stages
-      .filter((stage) => stage.id != null && stage.name)
-      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-      .map((stage, index) => ({
-        id: String(stage.id),
-        name: stage.name!,
-        category: stage.group ?? stage.category ?? null,
-        position: stage.position ?? index,
-      }));
-  } catch {
-    return [];
-  }
+  const { apiRoot } = parseRecruiteeConfig(baseUrl);
+  const data = (await recruiteeGet(apiRoot, apiKey, `/offers/${offerId}`)) as Record<string, unknown>;
+  const offer = (data.offer ?? data) as {
+    pipeline_template?: { stages?: PipelineStageRow[] };
+    pipeline?: { stages?: PipelineStageRow[] };
+    stages?: PipelineStageRow[];
+  };
+  const stages =
+    offer.pipeline_template?.stages
+    ?? offer.pipeline?.stages
+    ?? offer.stages
+    ?? [];
+  return stages
+    .filter((stage) => stage.id != null && stage.name)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((stage, index) => ({
+      id: String(stage.id),
+      name: stage.name!,
+      category: stage.group ?? stage.category ?? null,
+      position: stage.position ?? index,
+    }));
 }
 
 /** Stage id → name map derived from the ordered pipeline definition. */
@@ -485,6 +490,7 @@ function mapCandidateToApplicant(
 
   return {
     id: String(candidate.id),
+    placement_id: placement?.id != null ? String(placement.id) : null,
     name: candidate.name!,
     email: pickPrimaryEmail(candidate.emails),
     location: resolveCandidateLocation(candidate, offerId, locationById),
@@ -547,7 +553,7 @@ export async function fetchRecruiteeApplicants(
   const candidateRoot = candidatesApiRoot(numericCompanyId);
 
   const [pipelineStages, locationById, offerMeta, disqualifiedRaw, qualifiedRaw] = await Promise.all([
-    fetchOfferPipeline(slugApiRoot, apiKey, jobId),
+    fetchOfferPipeline(baseUrl, apiKey, jobId),
     fetchLocationMap([slugApiRoot, candidateRoot], apiKey),
     fetchOfferMeta(slugApiRoot, apiKey, jobId),
     fetchCandidatesForOffer(candidateRoot, apiKey, jobId, {
@@ -629,6 +635,40 @@ export async function fetchRecruiteeCandidateCv(
   const buffer = await downloadRecruiteeCV(cvUrl, apiKey);
   const baseName = (detail.name ?? 'candidate').replace(/[^\w\s.-]/g, '').trim() || 'candidate';
   return { buffer, filename: `${baseName}.pdf` };
+}
+
+/** Resolve Recruitee placement id for a candidate on a specific offer/job. */
+export async function fetchRecruiteePlacementIdForOffer(
+  baseUrl: string,
+  apiKey: string,
+  candidateId: string,
+  offerId: string,
+): Promise<string | null> {
+  const candidateRoot = candidatesApiRoot(await resolveNumericCompanyId(baseUrl, apiKey));
+  const data = (await recruiteeGet(candidateRoot, apiKey, `/candidates/${candidateId}`)) as {
+    candidate?: CandidateRow;
+  };
+  const placement = placementForOffer(data.candidate ?? {}, offerId);
+  return placement?.id != null ? String(placement.id) : null;
+}
+
+/** First disqualify reason (Recruitee requires a reason id to disqualify via the API). */
+export async function fetchDefaultDisqualifyReasonId(
+  baseUrl: string,
+  apiKey: string,
+): Promise<string | null> {
+  const apiRoot = candidatesApiRoot(await resolveNumericCompanyId(baseUrl, apiKey));
+  try {
+    const data = (await recruiteeGet(apiRoot, apiKey, '/disqualify_reasons')) as {
+      disqualify_reasons?: Array<{ id?: number; position?: number }>;
+    };
+    const reasons = (data.disqualify_reasons ?? []).filter((r) => r.id != null);
+    if (reasons.length === 0) return null;
+    reasons.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    return String(reasons[0].id);
+  } catch {
+    return null;
+  }
 }
 
 function isPresignedS3Url(parsed: URL): boolean {

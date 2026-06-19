@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { anthropicUsage, openaiChatUsage } from '../lib/token-usage.js';
+import type { TokenUsage } from './ai-usage.js';
 import type { WorkspaceKeys } from './model-router.js';
 import { inferSeniorityBand, mergeSeniorityBand } from './seniority-match.js';
 
@@ -229,7 +231,12 @@ export function buildLinkedInSearchQuery(params: DiscoverySearchParams): string 
   return buildLinkedInSearchQueryList(params)[0];
 }
 
-async function extractClaude(input: ExtractDiscoveryParamsInput, apiKey: string): Promise<DiscoverySearchParams> {
+export interface DiscoveryParamsResponse {
+  params: DiscoverySearchParams;
+  usage: TokenUsage;
+}
+
+async function extractClaude(input: ExtractDiscoveryParamsInput, apiKey: string): Promise<DiscoveryParamsResponse> {
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: input.modelId,
@@ -238,10 +245,13 @@ async function extractClaude(input: ExtractDiscoveryParamsInput, apiKey: string)
     messages: [{ role: 'user', content: buildUserMessage(input) }],
   });
   const raw = response.content[0].type === 'text' ? response.content[0].text : '';
-  return parseDiscoveryParams(raw, input.jobTitle, input.jobDescription);
+  return {
+    params: parseDiscoveryParams(raw, input.jobTitle, input.jobDescription),
+    usage: anthropicUsage(input.modelId, response),
+  };
 }
 
-async function extractOpenAI(input: ExtractDiscoveryParamsInput, apiKey: string): Promise<DiscoverySearchParams> {
+async function extractOpenAI(input: ExtractDiscoveryParamsInput, apiKey: string): Promise<DiscoveryParamsResponse> {
   const client = new OpenAI({ apiKey });
   const response = await client.chat.completions.create({
     model: input.modelId,
@@ -253,12 +263,15 @@ async function extractOpenAI(input: ExtractDiscoveryParamsInput, apiKey: string)
     ],
   });
   const raw = response.choices[0]?.message?.content ?? '';
-  return parseDiscoveryParams(raw, input.jobTitle, input.jobDescription);
+  return {
+    params: parseDiscoveryParams(raw, input.jobTitle, input.jobDescription),
+    usage: openaiChatUsage(input.modelId, response),
+  };
 }
 
 export async function extractDiscoveryParams(
   input: ExtractDiscoveryParamsInput,
-): Promise<DiscoverySearchParams> {
+): Promise<DiscoveryParamsResponse> {
   if (input.modelId.startsWith('claude-')) {
     if (!input.keys.anthropic) throw new Error('Anthropic API key not configured');
     return extractClaude(input, input.keys.anthropic);

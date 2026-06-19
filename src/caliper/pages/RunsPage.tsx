@@ -31,7 +31,7 @@ function runSortValue(run, key) {
     case RUN_TABLE_SORT_KEYS.id:
       return run.id?.toLowerCase() ?? '';
     case RUN_TABLE_SORT_KEYS.job:
-      return (run.job_profiles?.name ?? run.job_id ?? '').toLowerCase();
+      return (run.job_profiles?.name ?? run.job_id ?? run.jobId ?? '').toLowerCase();
     case RUN_TABLE_SORT_KEYS.date:
       return runDateSortKey(run);
     case RUN_TABLE_SORT_KEYS.cvs:
@@ -336,7 +336,7 @@ function RunsPage({ go }) {
               >
                 <td className="col-num muted" style={{ fontSize: 11.5 }}>{r.id}</td>
                 <td>
-                  <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id}</div>
+                  <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id ?? r.jobId}</div>
                   {r.job_profiles?.dept && (
                     <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>
                       {r.job_profiles.dept}

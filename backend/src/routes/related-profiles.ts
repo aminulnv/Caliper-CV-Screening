@@ -12,6 +12,7 @@ import { scoreJdAlignment } from '../services/jd-alignment.js';
 import { capStarsForSeniorityMismatch } from '../services/seniority-match.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
+import { assertCanSpend, logAiUsage, BudgetExceededError } from '../services/ai-usage.js';
 
 /** postgres.js returns camelCase; frontend expects snake_case. */
 function formatRelatedProfile(row: Record<string, unknown>) {
@@ -118,15 +119,27 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
       const { modelId } = pickRunnableModel(preferredModel, settings.allowed_models, keys);
 
       try {
+        await assertCanSpend(req.userId, req.workspaceId);
         const suggestion = await suggestRelatedProfileSearch({
           jobTitle: job.name as string,
           jobDescription: description,
           modelId,
           keys,
           searchCountry: req.body?.search_country,
+          workspaceId: req.workspaceId,
+          userId: req.userId,
+          jobId,
         });
         return suggestion;
       } catch (err) {
+        if (err instanceof BudgetExceededError) {
+          return reply.status(403).send({
+            error: 'budget_exceeded',
+            message: err.message,
+            spent_usd: err.spentUsd,
+            budget_usd: err.budgetUsd,
+          });
+        }
         if (err instanceof NeedsCountryError) {
           return reply.status(422).send({ error: err.message, needs_country: true });
         }
@@ -181,6 +194,8 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
       `;
 
       try {
+        await assertCanSpend(req.userId, req.workspaceId);
+
         const {
           profiles: discovered,
           searchQuery,
@@ -198,6 +213,9 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
             keys,
             searchCountry: req.body?.search_country,
             searchQueryOverride: req.body?.search_query?.trim(),
+            workspaceId: req.workspaceId,
+            userId: req.userId,
+            jobId,
           });
 
         let saved = 0;
@@ -231,17 +249,24 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
               },
               keys,
             );
+            await logAiUsage({
+              workspaceId: req.workspaceId,
+              userId: req.userId,
+              feature: 'jd_alignment',
+              usage: alignment.usage,
+              jobId,
+            });
             const capped = capStarsForSeniorityMismatch(
-              alignment.stars,
+              alignment.result.stars,
               job.name as string,
               profile.title ?? profile.headline,
               seniorityBand ?? { level: '', exclude: [] },
             );
             stars = capped;
             rationale =
-              capped < alignment.stars
-                ? `${alignment.rationale} (Score capped for seniority mismatch vs target band.)`
-                : alignment.rationale;
+              capped < alignment.result.stars
+                ? `${alignment.result.rationale} (Score capped for seniority mismatch vs target band.)`
+                : alignment.result.rationale;
           }
 
           await sql`
@@ -324,6 +349,15 @@ export async function relatedProfilesRoutes(app: FastifyInstance) {
           profiles: profiles.map((row) => formatRelatedProfile(row as Record<string, unknown>)),
         };
       } catch (err) {
+        if (err instanceof BudgetExceededError) {
+          await sql`DELETE FROM related_profile_discoveries WHERE id = ${discovery.id}`;
+          return reply.status(403).send({
+            error: 'budget_exceeded',
+            message: err.message,
+            spent_usd: err.spentUsd,
+            budget_usd: err.budgetUsd,
+          });
+        }
         if (err instanceof NeedsCountryError) {
           await sql`DELETE FROM related_profile_discoveries WHERE id = ${discovery.id}`;
           return reply.status(422).send({ error: err.message, needs_country: true });

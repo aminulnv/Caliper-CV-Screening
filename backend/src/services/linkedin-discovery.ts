@@ -76,6 +76,9 @@ export interface DiscoveryOptions {
   searchCountry?: string;
   /** User-edited natural-language search prompt (overrides AI-built query). */
   searchQueryOverride?: string;
+  workspaceId?: string;
+  userId?: string;
+  jobId?: string;
 }
 
 export interface SuggestedProfileSearch {
@@ -401,12 +404,23 @@ async function prepareDiscoveryParams(opts: DiscoveryOptions): Promise<{
     throw new Error('AI provider keys are required to derive search terms from the job description.');
   }
 
-  const params: DiscoverySearchParams = await extractDiscoveryParams({
+  const { params, usage } = await extractDiscoveryParams({
     jobTitle: opts.jobTitle,
     jobDescription: opts.jobDescription,
     modelId: opts.modelId,
     keys: opts.keys,
   });
+
+  if (opts.workspaceId && opts.userId) {
+    const { logAiUsage } = await import('./ai-usage.js');
+    await logAiUsage({
+      workspaceId: opts.workspaceId,
+      userId: opts.userId,
+      feature: 'discovery',
+      usage,
+      jobId: opts.jobId ?? null,
+    });
+  }
 
   const resolvedLocation = resolveDiscoveryLocation(params.locationQuery, opts.jobDescription);
 

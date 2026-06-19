@@ -9,11 +9,15 @@ import { GlobalSearch } from '@/components/GlobalSearch'
  * Use as the element of the protected layout route.
  */
 export default function AuthenticatedLayout() {
-  const { user, displayName, avatarUrl, signOut, isAdmin } = useAuth()
+  const { user, displayName, avatarUrl, signOut, isAdmin, canEdit } = useAuth()
 
   const navItems = useMemo(
-    () => (isAdmin ? layoutConfig.navItems : layoutConfig.navItems.filter((item) => item.path !== '/settings')),
-    [isAdmin],
+    () => layoutConfig.navItems.filter((item) => {
+      if (item.requiresAdmin) return isAdmin;
+      if (item.requiresEdit) return canEdit;
+      return true;
+    }),
+    [isAdmin, canEdit],
   )
 
   return (

@@ -16,6 +16,9 @@ import { workspaceRoutes } from './routes/workspace.js';
 import { notificationsRoutes } from './routes/notifications.js';
 import { searchRoutes } from './routes/search.js';
 import { cvSearchRoutes } from './routes/cv-search.js';
+import { usageRoutes } from './routes/usage.js';
+import { activityRoutes } from './routes/activity.js';
+import { dispositionsRoutes } from './routes/dispositions.js';
 import { runRetentionCleanup } from './services/retention.js';
 import { runScheduledRecruiteeJobSync } from './services/recruitee-sync.js';
 import { ensurePlatformRecruiteeInWorkspace } from './services/workspace.js';
@@ -45,6 +48,9 @@ await server.register(workspaceRoutes, { prefix: API_PREFIX });
 await server.register(notificationsRoutes, { prefix: API_PREFIX });
 await server.register(searchRoutes, { prefix: API_PREFIX });
 await server.register(cvSearchRoutes, { prefix: API_PREFIX });
+await server.register(usageRoutes, { prefix: API_PREFIX });
+await server.register(activityRoutes, { prefix: API_PREFIX });
+await server.register(dispositionsRoutes, { prefix: API_PREFIX });
 await server.register(relatedProfilesRoutes, { prefix: API_PREFIX });
 
 // Health check — no auth required

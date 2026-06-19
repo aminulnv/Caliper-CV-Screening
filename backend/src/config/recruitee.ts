@@ -23,6 +23,10 @@ export function getPlatformRecruiteeBaseUrl(): string | null {
   return null;
 }
 
+export function getPlatformRecruiteeActorLabel(): string {
+  return process.env.RECRUITEE_API_TOKEN_LABEL?.trim() || 'platform integration account';
+}
+
 export function isPlatformRecruiteeConfigured(): boolean {
   return Boolean(getPlatformRecruiteeApiKey() && getPlatformRecruiteeBaseUrl());
 }

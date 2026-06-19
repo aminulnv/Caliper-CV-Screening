@@ -296,6 +296,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const [runError, setRunError] = React.useState(null);
   const [runNote, setRunNote] = React.useState('');
   const [priorScreenings, setPriorScreenings] = React.useState([]);
+  const [usageEstimate, setUsageEstimate] = React.useState(null);
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
   const isHero = profile.id === HERO_PROFILE.id;
@@ -465,14 +466,50 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setUploadedFiles(next);
   };
 
+  const cvSum = {
+    selected: cvMode === 'manual' ? uploadedFiles.length : rowSel.filter(Boolean).length,
+    warnings: cvMode === 'recruitee' ? nWarnSelected : 0,
+    noteLines: cvMode === 'manual'
+      ? (uploadedFiles.length ? uploadedFiles.map((f) => `${f.name} · ${formatFileSizeJob(f.size)}`) : ['No files added yet.'])
+      : (nWarnSelected > 0 ? rows.filter((c, i) => rowSel[i] && c.status === 'warn').map((c) => `${c.name} — ${c.reason}`) : ['No parse warnings.']),
+  };
+
+  React.useEffect(() => {
+    if (step !== 2 || isHero || !cvSum.selected) {
+      setUsageEstimate(null);
+      return;
+    }
+    let cancelled = false;
+    api.usage.estimate({
+      cv_count: cvSum.selected,
+      criteria_count: criteriaCount,
+      model: runnable.modelId,
+    })
+      .then((est) => { if (!cancelled) setUsageEstimate(est); })
+      .catch(() => { if (!cancelled) setUsageEstimate(null); });
+    return () => { cancelled = true; };
+  }, [step, isHero, cvSum.selected, criteriaCount, runnable.modelId]);
+
+  const budgetBlocked = usageEstimate?.status === 'blocked';
+  const budgetWarn = usageEstimate?.status === 'warn';
+
+  const formatEstUsd = (n) => {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return '—';
+    return v < 0.01 ? `$${v.toFixed(4)}` : v < 1 ? `$${v.toFixed(3)}` : `$${v.toFixed(2)}`;
+  };
+
   const canRun =
     hasCriteria
     && !runnable.error
+    && !budgetBlocked
     && !(cvMode === 'manual' && uploadedFiles.length === 0)
     && !(cvMode === 'recruitee' && !rowSel.some(Boolean));
 
   const continueBlockedReason = !hasCriteria
     ? 'Add and save at least one criterion on the Criteria tab first'
+    : budgetBlocked
+      ? 'AI budget exceeded'
     : runnable.error
       ? runnable.error
       : cvMode === 'recruitee' && !rowSel.some(Boolean)
@@ -503,6 +540,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
           .map((r) => ({
             type: 'recruitee',
             applicant_id: r.id,
+            placement_id: r.placement_id ?? undefined,
             cv_url: r.cv_url?.startsWith('http')
               ? r.cv_url
               : `recruitee-applicant:${r.id}`,
@@ -536,14 +574,6 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       setRunError(err?.message ?? 'Failed to start run. Please try again.');
     }
   }, [canRun, cvMode, uploadedFiles, rowSel, rows, profile.id, profile.screeningModel, runNote, go, onClose]);
-
-  const cvSum = {
-    selected: cvMode === 'manual' ? uploadedFiles.length : rowSel.filter(Boolean).length,
-    warnings: cvMode === 'recruitee' ? nWarnSelected : 0,
-    noteLines: cvMode === 'manual'
-      ? (uploadedFiles.length ? uploadedFiles.map((f) => `${f.name} · ${formatFileSizeJob(f.size)}`) : ['No files added yet.'])
-      : (nWarnSelected > 0 ? rows.filter((c, i) => rowSel[i] && c.status === 'warn').map((c) => `${c.name} — ${c.reason}`) : ['No parse warnings.']),
-  };
 
   return (
     <div className="detail" onClick={onClose}>
@@ -819,6 +849,27 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
               {runnable.error && (
                 <div className="callout" style={{ color: 'var(--bad-ink)' }}>{runnable.error}</div>
               )}
+              {budgetBlocked && (
+                <div className="callout" style={{ color: 'var(--bad-ink)' }}>
+                  AI budget exceeded. You cannot start new screenings until your admin increases your cap.{' '}
+                  <a href="/usage" style={{ color: 'inherit' }}>View usage →</a>
+                </div>
+              )}
+              {budgetWarn && !budgetBlocked && (
+                <div className="callout" style={{ color: 'var(--warn-ink, #b45309)' }}>
+                  Approaching AI budget limit ({usageEstimate?.pct_used ?? '—'}% used). This run adds ~{formatEstUsd(usageEstimate?.estimated_cost_usd)}.
+                </div>
+              )}
+              {usageEstimate && !budgetBlocked && !budgetWarn && usageEstimate.budget_usd != null && (
+                <div className="callout muted" style={{ fontSize: 12.5 }}>
+                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated · {formatEstUsd(usageEstimate.spent_usd)} of {formatEstUsd(usageEstimate.budget_usd)} used ({usageEstimate.pct_used ?? 0}%)
+                </div>
+              )}
+              {usageEstimate && usageEstimate.budget_usd == null && (
+                <div className="callout muted" style={{ fontSize: 12.5 }}>
+                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated for this run · no budget cap set
+                </div>
+              )}
               {runnable.substituted && !runnable.error && (
                 <div className="callout">
                   Screening will use <strong>{labelForModel(runnable.modelId)}</strong> because the job&apos;s
@@ -924,7 +975,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                 Continue
               </Btn>
             ) : (
-              <Btn variant="primary" icon="play" disabled={!canRun} onClick={startRealRun}>Run now</Btn>
+              <Btn variant="primary" icon="play" disabled={!canRun} onClick={startRealRun} title={budgetBlocked ? 'AI budget exceeded' : undefined}>Run now</Btn>
             )}
           </div>
         </div>
@@ -1773,6 +1824,12 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
   const [screeningModel, setScreeningModel] = React.useState(
     () => initialProfile.screeningModel || 'claude-sonnet-4-6',
   );
+  const [shortlistStageId, setShortlistStageId] = React.useState(
+    () => initialProfile.shortlistStageId ?? '',
+  );
+  const [shortlistStageName, setShortlistStageName] = React.useState(
+    () => initialProfile.shortlistStageName ?? '',
+  );
   const [saveState, setSaveState] = React.useState({ status: 'idle', message: '' });
   const criteriaDirtyRef = React.useRef(false);
   const generatingCriteriaRef = React.useRef(false);
@@ -1933,6 +1990,8 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
     setRFState(rf0);
     setDescState(d0);
     setScreeningModel(profile.screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6');
+    setShortlistStageId(profile.shortlistStageId ?? '');
+    setShortlistStageName(profile.shortlistStageName ?? '');
     setSaveState({ status: 'idle', message: '' });
   }, [profile, workspaceSettings?.default_model]);
 
@@ -1963,9 +2022,13 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
         source_ref: profile.sourceRef,
         description: desc,
         screening_model: screeningModel,
+        shortlist_stage_id: shortlistStageId || null,
+        shortlist_stage_name: shortlistStageName || null,
         criteria,
       });
       profile.screeningModel = screeningModel;
+      profile.shortlistStageId = shortlistStageId || null;
+      profile.shortlistStageName = shortlistStageName || null;
       profile.mustHave = mh;
       profile.niceToHave = nh;
       profile.redFlags = rf;
@@ -1977,7 +2040,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
     } catch (err) {
       setSaveState({ status: 'error', message: err?.message ?? 'Save failed.' });
     }
-  }, [isHero, profile, mh, nh, rf, desc, screeningModel]);
+  }, [isHero, profile, mh, nh, rf, desc, screeningModel, shortlistStageId, shortlistStageName]);
 
   const setMH = React.useCallback((up) => {
     markCriteriaDirty();
@@ -2052,7 +2115,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
         </div>
       </div>
 
-      {/* Tabbed: Overview · Criteria · Runs · Audit */}
+      {/* Tabbed: Job Description · Filtering Criteria · Processed CVs · Applicants · Suggested Profiles · Activity Log */}
       <ProfileTabs
         key={profile.id}
         profile={profile}
@@ -2068,6 +2131,11 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
         workspaceSettings={workspaceSettings}
         screeningModel={screeningModel}
         setScreeningModel={(v) => { markCriteriaDirty(); setScreeningModel(v); }}
+        shortlistStageId={shortlistStageId}
+        setShortlistStageId={setShortlistStageId}
+        shortlistStageName={shortlistStageName}
+        setShortlistStageName={setShortlistStageName}
+        markCriteriaDirty={markCriteriaDirty}
         onSaveProfile={saveProfile}
         saveState={saveState}
         isHero={isHero}
@@ -2086,7 +2154,10 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
 function ProfileTabs({
   profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF,
   runsToShow, showBias, setShowBias, totalCriteria,
-  workspaceSettings, screeningModel, setScreeningModel, onSaveProfile, saveState, isHero,
+  workspaceSettings, screeningModel, setScreeningModel,
+  shortlistStageId, setShortlistStageId, shortlistStageName, setShortlistStageName,
+  markCriteriaDirty,
+  onSaveProfile, saveState, isHero,
   go, onOpenRunSheet, criteriaGenState, onGenerateCriteria, canEdit = true,
 }) {
   const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
@@ -2124,12 +2195,14 @@ function ProfileTabs({
   const [scoredRows, setScoredRows] = React.useState([]);
   const [scoredLoading, setScoredLoading] = React.useState(false);
   const [scoredError, setScoredError] = React.useState(null);
+  const [dispositionByApplicantId, setDispositionByApplicantId] = React.useState(() => new Map());
 
   React.useEffect(() => {
     if (isHero || !profile?.id) {
       setScoredRows([]);
       setScoredLoading(false);
       setScoredError(null);
+      setDispositionByApplicantId(new Map());
       return;
     }
 
@@ -2140,6 +2213,19 @@ function ProfileTabs({
     api.jobs.scoredCandidates(profile.id)
       .then(({ candidates }) => {
         if (cancelled) return;
+        const dispositionMap = new Map();
+        for (const c of candidates) {
+          if (!c.recruitee_applicant_id || !c.disposition) continue;
+          const key = String(c.recruitee_applicant_id);
+          if (!dispositionMap.has(key)) {
+            dispositionMap.set(key, {
+              disposition: c.disposition,
+              target_stage_name: c.target_stage_name,
+              recruitee_sync_status: c.recruitee_sync_status,
+            });
+          }
+        }
+        setDispositionByApplicantId(dispositionMap);
         setScoredRows(
           candidates.map((c) => ({
             key: `${c.run_id}-${c.id}`,
@@ -2152,6 +2238,7 @@ function ProfileTabs({
             confidence: c.confidence ?? 'medium',
             runId: c.run_id,
             runDate: formatJobDate(c.run_created_at) ?? '—',
+            disposition: c.disposition,
           })),
         );
       })
@@ -2253,7 +2340,7 @@ function ProfileTabs({
         <TabBtn label="Processed CVs" count={runsToShow.length} active={tab === 'runs'} onClick={() => setTab('runs')}/>
         <TabBtn label="Applicants and CVs" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
         <TabBtn label="Suggested Profiles for This Job" count={relatedCount} active={tab === 'related'} onClick={() => setTab('related')}/>
-        <TabBtn label="Audit"     count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
+        <TabBtn label="Activity Log" count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
       </div>
 
       {tab === 'overview' && (
@@ -2272,11 +2359,16 @@ function ProfileTabs({
       )}
       {tab === 'criteria' && (
         <CriteriaPane
+          profile={profile}
           mh={mh} setMH={setMH} nh={nh} setNH={setNH} rf={rf} setRF={setRF}
           showBias={showBias} setShowBias={setShowBias}
           workspaceSettings={workspaceSettings}
           screeningModel={screeningModel}
           setScreeningModel={setScreeningModel}
+          shortlistStageId={shortlistStageId}
+          setShortlistStageId={setShortlistStageId}
+          shortlistStageName={shortlistStageName}
+          setShortlistStageName={setShortlistStageName}
           onSave={onSaveProfile}
           saveState={saveState}
           isHero={isHero}
@@ -2286,6 +2378,7 @@ function ProfileTabs({
           hasUsableDescription={isUsableJobDescription(desc)}
           calibration={calibration}
           calibrationByCriterionId={calibrationByCriterionId}
+          markCriteriaDirty={markCriteriaDirty}
         />
       )}
       {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet}/>}
@@ -2299,6 +2392,7 @@ function ProfileTabs({
           scoredLoading={scoredLoading}
           scoredError={scoredError}
           completedRuns={completedRunsForJob}
+          dispositionByApplicantId={dispositionByApplicantId}
           go={go}
           canEdit={canEdit}
           onOpenRunSheet={onOpenRunSheet}
@@ -2558,11 +2652,31 @@ function ScreeningModelPicker({ modelId, onChange, settings }) {
 
 /* ----- Criteria pane ----- */
 function CriteriaPane({
+  profile,
   mh, setMH, nh, setNH, rf, setRF, showBias, setShowBias,
-  workspaceSettings, screeningModel, setScreeningModel, onSave, saveState, isHero,
+  workspaceSettings, screeningModel, setScreeningModel,
+  shortlistStageId, setShortlistStageId, shortlistStageName, setShortlistStageName,
+  onSave, saveState, isHero,
   criteriaGenState, onGenerateCriteria, hasUsableDescription, canEdit = true,
-  calibration, calibrationByCriterionId,
+  calibration, calibrationByCriterionId, markCriteriaDirty,
 }) {
+  const [pipelineStages, setPipelineStages] = React.useState([]);
+  const [stagesLoading, setStagesLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isHero || profile?.source !== 'recruitee' || !profile?.id) {
+      setPipelineStages([]);
+      return;
+    }
+    let cancelled = false;
+    setStagesLoading(true);
+    api.jobs.pipelineStages(profile.id)
+      .then((res) => { if (!cancelled) setPipelineStages(res.stages ?? []); })
+      .catch(() => { if (!cancelled) setPipelineStages([]); })
+      .finally(() => { if (!cancelled) setStagesLoading(false); });
+    return () => { cancelled = true; };
+  }, [profile?.id, profile?.source, isHero]);
+
   const [biasPending, setBiasPending] = React.useState(null);
   const generating = criteriaGenState?.status === 'loading';
   const flagged = calibration?.flagged ?? [];
@@ -2642,6 +2756,46 @@ function CriteriaPane({
         onChange={setScreeningModel}
         settings={workspaceSettings}
       />
+      {!isHero && profile?.source === 'recruitee' && (
+        <div className="card" style={{ padding: '14px 18px' }}>
+          <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Recruitee push defaults
+          </div>
+          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 10 }}>
+            Optional default stage when shortlisting with “Push to Recruitee” from screening results.
+            Caliper still records who decided; Recruitee shows the platform integration account.
+          </div>
+          {stagesLoading ? (
+            <div className="muted" style={{ fontSize: 12 }}>Loading pipeline stages…</div>
+          ) : pipelineStages.length === 0 ? (
+            <div className="muted" style={{ fontSize: 12 }}>No Recruitee pipeline stages available for this job.</div>
+          ) : (
+            <select
+              className="sel"
+              style={{ height: 34, minWidth: 240, fontSize: 13 }}
+              value={shortlistStageId || ''}
+              disabled={!canEdit}
+              onChange={(e) => {
+                markCriteriaDirty?.();
+                const id = e.target.value;
+                const stage = pipelineStages.find((s) => s.id === id);
+                setShortlistStageId(id);
+                setShortlistStageName(stage?.name ?? '');
+              }}
+            >
+              <option value="">No default shortlist stage</option>
+              {pipelineStages.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
+          {shortlistStageName && (
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 8 }}>
+              Current default: <strong>{shortlistStageName}</strong>
+            </div>
+          )}
+        </div>
+      )}
       <CriteriaList kind="must" label="Must-have criteria"
         help="Missing or weak evidence applies a heavy score penalty. Quoted CV evidence counts fully; inferred matches count for less."
         items={mh} setItems={setMH} canEdit={canEdit}
@@ -2846,6 +3000,7 @@ function JobCandidatesPane({
   scoredLoading = false,
   scoredError = null,
   completedRuns,
+  dispositionByApplicantId,
   go,
   canEdit = true,
   onOpenRunSheet,
@@ -3011,6 +3166,7 @@ function JobCandidatesPane({
               pipelineView={pipelineView}
               sortMode={evalSort}
               canEdit={canEdit}
+              dispositionByApplicantId={dispositionByApplicantId}
               onView={(a) => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
               onScreenStage={(stage) => onOpenRunSheet && onOpenRunSheet(stage)}
             />
@@ -3209,6 +3365,7 @@ const AUDIT_KIND_META = {
   criteria: { icon: 'sliders', label: 'Criteria' },
   run: { icon: 'play', label: 'Screening' },
   override: { icon: 'edit', label: 'Override' },
+  candidate: { icon: 'users', label: 'Candidate' },
   job: { icon: 'doc', label: 'Job' },
   sync: { icon: 'database', label: 'Recruitee' },
   other: { icon: 'history', label: 'Activity' },

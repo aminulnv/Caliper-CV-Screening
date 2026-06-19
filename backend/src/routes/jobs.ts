@@ -4,8 +4,9 @@ import { requireRole } from '../middleware/rbac.js';
 import { writeAuditLog } from '../middleware/audit.js';
 import { formatAuditEntry } from '../services/audit-format.js';
 import { sql } from '../services/db.js';
-import { fetchRecruiteeOfferMeta } from '../services/recruitee.js';
+import { fetchRecruiteeOfferMeta, fetchOfferPipeline } from '../services/recruitee.js';
 import { getRecruiteeCredentials } from '../services/workspace.js';
+import { getPlatformRecruiteeActorLabel } from '../config/recruitee.js';
 import { validateCriteriaPayload } from '../services/criteria-validation.js';
 import { syncJobCriteria } from '../services/job-criteria.js';
 import { getJobCalibration } from '../services/criterion-calibration.js';
@@ -13,6 +14,7 @@ import { generateCriteriaFromJobDescription } from '../services/criteria-generat
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { pickRunnableModel } from '../services/screening-model.js';
 import { screeningRunAccessible } from '../lib/run-access.js';
+import { assertCanSpend, logAiUsage, BudgetExceededError } from '../services/ai-usage.js';
 import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
 
 async function fetchJobDetail(workspaceId: string, jobId: string, userId: string) {
@@ -73,6 +75,44 @@ export async function jobsRoutes(app: FastifyInstance) {
     const job = await fetchJobDetail(req.workspaceId, req.params.id, req.userId);
     if (!job) return reply.status(404).send({ error: 'Job not found' });
     return job;
+  });
+
+  app.get<{ Params: { id: string } }>('/jobs/:id/pipeline-stages', async (req, reply) => {
+    const jobId = req.params.id;
+    const [job] = await sql`
+      SELECT id, source, source_ref FROM job_profiles
+      WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
+    `;
+    if (!job) return reply.status(404).send({ error: 'Job not found' });
+    const sourceRef = (job.sourceRef ?? job.source_ref) as string | null;
+    if (job.source !== 'recruitee' || !sourceRef) {
+      return {
+        stages: [],
+        recruitee_linked: false,
+        platform_actor: getPlatformRecruiteeActorLabel(),
+      };
+    }
+
+    try {
+      const creds = await getRecruiteeCredentials(req.workspaceId);
+      const stages = await fetchOfferPipeline(
+        creds.baseUrl,
+        creds.apiKey,
+        sourceRef,
+      );
+      return {
+        stages,
+        recruitee_linked: true,
+        platform_actor: getPlatformRecruiteeActorLabel(),
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return reply.status(400).send({
+        error: message,
+        recruitee_linked: true,
+        stages: [],
+      });
+    }
   });
 
   app.get<{ Params: { id: string } }>('/jobs/:id/scored-candidates', async (req, reply) => {
@@ -153,7 +193,7 @@ export async function jobsRoutes(app: FastifyInstance) {
         WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
       `;
       if (!existing) return reply.status(404).send({ error: 'Job not found' });
-      if (existing.source !== 'recruitee' || !existing.sourceRef) {
+      if (existing.source !== 'recruitee' || !(existing.sourceRef ?? existing.source_ref)) {
         return reply.status(400).send({ error: 'Job is not linked to Recruitee' });
       }
 
@@ -239,12 +279,22 @@ export async function jobsRoutes(app: FastifyInstance) {
       const pick = pickRunnableModel(preferred, settings.allowed_models, keys);
 
       try {
+        await assertCanSpend(req.userId, req.workspaceId);
+
         const generated = await generateCriteriaFromJobDescription(
           String(job.name),
           description,
           pick.modelId,
           keys,
         );
+
+        await logAiUsage({
+          workspaceId: req.workspaceId,
+          userId: req.userId,
+          feature: 'criteria_gen',
+          usage: generated.usage,
+          jobId,
+        });
 
         await writeAuditLog({
           req,
@@ -254,19 +304,27 @@ export async function jobsRoutes(app: FastifyInstance) {
           payload: {
             job_id: jobId,
             model_used: pick.modelId,
-            must_count: generated.must_have.length,
-            nice_count: generated.nice_to_have.length,
-            flag_count: generated.red_flags.length,
-            skipped_count: generated.skipped_count,
+            must_count: generated.result.must_have.length,
+            nice_count: generated.result.nice_to_have.length,
+            flag_count: generated.result.red_flags.length,
+            skipped_count: generated.result.skipped_count,
           },
         });
 
         return {
-          ...generated,
+          ...generated.result,
           model_used: pick.modelId,
           model_substituted: pick.substituted,
         };
       } catch (e) {
+        if (e instanceof BudgetExceededError) {
+          return reply.status(403).send({
+            error: 'budget_exceeded',
+            message: e.message,
+            spent_usd: e.spentUsd,
+            budget_usd: e.budgetUsd,
+          });
+        }
         const message = e instanceof Error ? e.message : String(e);
         return reply.status(400).send({ error: message });
       }
@@ -282,6 +340,10 @@ export async function jobsRoutes(app: FastifyInstance) {
     `;
     if (!job) return reply.status(404).send({ error: 'Job not found' });
 
+    // Audit entries reference a job either directly (entity_type='job') or
+    // indirectly through a run, candidate, or evaluation that belongs to the
+    // job. We associate via those entity relationships rather than the payload
+    // so screening/disposition/override activity reliably appears here.
     const rows = await sql`
       SELECT al.id, al.action, al.payload, al.created_at,
              al.user_id AS user_id,
@@ -292,8 +354,22 @@ export async function jobsRoutes(app: FastifyInstance) {
       WHERE al.workspace_id = ${req.workspaceId}
         AND (
           (al.entity_type = 'job' AND al.entity_id = ${jobId})
-          OR (al.entity_type = 'run' AND al.payload->>'job_id' = ${jobId})
-          OR (al.payload->>'job_id' = ${jobId})
+          OR al.payload->>'job_id' = ${jobId}
+          OR al.entity_id IN (
+            SELECT id::text FROM screening_runs
+            WHERE job_id = ${jobId} AND workspace_id = ${req.workspaceId}
+          )
+          OR al.entity_id IN (
+            SELECT rc.id::text FROM run_candidates rc
+            JOIN screening_runs sr ON rc.run_id = sr.id
+            WHERE sr.job_id = ${jobId} AND sr.workspace_id = ${req.workspaceId}
+          )
+          OR al.entity_id IN (
+            SELECT ce.id::text FROM candidate_evaluations ce
+            JOIN run_candidates rc ON ce.candidate_id = rc.id
+            JOIN screening_runs sr ON rc.run_id = sr.id
+            WHERE sr.job_id = ${jobId} AND sr.workspace_id = ${req.workspaceId}
+          )
         )
       ORDER BY al.created_at DESC
       LIMIT 100
@@ -338,6 +414,8 @@ export async function jobsRoutes(app: FastifyInstance) {
       description?: string;
       posted_on?: string;
       screening_model?: string | null;
+      shortlist_stage_id?: string | null;
+      shortlist_stage_name?: string | null;
       criteria?: Array<{ id: string; kind: 'must' | 'nice' | 'flag'; name: string; weight: number; biased?: boolean }>;
     };
   }>(
@@ -345,7 +423,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     { preHandler: requireRole('recruiter') },
     async (req, reply) => {
       const { id } = req.params;
-      const { name, dept, status, source, source_ref, description, posted_on, screening_model, criteria } = req.body;
+      const { name, dept, status, source, source_ref, description, posted_on, screening_model, shortlist_stage_id, shortlist_stage_name, criteria } = req.body;
       if (!name) return reply.status(400).send({ error: 'name is required' });
       if (
         screening_model != null
@@ -355,14 +433,17 @@ export async function jobsRoutes(app: FastifyInstance) {
       }
 
       await sql`
-        INSERT INTO job_profiles (id, workspace_id, name, dept, status, source, source_ref, description, posted_on, screening_model, created_by, updated_at)
+        INSERT INTO job_profiles (id, workspace_id, name, dept, status, source, source_ref, description, posted_on, screening_model, shortlist_stage_id, shortlist_stage_name, created_by, updated_at)
         VALUES (${id}, ${req.workspaceId}, ${name}, ${dept ?? null}, ${status ?? 'open'}, ${source ?? 'manual'},
-                ${source_ref ?? null}, ${description ?? null}, ${posted_on ?? null}, ${screening_model ?? null}, ${req.userId}, NOW())
+                ${source_ref ?? null}, ${description ?? null}, ${posted_on ?? null}, ${screening_model ?? null},
+                ${shortlist_stage_id ?? null}, ${shortlist_stage_name ?? null}, ${req.userId}, NOW())
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name, dept = EXCLUDED.dept, status = EXCLUDED.status,
           source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
           description = EXCLUDED.description, posted_on = EXCLUDED.posted_on,
           screening_model = EXCLUDED.screening_model,
+          shortlist_stage_id = EXCLUDED.shortlist_stage_id,
+          shortlist_stage_name = EXCLUDED.shortlist_stage_name,
           updated_at = NOW()
       `;
 

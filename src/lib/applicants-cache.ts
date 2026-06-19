@@ -54,6 +54,19 @@ export function getCachedApplicants(
   return null;
 }
 
+/** Drop cached applicants so the next load refetches from Recruitee (e.g. after a stage move). */
+export function invalidateApplicants(sourceRef: string | null | undefined): void {
+  if (!sourceRef) return;
+  memory.delete(sourceRef);
+  inflight.delete(sourceRef);
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.removeItem(storageKey(sourceRef));
+  } catch {
+    // Ignore — memory cache is already cleared.
+  }
+}
+
 /** Start loading applicants early (e.g. on job row click). Safe to call repeatedly. */
 export function prefetchRecruiteeApplicants(sourceRef: string | null | undefined): void {
   if (!sourceRef) return;

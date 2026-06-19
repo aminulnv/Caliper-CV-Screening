@@ -27,7 +27,14 @@ function formatSharedUsers(raw: unknown): SharedUser[] {
   }).filter((u) => u.user_id);
 }
 
-/** Normalize run list/detail rows for the frontend API. */
+/**
+ * Normalize run list/detail rows for the frontend API.
+ *
+ * postgres.js applies `transform: postgres.camel`, so DB columns arrive camelCased
+ * (jobId, cvCount, …). The frontend RunListItem/RunDetail contract is snake_case,
+ * so we explicitly emit snake_case keys here — otherwise `run.job_id` is undefined
+ * on the client and downstream features (pipeline stages, re-run) silently break.
+ */
 export function formatRunResponse(row: Record<string, unknown>, userId: string) {
   const sharedUsers = formatSharedUsers(row.sharedUsers ?? row.shared_users);
   const rawIds = row.sharedUserIds ?? row.shared_user_ids;
@@ -35,10 +42,26 @@ export function formatRunResponse(row: Record<string, unknown>, userId: string) 
     ? rawIds
     : sharedUsers.map((u) => u.user_id);
 
+  const pick = <T = unknown>(camel: string, snake: string): T =>
+    (row[camel] ?? row[snake] ?? null) as T;
+
   return {
-    ...row,
+    id: row.id,
+    job_id: pick<string | null>('jobId', 'job_id'),
+    model_used: pick<string | null>('modelUsed', 'model_used'),
+    status: row.status,
+    owner_id: pick<string | null>('ownerId', 'owner_id'),
+    cv_count: pick<number | null>('cvCount', 'cv_count'),
+    score_range: pick<number[] | null>('scoreRange', 'score_range'),
+    error_message: pick<string | null>('errorMessage', 'error_message'),
+    run_note: pick<string | null>('runNote', 'run_note'),
+    started_at: pick<string | null>('startedAt', 'started_at'),
+    completed_at: pick<string | null>('completedAt', 'completed_at'),
+    created_at: pick<string | null>('createdAt', 'created_at'),
     is_owner: (row.ownerId ?? row.owner_id) === userId,
-    owner_avatar_url: (row.ownerAvatarUrl ?? row.owner_avatar_url ?? null) as string | null,
+    owner_name: pick<string | null>('ownerName', 'owner_name'),
+    owner_email: pick<string | null>('ownerEmail', 'owner_email'),
+    owner_avatar_url: pick<string | null>('ownerAvatarUrl', 'owner_avatar_url'),
     shared_user_ids: sharedUserIds,
     shared_users: sharedUsers,
     job_profiles: row.jobName

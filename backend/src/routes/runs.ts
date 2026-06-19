@@ -4,6 +4,8 @@ import { requireRole } from '../middleware/rbac.js';
 import { writeAuditLog, writeAuditLogDirect } from '../middleware/audit.js';
 import { sql } from '../services/db.js';
 import { scoreCV } from '../services/model-router.js';
+import { assertCanSpend, logAiUsage, BudgetExceededError } from '../services/ai-usage.js';
+import { estimateScreeningCostUsd } from '../lib/model-pricing.js';
 import { getWorkspaceKeys, getWorkspaceSettings } from '../services/workspace.js';
 import { parsePdfBuffer } from '../services/cv-parser.js';
 import { storage } from '../services/storage.js';
@@ -125,9 +127,13 @@ export async function runsRoutes(app: FastifyInstance) {
     const candidates = await sql`
       SELECT id, name, title, location, score, confidence, status, summary,
              parse_warning, must_met, nice_met, flag_triggered,
-             score_base, penalty_flag,
+             score_base, penalty_flag, cv_quality_score, quality_adjustment,
              must_total, nice_total, flag_total,
-             criteria_met_pct, must_met_pct, nice_met_pct
+             criteria_met_pct, must_met_pct, nice_met_pct,
+             cv_storage_path, recruitee_applicant_id, applicant_email,
+             disposition, target_stage_id, target_stage_name, disposition_note,
+             disposition_by, disposition_at, recruitee_placement_id,
+             recruitee_sync_status, recruitee_synced_at, recruitee_sync_error
       FROM run_candidates
       WHERE run_id = ${req.params.id}
       ORDER BY score DESC NULLS LAST
@@ -168,9 +174,13 @@ export async function runsRoutes(app: FastifyInstance) {
       const candidateRows = await sql`
         SELECT id, name, title, location, score, confidence, status, summary,
                parse_warning, must_met, nice_met, flag_triggered,
-               score_base, penalty_flag,
+               score_base, penalty_flag, cv_quality_score, quality_adjustment,
                must_total, nice_total, flag_total,
-               criteria_met_pct, must_met_pct, nice_met_pct
+               criteria_met_pct, must_met_pct, nice_met_pct,
+               cv_storage_path, recruitee_applicant_id, applicant_email,
+               disposition, target_stage_id, target_stage_name, disposition_note,
+               disposition_by, disposition_at, recruitee_placement_id,
+               recruitee_sync_status, recruitee_synced_at, recruitee_sync_error
         FROM run_candidates
         WHERE run_id = ${req.params.id} AND id IN ${sql(candidateIds)}
       `;
@@ -342,7 +352,14 @@ export async function runsRoutes(app: FastifyInstance) {
       run_note?: string;
       cv_sources: Array<
         | { type: 'storage'; path: string; name: string }
-        | { type: 'recruitee'; applicant_id: string; cv_url: string; name: string; email?: string }
+        | {
+            type: 'recruitee';
+            applicant_id: string;
+            cv_url: string;
+            name: string;
+            email?: string;
+            placement_id?: string;
+          }
       >;
     };
   }>(
@@ -396,6 +413,25 @@ export async function runsRoutes(app: FastifyInstance) {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'AI screening is not configured';
         return reply.status(400).send({ error: message });
+      }
+
+      try {
+        const estimatedCost = estimateScreeningCostUsd(
+          modelId,
+          cv_sources.length,
+          criteriaCount,
+        );
+        await assertCanSpend(req.userId, req.workspaceId, estimatedCost);
+      } catch (err) {
+        if (err instanceof BudgetExceededError) {
+          return reply.status(403).send({
+            error: 'budget_exceeded',
+            message: err.message,
+            spent_usd: err.spentUsd,
+            budget_usd: err.budgetUsd,
+          });
+        }
+        throw err;
       }
 
       const now = new Date();
@@ -470,16 +506,28 @@ async function processRun(
   runId: string,
   jobId: string,
   modelId: string,
-  cvSources: Array<{ type: string; path?: string; name: string; applicant_id?: string; cv_url?: string; email?: string }>,
+  cvSources: Array<{
+    type: string;
+    path?: string;
+    name: string;
+    applicant_id?: string;
+    cv_url?: string;
+    email?: string;
+    placement_id?: string;
+  }>,
   workspaceId: string,
   ownerId: string,
 ) {
-  const [keys, criteriaRows, settings] = await Promise.all([
+  const [keys, criteriaRows, settings, jobMetaRows] = await Promise.all([
     getWorkspaceKeys(workspaceId),
     sql`SELECT * FROM job_criteria WHERE job_id = ${jobId} AND archived = false`,
     getWorkspaceSettings(workspaceId),
+    sql`SELECT source, source_ref FROM job_profiles WHERE id = ${jobId} LIMIT 1`,
   ]);
   const criteria = mapCriterionRows(criteriaRows as Record<string, unknown>[]);
+  const jobMeta = (jobMetaRows as Record<string, unknown>[])[0];
+  const jobSource = (jobMeta?.source as string | null) ?? 'manual';
+  const jobSourceRef = (jobMeta?.sourceRef ?? jobMeta?.source_ref) as string | null;
 
   const scores: number[] = [];
   const scoringErrors: string[] = [];
@@ -488,6 +536,7 @@ async function processRun(
     let pdfBuffer: Buffer;
     let storagePath: string | null = null;
     let recruiteeId: string | null = null;
+    let placementId: string | null = null;
 
     if (source.type === 'storage' && source.path) {
       if (!isWorkspaceStoragePath(source.path, workspaceId)) {
@@ -499,10 +548,24 @@ async function processRun(
       const {
         downloadRecruiteeCV,
         fetchRecruiteeCandidateCv,
+        fetchRecruiteePlacementIdForOffer,
       } = await import('../services/recruitee.js');
       const { getRecruiteeCredentials } = await import('../services/workspace.js');
       const creds = await getRecruiteeCredentials(workspaceId);
       recruiteeId = source.applicant_id ?? null;
+      placementId = source.placement_id?.trim() || null;
+      if (!placementId && recruiteeId && jobSource === 'recruitee' && jobSourceRef) {
+        try {
+          placementId = await fetchRecruiteePlacementIdForOffer(
+            creds.baseUrl,
+            creds.apiKey,
+            recruiteeId,
+            jobSourceRef,
+          );
+        } catch {
+          placementId = null;
+        }
+      }
       if (source.cv_url?.startsWith('http')) {
         pdfBuffer = await downloadRecruiteeCV(source.cv_url, creds.apiKey);
       } else if (source.applicant_id) {
@@ -527,7 +590,7 @@ async function processRun(
     let scoringResult;
     let scoringError: string | null = null;
     try {
-      scoringResult = await scoreCV(
+      const scored = await scoreCV(
         {
           cvText: parsed.text,
           criteria,
@@ -537,6 +600,15 @@ async function processRun(
         } satisfies ScoringRequest,
         keys,
       );
+      scoringResult = scored.result;
+      await logAiUsage({
+        workspaceId,
+        userId: ownerId,
+        feature: 'screening',
+        usage: scored.usage,
+        runId,
+        jobId,
+      });
     } catch (err) {
       scoringError = err instanceof Error ? err.message : String(err);
       scoringErrors.push(`${source.name}: ${scoringError}`);
@@ -555,8 +627,9 @@ async function processRun(
       INSERT INTO run_candidates
         (run_id, name, score, confidence, status, summary, parse_warning,
          must_met, nice_met, flag_triggered, score_base, penalty_flag,
+         cv_quality_score, quality_adjustment,
          must_total, nice_total, flag_total, criteria_met_pct, must_met_pct, nice_met_pct,
-         cv_storage_path, recruitee_applicant_id, applicant_email)
+         cv_storage_path, recruitee_applicant_id, applicant_email, recruitee_placement_id)
       VALUES (
         ${runId}, ${source.name}, ${scoringResult?.score ?? null},
         ${scoringResult?.confidence ?? null}, ${scoringResult?.status ?? 'review'},
@@ -565,10 +638,12 @@ async function processRun(
         ${scoringResult?.flag_triggered ?? 0},
         ${scoringResult?.base_score ?? null},
         ${scoringResult?.flag_penalty ?? null},
+        ${scoringResult?.cv_quality_score ?? null},
+        ${scoringResult?.quality_adjustment ?? null},
         ${scoringResult?.must_total ?? null}, ${scoringResult?.nice_total ?? null},
         ${scoringResult?.flag_total ?? null}, ${scoringResult?.criteria_met_pct ?? null},
         ${scoringResult?.must_met_pct ?? null}, ${scoringResult?.nice_met_pct ?? null},
-        ${storagePath}, ${recruiteeId}, ${applicantEmail}
+        ${storagePath}, ${recruiteeId}, ${applicantEmail}, ${placementId}
       )
       RETURNING id
     `;
@@ -598,6 +673,9 @@ async function processRun(
         workspaceId,
         document: embeddingDocument,
         keys,
+        userId: ownerId,
+        runId,
+        jobId,
       }).catch((err) => {
         console.error(`[run ${runId}] cv embedding failed for ${source.name}:`, err);
       });

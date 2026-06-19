@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { sql } from '../services/db.js';
 import { getWorkspaceKeys } from '../services/workspace.js';
 import { embedTexts, EMBEDDING_MODEL } from '../services/cv-embedding.js';
+import { assertCanSpend, logAiUsage, BudgetExceededError } from '../services/ai-usage.js';
 import { semanticCvSearchEnabled } from '../config/features.js';
 
 const MIN_QUERY_LENGTH = 3;
@@ -16,6 +18,7 @@ export async function cvSearchRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { q?: string; limit?: string } }>(
     '/cv-search',
     {
+      preHandler: requireRole('recruiter'),
       config: {
         rateLimit: {
           max: 20,
@@ -49,9 +52,30 @@ export async function cvSearchRoutes(app: FastifyInstance) {
         });
       }
 
+      try {
+        await assertCanSpend(req.userId, req.workspaceId);
+      } catch (err) {
+        if (err instanceof BudgetExceededError) {
+          return reply.status(403).send({
+            error: 'budget_exceeded',
+            message: err.message,
+            spent_usd: err.spentUsd,
+            budget_usd: err.budgetUsd,
+          });
+        }
+        throw err;
+      }
+
       let queryEmbedding: number[];
       try {
-        [queryEmbedding] = await embedTexts([query], keys.openai);
+        const embedded = await embedTexts([query], keys.openai);
+        queryEmbedding = embedded.embeddings[0];
+        await logAiUsage({
+          workspaceId: req.workspaceId,
+          userId: req.userId,
+          feature: 'cv_search',
+          usage: embedded.usage,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return reply.status(502).send({ error: `Embedding failed: ${message}` });

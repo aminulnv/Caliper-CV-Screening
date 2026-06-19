@@ -80,6 +80,8 @@ export function shapeJobRow(j: Record<string, unknown>) {
     lastRun: sortedRuns[0] ? formatJobDate(sortedRuns[0].createdAt) : null,
     lastUpdated: formatJobDate(updatedRaw as string | Date | null),
     screeningModel: (j.screeningModel ?? j.screening_model) as string | null,
+    shortlistStageId: (j.shortlistStageId ?? j.shortlist_stage_id) as string | null,
+    shortlistStageName: (j.shortlistStageName ?? j.shortlist_stage_name) as string | null,
     applicantsCount: (j.applicantsCount ?? j.applicants_count) as number | null,
     screeningRuns: sortedRuns,
     ...criteriaLists,

@@ -6,11 +6,13 @@ type AuditRow = {
   userId?: string | null;
   userName?: string | null;
   userEmail?: string | null;
+  jobId?: string | null;
+  jobName?: string | null;
   createdAt?: Date;
   created_at?: Date;
 };
 
-export type AuditEntryKind = 'job' | 'criteria' | 'run' | 'override' | 'sync' | 'other';
+export type AuditEntryKind = 'job' | 'criteria' | 'run' | 'override' | 'candidate' | 'sync' | 'other';
 
 export type FormattedAuditEntry = {
   id: string;
@@ -21,6 +23,8 @@ export type FormattedAuditEntry = {
   warned: boolean;
   kind: AuditEntryKind;
   runId: string | null;
+  jobId: string | null;
+  jobName: string | null;
 };
 
 function parsePayload(payload: AuditPayload | string): AuditPayload {
@@ -87,6 +91,21 @@ function modelLabel(modelId: unknown): string {
   return labels[modelId] ?? modelId;
 }
 
+function dispositionVerb(disposition: unknown, candidate: string): string {
+  switch (disposition) {
+    case 'shortlist':
+      return `Shortlisted ${candidate}`;
+    case 'hold':
+      return `Put ${candidate} on hold`;
+    case 'reject':
+      return `Rejected ${candidate}`;
+    case 'advanced':
+      return `Advanced ${candidate}`;
+    default:
+      return `Updated disposition for ${candidate}`;
+  }
+}
+
 function messageForAction(
   action: string,
   payload: AuditPayload,
@@ -126,6 +145,27 @@ function messageForAction(
         warned: biased > 0,
       };
     }
+    case 'job.criteria_generated': {
+      const breakdown: string[] = [];
+      if (typeof p.must_count === 'number') breakdown.push(`${p.must_count} must`);
+      if (typeof p.nice_count === 'number') breakdown.push(`${p.nice_count} nice`);
+      if (typeof p.flag_count === 'number') breakdown.push(`${p.flag_count} flag`);
+      return {
+        kind: 'criteria',
+        runId: null,
+        msg: `Generated criteria with AI${breakdown.length ? ` · ${breakdown.join(', ')}` : ''}`,
+        reason: '—',
+        warned: false,
+      };
+    }
+    case 'related_profiles.discover':
+      return {
+        kind: 'other',
+        runId: null,
+        msg: `Discovered ${p.profiles_found ?? 0} similar profile${p.profiles_found === 1 ? '' : 's'}`,
+        reason: '—',
+        warned: false,
+      };
     case 'run.created':
       return {
         kind: 'run',
@@ -156,6 +196,16 @@ function messageForAction(
         reason: typeof p.error === 'string' && p.error.trim() ? p.error.trim().slice(0, 200) : '—',
         warned: false,
       };
+    case 'run.shared': {
+      const count = Array.isArray(p.shared_with) ? p.shared_with.length : 0;
+      return {
+        kind: 'run',
+        runId,
+        msg: `Shared screening results${count ? ` with ${count} member${count === 1 ? '' : 's'}` : ''}`,
+        reason: '—',
+        warned: false,
+      };
+    }
     case 'evaluation.override': {
       const candidate = typeof p.candidate_name === 'string' ? p.candidate_name : 'a candidate';
       const criterion = typeof p.criterion_name === 'string' ? p.criterion_name : 'a criterion';
@@ -168,6 +218,51 @@ function messageForAction(
         reason:
           typeof p.override_note === 'string' && p.override_note.trim()
             ? p.override_note.trim()
+            : '—',
+        warned: false,
+      };
+    }
+    case 'evaluation.agree': {
+      const candidate = typeof p.candidate_name === 'string' ? p.candidate_name : 'a candidate';
+      const criterion = typeof p.criterion_name === 'string' ? p.criterion_name : 'a criterion';
+      return {
+        kind: 'override',
+        runId,
+        msg: `Agreed with AI on “${criterion}” for ${candidate}`,
+        reason: '—',
+        warned: false,
+      };
+    }
+    case 'candidate.disposition_set': {
+      const candidate = typeof p.candidate_name === 'string' ? p.candidate_name : 'a candidate';
+      const bulk = p.bulk === true ? ' (bulk)' : '';
+      return {
+        kind: 'candidate',
+        runId,
+        msg: `${dispositionVerb(p.disposition, candidate)}${bulk}`,
+        reason: '—',
+        warned: false,
+      };
+    }
+    case 'candidate.recruitee_synced': {
+      const candidate = typeof p.candidate_name === 'string' ? p.candidate_name : 'a candidate';
+      return {
+        kind: 'sync',
+        runId,
+        msg: `Synced ${candidate} to Recruitee`,
+        reason: '—',
+        warned: false,
+      };
+    }
+    case 'candidate.recruitee_sync_failed': {
+      const candidate = typeof p.candidate_name === 'string' ? p.candidate_name : 'a candidate';
+      return {
+        kind: 'sync',
+        runId,
+        msg: `Failed to sync ${candidate} to Recruitee`,
+        reason:
+          typeof p.sync_error === 'string' && p.sync_error.trim()
+            ? p.sync_error.trim().slice(0, 200)
             : '—',
         warned: false,
       };
@@ -198,6 +293,8 @@ export function formatAuditEntry(
   const payload = parsePayload(row.payload);
   const { msg, reason, warned, kind, runId } = messageForAction(row.action, payload);
   const created = row.createdAt ?? row.created_at;
+  const payloadJobId =
+    payload && typeof payload.job_id === 'string' ? payload.job_id : null;
 
   return {
     id: row.id,
@@ -208,5 +305,7 @@ export function formatAuditEntry(
     warned,
     kind,
     runId,
+    jobId: row.jobId ?? payloadJobId,
+    jobName: row.jobName ?? null,
   };
 }

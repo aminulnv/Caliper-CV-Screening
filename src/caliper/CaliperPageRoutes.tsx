@@ -3,6 +3,8 @@ import React, { Suspense } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import RunsPage from '@/caliper/pages/RunsPage'
 import ResultsPage from '@/caliper/pages/ResultsPage'
+import UsagePage from '@/caliper/pages/UsagePage'
+import ActivityPage from '@/caliper/pages/ActivityPage'
 import CaliperSettingsPage from '@/caliper/pages/CaliperSettingsPage'
 import TalentSearchPage from '@/caliper/pages/TalentSearchPage'
 import { useCaliperGo } from '@/caliper/CaliperNavContext'
@@ -59,6 +61,14 @@ export function ResultsPageRoute() {
       route={{ page: 'results', runId, run, candidateId }}
     />
   )
+}
+
+export function UsagePageRoute() {
+  return <UsagePage />
+}
+
+export function ActivityPageRoute() {
+  return <ActivityPage />
 }
 
 export function CaliperSettingsRoute() {

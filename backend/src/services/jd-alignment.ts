@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { anthropicUsage, openaiChatUsage } from '../lib/token-usage.js';
+import type { TokenUsage } from './ai-usage.js';
 import type { WorkspaceKeys } from './model-router.js';
 import type { ProfileEducation, ProfileExperience } from './linkedin-discovery.js';
 import type { SeniorityBand } from './seniority-match.js';
@@ -96,7 +98,12 @@ function parseAlignmentOutput(raw: string): JdAlignmentResult {
   }
 }
 
-async function scoreClaude(input: JdAlignmentInput, apiKey: string): Promise<JdAlignmentResult> {
+export interface JdAlignmentResponse {
+  result: JdAlignmentResult;
+  usage: TokenUsage;
+}
+
+async function scoreClaude(input: JdAlignmentInput, apiKey: string): Promise<JdAlignmentResponse> {
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: input.modelId,
@@ -105,10 +112,13 @@ async function scoreClaude(input: JdAlignmentInput, apiKey: string): Promise<JdA
     messages: [{ role: 'user', content: buildUserMessage(input) }],
   });
   const raw = response.content[0].type === 'text' ? response.content[0].text : '';
-  return parseAlignmentOutput(raw);
+  return {
+    result: parseAlignmentOutput(raw),
+    usage: anthropicUsage(input.modelId, response),
+  };
 }
 
-async function scoreOpenAI(input: JdAlignmentInput, apiKey: string): Promise<JdAlignmentResult> {
+async function scoreOpenAI(input: JdAlignmentInput, apiKey: string): Promise<JdAlignmentResponse> {
   const client = new OpenAI({ apiKey });
   const response = await client.chat.completions.create({
     model: input.modelId,
@@ -120,13 +130,16 @@ async function scoreOpenAI(input: JdAlignmentInput, apiKey: string): Promise<JdA
     ],
   });
   const raw = response.choices[0]?.message?.content ?? '';
-  return parseAlignmentOutput(raw);
+  return {
+    result: parseAlignmentOutput(raw),
+    usage: openaiChatUsage(input.modelId, response),
+  };
 }
 
 export async function scoreJdAlignment(
   input: JdAlignmentInput,
   keys: WorkspaceKeys,
-): Promise<JdAlignmentResult> {
+): Promise<JdAlignmentResponse> {
   if (input.modelId.startsWith('claude-')) {
     if (!keys.anthropic) throw new Error('Anthropic API key not configured');
     return scoreClaude(input, keys.anthropic);

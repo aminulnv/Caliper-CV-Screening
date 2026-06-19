@@ -1,7 +1,6 @@
-import { Briefcase, DraftingCompass, List, Search, Settings } from 'lucide-react'
+import { Briefcase, DraftingCompass, List, Settings, BarChart3, History } from 'lucide-react'
 import type { AppLayoutConfig } from '@/layout'
 import { assets } from './assets'
-import { semanticCvSearchEnabled } from './features'
 
 /**
  * App shell config: brand, nav items, and page titles (Caliper + Auth Basement shell).
@@ -16,15 +15,10 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
   },
   navItems: [
     { path: '/jobs', label: 'Jobs', icon: Briefcase, end: true },
-    {
-      path: '/talent-search',
-      label: 'Talent Search',
-      icon: Search,
-      end: true,
-      ...(semanticCvSearchEnabled ? {} : { comingSoon: true as const }),
-    },
-    { path: '/runs', label: 'Runs', icon: List, end: true },
-    { path: '/settings', label: 'Settings', icon: Settings, end: true },
+    { path: '/runs', label: 'Processed CVs', icon: List, end: true },
+    { path: '/activity', label: 'Activity Log', icon: History, end: true },
+    { path: '/usage', label: 'Usage', icon: BarChart3, end: true, requiresEdit: true as const },
+    { path: '/settings', label: 'Settings', icon: Settings, end: true, requiresAdmin: true as const },
   ],
 }
 
@@ -34,9 +28,10 @@ export function getPageTitle(pathname: string): string {
     return id ? `Run ${id}` : 'Runs'
   }
   const titles: Record<string, string> = {
-    '/runs': 'Runs',
+    '/runs': 'Processed CVs',
     '/jobs': 'Jobs',
-    '/talent-search': 'Talent Search',
+    '/activity': 'Activity Log',
+    '/usage': 'Usage',
     '/settings': 'Settings',
     '/profile': 'Profile',
   }

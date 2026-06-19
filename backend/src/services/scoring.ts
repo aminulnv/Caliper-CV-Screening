@@ -2,6 +2,10 @@ import type { CandidateStatus, Confidence, Criterion } from '../types/index.js';
 
 export const FLAG_HIT_PENALTY_PER_WEIGHT = 4;
 
+/** Checklist match vs CV substance — recruiters weight both roughly equally. */
+const CHECKLIST_WEIGHT = 0.48;
+const QUALITY_WEIGHT = 0.52;
+
 const CONFIDENCE_NUMERIC: Record<Confidence, number> = {
   high: 90,
   medium: 70,
@@ -14,9 +18,18 @@ export interface CriterionScoringInput {
   confidence: string;
 }
 
+export interface CvQualityScoreInput {
+  overall: number;
+  experience?: number | null;
+  depth?: number | null;
+  presentation?: number | null;
+}
+
 export interface ScoreBreakdown {
   base_score: number;
   flag_penalty: number;
+  quality_adjustment: number;
+  cv_quality_score: number | null;
   score: number;
   must_met: number;
   nice_met: number;
@@ -44,6 +57,15 @@ function pctRounded(met: number, total: number): number {
 function normalizeConfidence(value: string): Confidence {
   if (value === 'high' || value === 'medium' || value === 'low') return value;
   return 'low';
+}
+
+function normalizeCvQuality(
+  input: CvQualityScoreInput | number | null | undefined,
+): CvQualityScoreInput | null {
+  if (input == null) return null;
+  if (typeof input === 'number') return { overall: input };
+  if (input.overall == null || Number.isNaN(input.overall)) return null;
+  return input;
 }
 
 function buildFullCriterionResults(
@@ -76,11 +98,30 @@ export function applyConfidenceThreshold(
   return status;
 }
 
+function applyQualityCaps(
+  score: number,
+  quality: CvQualityScoreInput,
+): number {
+  let capped = score;
+  const experience = quality.experience ?? quality.overall;
+  const depth = quality.depth ?? quality.overall;
+
+  if (quality.overall < 42) capped = Math.min(capped, 58);
+  else if (quality.overall < 52) capped = Math.min(capped, 68);
+  if (experience < 38) capped = Math.min(capped, 62);
+  else if (experience < 48) capped = Math.min(capped, 72);
+  if (depth < 40) capped = Math.min(capped, 65);
+
+  return capped;
+}
+
 export function computeScore(
   criteria: Criterion[],
   results: CriterionScoringInput[],
   confidenceThreshold?: number,
+  cvQuality?: CvQualityScoreInput | number | null,
 ): ScoreBreakdown {
+  const quality = normalizeCvQuality(cvQuality);
   const fullResults = buildFullCriterionResults(criteria, results);
   const resultFor = (id: string) => fullResults.find((r) => r.criterion_id === id)!;
 
@@ -120,17 +161,39 @@ export function computeScore(
   const niceMetPct = pctRounded(niceMet, niceTotal);
 
   const baseScore = criteriaMetPct;
-  const score = Math.max(0, Math.min(100, baseScore - flagPenalty));
+  let blendedScore = baseScore;
+  let qualityAdjustment = 0;
+
+  if (quality) {
+    blendedScore = Math.round(
+      baseScore * CHECKLIST_WEIGHT + quality.overall * QUALITY_WEIGHT,
+    );
+    qualityAdjustment = baseScore - blendedScore;
+    blendedScore = applyQualityCaps(blendedScore, quality);
+  }
+
+  const score = Math.max(0, Math.min(100, blendedScore - flagPenalty));
 
   const confidence: Confidence =
     lowConfidenceCount > scorableCount / 2 ? 'low' : lowConfidenceCount > 0 ? 'medium' : 'high';
 
+  const experience = quality?.experience ?? quality?.overall;
+  const depth = quality?.depth ?? quality?.overall;
+  const qualityOkForStrong = quality != null
+    && quality.overall >= 68
+    && (experience ?? 0) >= 52
+    && (depth ?? 0) >= 50;
+
   let status: CandidateStatus =
     flagTriggered > 0
       ? 'flagged'
-      : criteriaMetPct >= 80 && mustTotal > 0 && mustMet === mustTotal
+      : score >= 80
+        && criteriaMetPct >= 80
+        && mustTotal > 0
+        && mustMet === mustTotal
+        && qualityOkForStrong
         ? 'strong'
-        : criteriaMetPct >= 60
+        : score >= 60
           ? 'promising'
           : 'review';
 
@@ -139,6 +202,8 @@ export function computeScore(
   return {
     base_score: baseScore,
     flag_penalty: flagPenalty,
+    quality_adjustment: qualityAdjustment,
+    cv_quality_score: quality?.overall ?? null,
     score,
     must_met: mustMet,
     nice_met: niceMet,

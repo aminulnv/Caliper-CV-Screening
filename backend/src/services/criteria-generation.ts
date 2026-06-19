@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { getProtectedAttributeError } from './criteria-validation.js';
+import { anthropicUsage, openaiChatUsage } from '../lib/token-usage.js';
+import type { TokenUsage } from './ai-usage.js';
 import type { WorkspaceKeys } from './model-router.js';
 
 export type GeneratedCriterion = {
@@ -78,12 +80,17 @@ function buildUserMessage(jobTitle: string, jobDescription: string): string {
   });
 }
 
+export type GeneratedCriteriaResponse = {
+  result: GeneratedCriteriaResult;
+  usage: TokenUsage;
+};
+
 async function generateClaude(
   jobTitle: string,
   jobDescription: string,
   modelId: string,
   apiKey: string,
-): Promise<GeneratedCriteriaResult> {
+): Promise<GeneratedCriteriaResponse> {
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: modelId,
@@ -92,7 +99,10 @@ async function generateClaude(
     messages: [{ role: 'user', content: buildUserMessage(jobTitle, jobDescription) }],
   });
   const raw = response.content[0].type === 'text' ? response.content[0].text : '';
-  return finalizeResult(parseOutput(raw));
+  return {
+    result: finalizeResult(parseOutput(raw)),
+    usage: anthropicUsage(modelId, response),
+  };
 }
 
 async function generateOpenAI(
@@ -100,7 +110,7 @@ async function generateOpenAI(
   jobDescription: string,
   modelId: string,
   apiKey: string,
-): Promise<GeneratedCriteriaResult> {
+): Promise<GeneratedCriteriaResponse> {
   const client = new OpenAI({ apiKey });
   const response = await client.chat.completions.create({
     model: modelId,
@@ -112,7 +122,10 @@ async function generateOpenAI(
     ],
   });
   const raw = response.choices[0]?.message?.content ?? '';
-  return finalizeResult(parseOutput(raw));
+  return {
+    result: finalizeResult(parseOutput(raw)),
+    usage: openaiChatUsage(modelId, response),
+  };
 }
 
 function finalizeResult(parsed: RawOutput): GeneratedCriteriaResult {
@@ -136,7 +149,7 @@ export async function generateCriteriaFromJobDescription(
   jobDescription: string,
   modelId: string,
   keys: WorkspaceKeys,
-): Promise<GeneratedCriteriaResult> {
+): Promise<GeneratedCriteriaResponse> {
   const title = jobTitle.trim() || 'Role';
   const description = jobDescription.trim();
   if (description.length < 80) {

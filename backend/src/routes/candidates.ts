@@ -24,7 +24,7 @@ async function recomputeRunScoreRange(runId: string): Promise<number[] | null> {
 
 async function recalculateCandidateScore(candidateId: string, workspaceId: string) {
   const [candidateRow] = await sql`
-    SELECT rc.id, rc.run_id, sr.job_id
+    SELECT rc.id, rc.run_id, sr.job_id, rc.cv_quality_score
     FROM run_candidates rc
     JOIN screening_runs sr ON rc.run_id = sr.id
     WHERE rc.id = ${candidateId} AND sr.workspace_id = ${workspaceId}
@@ -33,6 +33,7 @@ async function recalculateCandidateScore(candidateId: string, workspaceId: strin
 
   const runId = candidateRow.runId as string;
   const jobId = candidateRow.jobId as string;
+  const cvQualityScore = (candidateRow.cvQualityScore ?? candidateRow.cv_quality_score) as number | null;
 
   const [criteriaRows, evalRows, settings] = await Promise.all([
     sql`SELECT * FROM job_criteria WHERE job_id = ${jobId} AND archived = false`,
@@ -54,7 +55,12 @@ async function recalculateCandidateScore(candidateId: string, workspaceId: strin
     }),
   );
 
-  const breakdown = computeScore(criteria, scoringInputs, settings.confidence_threshold);
+  const breakdown = computeScore(
+    criteria,
+    scoringInputs,
+    settings.confidence_threshold,
+    cvQualityScore,
+  );
 
   const [updated] = await sql`
     UPDATE run_candidates
@@ -66,6 +72,7 @@ async function recalculateCandidateScore(candidateId: string, workspaceId: strin
         flag_triggered = ${breakdown.flag_triggered},
         score_base = ${breakdown.base_score},
         penalty_flag = ${breakdown.flag_penalty},
+        quality_adjustment = ${breakdown.quality_adjustment},
         must_total = ${breakdown.must_total},
         nice_total = ${breakdown.nice_total},
         flag_total = ${breakdown.flag_total},
@@ -75,7 +82,7 @@ async function recalculateCandidateScore(candidateId: string, workspaceId: strin
     WHERE id = ${candidateId}
     RETURNING id, name, title, location, score, confidence, status, summary,
               parse_warning, must_met, nice_met, flag_triggered,
-              score_base, penalty_flag,
+              score_base, penalty_flag, cv_quality_score, quality_adjustment,
               must_total, nice_total, flag_total,
               criteria_met_pct, must_met_pct, nice_met_pct,
               cv_storage_path, recruitee_applicant_id, run_id

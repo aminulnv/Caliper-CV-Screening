@@ -123,6 +123,24 @@ export const api = {
         'GET',
         `/api/v1/runs/${runId}/compare?ids=${candidateIds.map(encodeURIComponent).join(',')}`,
       ),
+    setDisposition: (runId: string, candidateId: string, body: SetDispositionBody) =>
+      request<DispositionResponse>(
+        'POST',
+        `/api/v1/runs/${runId}/candidates/${candidateId}/disposition`,
+        body,
+      ),
+    bulkDisposition: (runId: string, body: BulkDispositionBody) =>
+      request<BulkDispositionResponse>(
+        'POST',
+        `/api/v1/runs/${runId}/candidates/bulk-disposition`,
+        body,
+      ),
+    pushRecruitee: (runId: string, candidateId: string) =>
+      request<DispositionResponse>(
+        'POST',
+        `/api/v1/runs/${runId}/candidates/${candidateId}/push-recruitee`,
+        {},
+      ),
   },
 
   candidates: {
@@ -193,6 +211,8 @@ export const api = {
       request<GenerateCriteriaResponse>('POST', `/api/v1/jobs/${id}/generate-criteria`, body ?? {}),
     audit: (id: string) => request<JobAuditEntry[]>('GET', `/api/v1/jobs/${id}/audit`),
     calibration: (id: string) => request<JobCalibrationResponse>('GET', `/api/v1/jobs/${id}/calibration`),
+    pipelineStages: (id: string) =>
+      request<JobPipelineStagesResponse>('GET', `/api/v1/jobs/${id}/pipeline-stages`),
     relatedProfiles: (id: string) =>
       request<RelatedProfileRow[]>('GET', `/api/v1/jobs/${id}/related-profiles`),
     suggestRelatedProfileSearch: async (
@@ -291,10 +311,45 @@ export const api = {
       request<{ success: boolean; updated?: boolean }>('POST', '/api/v1/workspace/invites', body),
     updateMemberRole: (memberId: string, role: UserRole) =>
       request<{ success: boolean }>('PATCH', `/api/v1/workspace/members/${memberId}`, { role }),
+    updateMemberBudget: (memberId: string, aiBudgetUsd: number | null) =>
+      request<{ success: boolean; ai_budget_usd: number | null; ai_spent_usd: number; ai_status: BudgetStatus }>(
+        'PUT',
+        `/api/v1/workspace/members/${memberId}/budget`,
+        { ai_budget_usd: aiBudgetUsd },
+      ),
     removeMember: (memberId: string) =>
       request<{ success: boolean }>('DELETE', `/api/v1/workspace/members/${memberId}`),
     revokeInvite: (inviteId: string) =>
       request<{ success: boolean }>('DELETE', `/api/v1/workspace/invites/${inviteId}`),
+  },
+
+  usage: {
+    get: () => request<UsageResponse>('GET', '/api/v1/usage'),
+    events: (params?: { month?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.month) qs.set('month', params.month);
+      if (params?.limit != null) qs.set('limit', String(params.limit));
+      const query = qs.toString();
+      return request<UsageEventsResponse>(
+        'GET',
+        `/api/v1/usage/events${query ? `?${query}` : ''}`,
+      );
+    },
+    estimate: (params: { cv_count: number; criteria_count: number; model: string }) => {
+      const qs = new URLSearchParams({
+        cv_count: String(params.cv_count),
+        criteria_count: String(params.criteria_count),
+        model: params.model,
+      });
+      return request<UsageEstimateResponse>('GET', `/api/v1/usage/estimate?${qs}`);
+    },
+  },
+
+  activity: {
+    list: (limit?: number) => {
+      const qs = limit != null ? `?limit=${limit}` : '';
+      return request<{ entries: JobAuditEntry[] }>('GET', `/api/v1/activity${qs}`);
+    },
   },
 
   notifications: {
@@ -321,6 +376,8 @@ export type MeResponse =
       role: UserRole;
     };
 
+export type BudgetStatus = 'ok' | 'warn' | 'blocked' | 'unlimited';
+
 export interface WorkspaceMember {
   id: string;
   user_id: string;
@@ -330,6 +387,9 @@ export interface WorkspaceMember {
   role: UserRole;
   joined_at: string;
   is_current_user: boolean;
+  ai_budget_usd?: number | null;
+  ai_spent_usd?: number;
+  ai_status?: BudgetStatus;
 }
 
 export interface WorkspaceInvite {
@@ -349,6 +409,74 @@ export interface WorkspaceMembersResponse {
 export interface InviteMemberBody {
   email: string;
   role: UserRole;
+}
+
+export interface MemberUsageSummary {
+  user_id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  budget_usd: number | null;
+  spent_usd: number;
+  pct_used: number | null;
+  status: BudgetStatus;
+}
+
+export interface UsageEvent {
+  id: string;
+  feature: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  run_id: string | null;
+  job_id: string | null;
+  created_at: string;
+}
+
+export interface UsageMonthlyBucket {
+  month: string;
+  spent_usd: number;
+  event_count: number;
+  cv_count: number;
+  by_feature: Record<string, number>;
+  by_model: Record<string, number>;
+}
+
+export interface UsageTeamMonthlyMember {
+  user_id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  by_month: Record<string, number>;
+  total_usd: number;
+}
+
+export interface UsageTeamMonthly {
+  months: string[];
+  team_by_month: Record<string, number>;
+  members: UsageTeamMonthlyMember[];
+}
+
+export interface UsageResponse {
+  self: MemberUsageSummary;
+  recent_events: UsageEvent[];
+  monthly: UsageMonthlyBucket[];
+  members?: MemberUsageSummary[];
+  totals?: { budget_usd: number; spent_usd: number };
+  team_monthly?: UsageTeamMonthly;
+}
+
+export interface UsageEventsResponse {
+  events: UsageEvent[];
+}
+
+export interface UsageEstimateResponse {
+  estimated_cost_usd: number;
+  spent_usd: number;
+  budget_usd: number | null;
+  pct_used: number | null;
+  status: BudgetStatus;
 }
 
 export interface RunSharedUser {
@@ -384,6 +512,8 @@ export interface RunDetail extends RunListItem {
   candidates: CandidateRow[];
 }
 
+export type CandidateDisposition = 'shortlist' | 'hold' | 'reject' | 'advanced';
+
 export interface CandidateRow {
   id: string;
   name: string | null;
@@ -399,6 +529,8 @@ export interface CandidateRow {
   flag_triggered: number;
   score_base?: number | null;
   penalty_flag?: number | null;
+  cv_quality_score?: number | null;
+  quality_adjustment?: number | null;
   must_total?: number | null;
   nice_total?: number | null;
   flag_total?: number | null;
@@ -407,6 +539,51 @@ export interface CandidateRow {
   nice_met_pct?: number | null;
   has_cv?: boolean;
   applicant_email?: string | null;
+  recruitee_applicant_id?: string | null;
+  recruitee_placement_id?: string | null;
+  disposition?: CandidateDisposition | null;
+  target_stage_id?: string | null;
+  target_stage_name?: string | null;
+  disposition_note?: string | null;
+  disposition_by?: string | null;
+  disposition_at?: string | null;
+  recruitee_sync_status?: 'pending' | 'synced' | 'failed' | 'skipped' | null;
+  recruitee_synced_at?: string | null;
+  recruitee_sync_error?: string | null;
+}
+
+export interface SetDispositionBody {
+  disposition: CandidateDisposition;
+  target_stage_id?: string;
+  target_stage_name?: string;
+  note?: string;
+  push_to_recruitee?: boolean;
+  requalify?: boolean;
+}
+
+export interface BulkDispositionBody extends SetDispositionBody {
+  candidate_ids: string[];
+}
+
+export interface DispositionResponse {
+  success: boolean;
+  candidate: CandidateRow;
+  sync_status: string | null;
+  sync_error: string | null;
+}
+
+export interface BulkDispositionResponse {
+  success: boolean;
+  updated_count: number;
+  candidates: CandidateRow[];
+  errors: Array<{ candidate_id: string; error: string }>;
+}
+
+export interface JobPipelineStagesResponse {
+  stages: RecruiteePipelineStage[];
+  platform_actor: string;
+  recruitee_linked?: boolean;
+  error?: string;
 }
 
 export interface CandidateHistoryItem {
@@ -478,6 +655,10 @@ export interface JobScoredCandidate {
   status: string | null;
   run_id: string | null;
   run_created_at: string;
+  recruitee_applicant_id?: string | null;
+  disposition?: CandidateDisposition | null;
+  target_stage_name?: string | null;
+  recruitee_sync_status?: string | null;
 }
 
 export interface JobScoredCandidatesResponse {
@@ -537,8 +718,10 @@ export interface JobAuditEntry {
   msg: string;
   reason: string;
   warned: boolean;
-  kind: 'job' | 'criteria' | 'run' | 'override' | 'sync' | 'other';
+  kind: 'job' | 'criteria' | 'run' | 'override' | 'candidate' | 'sync' | 'other';
   runId: string | null;
+  jobId?: string | null;
+  jobName?: string | null;
 }
 
 export interface RelatedProfileRow {
@@ -592,6 +775,8 @@ export interface UpsertJobBody {
   description?: string;
   posted_on?: string;
   screening_model?: string | null;
+  shortlist_stage_id?: string | null;
+  shortlist_stage_name?: string | null;
   criteria?: CriterionItem[];
 }
 
@@ -630,7 +815,14 @@ export interface CreateRunBody {
   run_note?: string;
   cv_sources: Array<
     | { type: 'storage'; path: string; name: string }
-    | { type: 'recruitee'; applicant_id: string; cv_url: string; name: string; email?: string }
+    | {
+        type: 'recruitee';
+        applicant_id: string;
+        cv_url: string;
+        name: string;
+        email?: string;
+        placement_id?: string;
+      }
   >;
 }
 
@@ -657,6 +849,7 @@ export interface RecruiteeApplicantsResponse {
 
 export interface RecruiteeApplicant {
   id: string;
+  placement_id?: string | null;
   name: string;
   email: string | null;
   location: string | null;
@@ -684,6 +877,7 @@ export interface WorkspaceSettings {
   has_openai_key: boolean;
   has_recruitee_key: boolean;
   recruitee_managed_by_platform?: boolean;
+  recruitee_platform_actor_label?: string | null;
   supported_models: string[];
 }
 
