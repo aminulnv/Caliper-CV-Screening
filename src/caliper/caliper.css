@@ -1206,6 +1206,8 @@ button.wiz__step {
   justify-content: center;
   align-items: center;
   padding: 20px 16px;
+  background: rgba(28, 25, 23, 0.48);
+  backdrop-filter: blur(3px);
 }
 
 .detail.cv-drawer {
@@ -4852,7 +4854,7 @@ button.wiz__step {
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--warn-ink) 22%, var(--line));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn-soft) 55%, var(--surface));
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--surface));
 }
 
 .rerun-conflict__head {
@@ -6978,6 +6980,8 @@ button.wiz__step {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
   overflow: hidden;
+  min-height: 0;
+  isolation: isolate;
 }
 
 .run-sheet__head {
@@ -6988,6 +6992,7 @@ button.wiz__step {
   padding: 18px 22px;
   border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
+  background: var(--surface);
 }
 
 .run-sheet__eyebrow {
@@ -7109,6 +7114,8 @@ button.wiz__step {
   padding: 16px 22px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  background: var(--surface);
 }
 
 .run-sheet__foot {
@@ -7119,6 +7126,7 @@ button.wiz__step {
   padding: 14px 22px;
   border-top: 1px solid var(--line-soft);
   flex-shrink: 0;
+  background: var(--surface);
 }
 
 @media (max-width: 1024px) {

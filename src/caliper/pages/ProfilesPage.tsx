@@ -136,22 +136,19 @@ function lookupPriorConflict(row, rowIndex, priorIndex) {
   };
 }
 
-/** Expand or trim selection to match row count; pad with `fill` when growing. */
-function alignRowSelection(selected, rowCount, fill = false) {
-  if (!rowCount) return [];
-  if (selected.length === rowCount) return selected.slice();
-  const next = Array(rowCount).fill(fill);
-  for (let i = 0; i < Math.min(selected.length, rowCount); i++) {
-    next[i] = selected[i];
+/** null = every applicant in the current list is selected. */
+function pickInitialApplicantSelection(apps, initialStage) {
+  if (!initialStage || initialStage === 'all') return null;
+  const ids = new Set();
+  for (const a of apps) {
+    const stage = a.status || a.stage_name || 'No stage set';
+    if (stage === initialStage) ids.add(String(a.id));
   }
-  return next;
+  return ids;
 }
 
-/** UI default: unset selection matches “all applicants selected”. */
-function resolveRowSelection(selected, rowCount) {
-  if (!rowCount) return [];
-  if (selected.length === rowCount) return selected;
-  return Array(rowCount).fill(true);
+function effectiveApplicantIdSet(selectedIds, allIds) {
+  return selectedIds === null ? new Set(allIds) : new Set(selectedIds);
 }
 
 function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
@@ -186,7 +183,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
 
   const [step, setStep] = React.useState(1);
   const [cvMode, setCvMode] = React.useState(profile.source === 'recruitee' ? 'recruitee' : 'manual');
-  const [recruiteeRowSelected, setRecruiteeRowSelected] = React.useState([]);
+  const [selectedApplicantIds, setSelectedApplicantIds] = React.useState(null);
   const [stageScope, setStageScope] = React.useState(initialStage ?? 'all');
 
   React.useEffect(() => {
@@ -207,7 +204,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   React.useEffect(() => {
     setStep(1);
     setCvMode(profile.source === 'recruitee' ? 'recruitee' : 'manual');
-    setRecruiteeRowSelected([]);
+    setSelectedApplicantIds(null);
     setUploadedFiles([]);
     setRunProcessing(null);
     setRunError(null);
@@ -239,13 +236,12 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       setRecruiteeLoading(false);
       return;
     }
-    const pickInitial = (apps) =>
-      apps.map((a) => !initialStage || initialStage === 'all' || (a.status || a.stage_name || 'No stage set') === initialStage);
+    const pickInitial = (apps) => pickInitialApplicantSelection(apps, initialStage);
     let cancelled = false;
     const cached = getCachedApplicants(profile.sourceRef);
     if (cached?.applicants?.length) {
       setRecruiteeApplicants(cached.applicants);
-      setRecruiteeRowSelected(pickInitial(cached.applicants));
+      setSelectedApplicantIds(pickInitial(cached.applicants));
       setRecruiteeLoading(false);
     } else {
       setRecruiteeLoading(true);
@@ -254,7 +250,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       .then((data) => {
         if (cancelled) return;
         setRecruiteeApplicants(data.applicants);
-        setRecruiteeRowSelected(pickInitial(data.applicants));
+        setSelectedApplicantIds(pickInitial(data.applicants));
       })
       .catch(() => {
         if (!cancelled) setRecruiteeApplicants([]);
@@ -271,6 +267,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       hasDirectCv || Boolean(a.cv_url?.startsWith('recruitee-applicant:'));
     return {
       id: a.id,
+      placement_id: a.placement_id ?? null,
       name: a.name || 'Unknown',
       email: a.email ?? null,
       loc: a.location || '—',
@@ -282,8 +279,20 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     };
   });
 
-  const rowSel = resolveRowSelection(recruiteeRowSelected, rows.length);
-  const nSelectedRec = rowSel.filter(Boolean).length;
+  const allApplicantIds = React.useMemo(
+    () => rows.map((r) => String(r.id)).filter((id) => id && id !== 'undefined'),
+    [rows],
+  );
+
+  const rowSel = React.useMemo(() => {
+    if (selectedApplicantIds === null) return rows.map(() => true);
+    return rows.map((r) => selectedApplicantIds.has(String(r.id)));
+  }, [rows, selectedApplicantIds]);
+
+  const nSelectedRec =
+    selectedApplicantIds === null
+      ? rows.length
+      : allApplicantIds.filter((id) => selectedApplicantIds.has(id)).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
 
   // Pipeline stages (segments), preserving the incoming order from Recruitee.
@@ -305,21 +314,38 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
 
   const applyStageScope = (stage) => {
     setStageScope(stage);
-    setRecruiteeRowSelected(rows.map((r) => stage === 'all' || r.stage === stage));
+    if (stage === 'all') {
+      setSelectedApplicantIds(null);
+      return;
+    }
+    const ids = new Set();
+    for (const r of rows) {
+      if (r.stage === stage) ids.add(String(r.id));
+    }
+    setSelectedApplicantIds(ids);
   };
   const toggleRecruiteeRow = (i) => {
-    setRecruiteeRowSelected((prev) => {
-      const current = alignRowSelection(prev, rows.length, false);
-      const next = current.slice();
-      next[i] = !next[i];
+    const id = String(rows[i]?.id ?? '');
+    if (!id || id === 'undefined') return;
+    setSelectedApplicantIds((prev) => {
+      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
     setStageScope('custom');
   };
   const toggleStageRows = (stage, select) => {
-    setRecruiteeRowSelected((prev) => {
-      const current = alignRowSelection(prev, rows.length, false);
-      return current.map((sel, idx) => (rows[idx].stage === stage ? select : sel));
+    setSelectedApplicantIds((prev) => {
+      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      for (let idx = 0; idx < rows.length; idx++) {
+        if (rows[idx].stage !== stage) continue;
+        const id = String(rows[idx].id);
+        if (!id || id === 'undefined') continue;
+        if (select) next.add(id);
+        else next.delete(id);
+      }
+      return next;
     });
     setStageScope('custom');
   };
@@ -342,28 +368,26 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
 
   const deselectConflict = React.useCallback((rowIndex) => {
     const applicantId = String(rows[rowIndex]?.id ?? '');
-    if (!applicantId) return;
-    setRecruiteeRowSelected((prev) => {
-      const current = alignRowSelection(prev, rows.length, false);
-      return current.map((sel, i) => (String(rows[i]?.id) === applicantId ? false : sel));
+    if (!applicantId || applicantId === 'undefined') return;
+    setSelectedApplicantIds((prev) => {
+      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      next.delete(applicantId);
+      return next;
     });
     setStageScope('custom');
-  }, [rows]);
+  }, [rows, allApplicantIds]);
 
   const deselectAllConflicts = React.useCallback(() => {
     const conflictIds = new Set(
-      rerunConflicts.map((c) => String(c.applicantId ?? rows[c.rowIndex]?.id ?? '')),
+      rerunConflicts.map((c) => String(c.applicantId)).filter((id) => id && id !== 'undefined'),
     );
-    setRecruiteeRowSelected((prev) => {
-      // Match UI: unset/partial arrays mean “all selected” until user toggles.
-      const base =
-        prev.length === rows.length
-          ? prev.slice()
-          : Array(rows.length).fill(true);
-      return base.map((sel, i) => (conflictIds.has(String(rows[i]?.id)) ? false : sel));
+    setSelectedApplicantIds((prev) => {
+      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      for (const id of conflictIds) next.delete(id);
+      return next;
     });
     setStageScope('custom');
-  }, [rerunConflicts, rows]);
+  }, [rerunConflicts, allApplicantIds]);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
