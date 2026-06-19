@@ -33,7 +33,10 @@ export async function resolveWorkspaceAccess(
   const normalizedEmail = email.toLowerCase();
 
   let [roleRow] = await sql`
-    SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
+    SELECT workspace_id, role FROM user_roles
+    WHERE user_id = ${sub}
+    ORDER BY created_at ASC
+    LIMIT 1
   `;
 
   if (roleRow) {
@@ -79,7 +82,10 @@ export async function resolveWorkspaceAccess(
     }).catch((err) => console.error('[alert] invite accepted:', err));
 
     [roleRow] = await sql`
-      SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
+      SELECT workspace_id, role FROM user_roles
+      WHERE user_id = ${sub}
+      ORDER BY created_at ASC
+      LIMIT 1
     `;
     if (roleRow) {
       const wsId = (roleRow.workspaceId ?? roleRow.workspace_id) as string;
@@ -96,7 +102,10 @@ export async function resolveWorkspaceAccess(
         ON CONFLICT (user_id, workspace_id) DO NOTHING
       `;
       [roleRow] = await sql`
-        SELECT workspace_id, role FROM user_roles WHERE user_id = ${sub} LIMIT 1
+        SELECT workspace_id, role FROM user_roles
+        WHERE user_id = ${sub}
+        ORDER BY created_at ASC
+        LIMIT 1
       `;
       if (roleRow) {
         const wsId = (roleRow.workspaceId ?? roleRow.workspace_id) as string;

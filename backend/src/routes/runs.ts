@@ -22,6 +22,7 @@ import {
 } from '../services/cv-embedding.js';
 import { semanticCvSearchEnabled } from '../config/features.js';
 import { alertRunCompleted, alertRunFailed, alertRunShared } from '../services/alerting.js';
+import { runVisibleToUser } from '../lib/run-access.js';
 
 /** Align with Recruitee applicant fetch cap; override via MAX_CV_SOURCES_PER_RUN env. */
 const MAX_CV_SOURCES_PER_RUN = Number(process.env.MAX_CV_SOURCES_PER_RUN) || 10_000;
@@ -75,14 +76,7 @@ export async function runsRoutes(app: FastifyInstance) {
         JOIN users su ON su.sub = rs.user_id
         WHERE rs.run_id = sr.id
       ) shared ON true
-      WHERE sr.workspace_id = ${req.workspaceId}
-        AND (
-          sr.owner_id = ${req.userId}
-          OR EXISTS (
-            SELECT 1 FROM run_shares rs2
-            WHERE rs2.run_id = sr.id AND rs2.user_id = ${req.userId}
-          )
-        )
+      WHERE ${runVisibleToUser(req.workspaceId, req.userId)}
       ORDER BY sr.created_at DESC
     `;
     return runs.map((r) => formatRunResponse(r as Record<string, unknown>, req.userId));
@@ -113,14 +107,8 @@ export async function runsRoutes(app: FastifyInstance) {
         JOIN users su ON su.sub = rs.user_id
         WHERE rs.run_id = sr.id
       ) shared ON true
-      WHERE sr.id = ${req.params.id} AND sr.workspace_id = ${req.workspaceId}
-        AND (
-          sr.owner_id = ${req.userId}
-          OR EXISTS (
-            SELECT 1 FROM run_shares rs
-            WHERE rs.run_id = sr.id AND rs.user_id = ${req.userId}
-          )
-        )
+      WHERE sr.id = ${req.params.id}
+        AND ${runVisibleToUser(req.workspaceId, req.userId)}
     `;
     if (!run) return reply.status(404).send({ error: 'Run not found' });
 
@@ -158,14 +146,8 @@ export async function runsRoutes(app: FastifyInstance) {
       const [run] = await sql`
         SELECT sr.id, sr.job_id
         FROM screening_runs sr
-        WHERE sr.id = ${req.params.id} AND sr.workspace_id = ${req.workspaceId}
-          AND (
-            sr.owner_id = ${req.userId}
-            OR EXISTS (
-              SELECT 1 FROM run_shares rs
-              WHERE rs.run_id = sr.id AND rs.user_id = ${req.userId}
-            )
-          )
+        WHERE sr.id = ${req.params.id}
+          AND ${runVisibleToUser(req.workspaceId, req.userId)}
       `;
       if (!run) return reply.status(404).send({ error: 'Run not found' });
 

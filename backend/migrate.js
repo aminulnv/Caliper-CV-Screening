@@ -66,6 +66,7 @@ const migrations = [
   './migrate-ai-budget.sql',
   './migrate-candidate-disposition.sql',
   './migrate-cv-quality.sql',
+  './migrate-run-share-user-id.sql',
 ];
 
 let failed = false;

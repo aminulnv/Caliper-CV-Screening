@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Page — Runs hub (all screening history)
 import React from 'react'
-import { Btn, Icon, Segmented, RunStatusBadge, PageLoading, PageError, PageEmpty } from '@/caliper/ui'
+import { Btn, Icon, Segmented, RunStatusBadge, PageLoading, PageError, PageEmpty, Badge } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunListItem, WorkspaceMember } from '@/services/api'
 import { RunAccessControl } from '@/caliper/components/RunAccessControl'
@@ -216,7 +216,12 @@ function RunsPage({ go }) {
     });
   };
 
-  const filtered = runs.filter((r) => filter === 'all' || r.status === filter);
+  const sharedRuns = runs.filter((r) => !r.is_owner);
+  const filtered = runs.filter((r) => {
+    if (filter === 'shared') return !r.is_owner;
+    if (filter === 'all') return true;
+    return r.status === filter;
+  });
   const searchFiltered = React.useMemo(() => {
     const q = runSearchQuery.trim();
     if (!q) return filtered;
@@ -290,6 +295,7 @@ function RunsPage({ go }) {
         </div>
         <Segmented value={filter} onChange={setFilter} options={[
           { value: 'all',         label: `All  ${runs.length}` },
+          { value: 'shared',      label: `Shared with me  ${sharedRuns.length}` },
           { value: 'completed',   label: 'Completed' },
           { value: 'in_progress', label: 'In progress' },
           { value: 'queued',      label: 'Queued' },
@@ -394,10 +400,20 @@ function RunsPage({ go }) {
               >
                 <td className="col-num muted" style={{ fontSize: 11.5 }}>{r.id}</td>
                 <td>
-                  <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id ?? r.jobId}</div>
+                  <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id ?? r.jobId}</div>
+                    {!r.is_owner && (
+                      <Badge tone="info" dot>Shared with you</Badge>
+                    )}
+                  </div>
                   {r.job_profiles?.dept && (
                     <div className="muted" style={{ fontSize: 11.5, marginTop: 1 }}>
                       {r.job_profiles.dept}
+                    </div>
+                  )}
+                  {!r.is_owner && r.owner_name && (
+                    <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+                      By {r.owner_name}
                     </div>
                   )}
                 </td>

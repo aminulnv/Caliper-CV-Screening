@@ -61,6 +61,9 @@ async function migrateUserSub(
     await tx`UPDATE workspace_invites SET invited_by = ${newSub} WHERE invited_by = ${oldSub}`;
     await tx`UPDATE job_profiles SET created_by = ${newSub} WHERE created_by = ${oldSub}`;
     await tx`UPDATE screening_runs SET owner_id = ${newSub} WHERE owner_id = ${oldSub}`;
+    // run_shares.user_id cascades on user delete — migrate before removing the old sub row.
+    await tx`UPDATE run_shares SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
+    await tx`UPDATE run_shares SET shared_by = ${newSub} WHERE shared_by = ${oldSub}`;
     await tx`UPDATE candidate_evaluations SET overridden_by = ${newSub} WHERE overridden_by = ${oldSub}`;
     await tx`UPDATE audit_log SET user_id = ${newSub} WHERE user_id = ${oldSub}`;
     await tx`DELETE FROM users WHERE sub = ${oldSub}`;
