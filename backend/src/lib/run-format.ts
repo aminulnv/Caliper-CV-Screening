@@ -5,6 +5,24 @@ export interface SharedUser {
   avatar_url: string | null;
 }
 
+function normalizeStringIdArray(raw: unknown, fallback: string[] = []): string[] {
+  if (Array.isArray(raw)) {
+    return raw.map((id) => String(id)).filter((id) => id && id !== 'undefined');
+  }
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.startsWith('{') && t.endsWith('}')) {
+      return t
+        .slice(1, -1)
+        .split(',')
+        .map((s) => s.trim().replace(/^"|"$/g, ''))
+        .filter(Boolean);
+    }
+    if (t) return [t];
+  }
+  return fallback;
+}
+
 function formatSharedUsers(raw: unknown): SharedUser[] {
   if (!raw) return [];
   let list: unknown = raw;
@@ -38,12 +56,16 @@ function formatSharedUsers(raw: unknown): SharedUser[] {
 export function formatRunResponse(row: Record<string, unknown>, userId: string) {
   const sharedUsers = formatSharedUsers(row.sharedUsers ?? row.shared_users);
   const rawIds = row.sharedUserIds ?? row.shared_user_ids;
-  const sharedUserIds = Array.isArray(rawIds)
-    ? rawIds
-    : sharedUsers.map((u) => u.user_id);
+  const sharedUserIds = normalizeStringIdArray(
+    rawIds,
+    sharedUsers.map((u) => u.user_id),
+  );
 
   const pick = <T = unknown>(camel: string, snake: string): T =>
     (row[camel] ?? row[snake] ?? null) as T;
+
+  const ownerId = String(row.ownerId ?? row.owner_id ?? '');
+  const isOwner = ownerId === userId;
 
   return {
     id: row.id,
@@ -58,7 +80,8 @@ export function formatRunResponse(row: Record<string, unknown>, userId: string) 
     started_at: pick<string | null>('startedAt', 'started_at'),
     completed_at: pick<string | null>('completedAt', 'completed_at'),
     created_at: pick<string | null>('createdAt', 'created_at'),
-    is_owner: (row.ownerId ?? row.owner_id) === userId,
+    is_owner: isOwner,
+    access: isOwner ? 'owner' : 'shared',
     owner_name: pick<string | null>('ownerName', 'owner_name'),
     owner_email: pick<string | null>('ownerEmail', 'owner_email'),
     owner_avatar_url: pick<string | null>('ownerAvatarUrl', 'owner_avatar_url'),

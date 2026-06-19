@@ -16,6 +16,7 @@ import { PushRecruiteeModal } from '@/caliper/components/PushRecruiteeModal'
 import { PipelineStageActions } from '@/caliper/components/PipelineStageActions'
 import { useAuth } from '@/contexts/AuthContext'
 import type { WorkspaceMember, CandidateDisposition, RecruiteePipelineStage, SetDispositionBody } from '@/services/api'
+import { memberUserId, parseSharedUserIds } from '@/lib/run-share'
 import { groupPipelineStages } from '@/lib/recruitee-pipeline'
 import {
   dispositionDisplayLabel,
@@ -463,24 +464,27 @@ function ResultsPage({ tweaks, route, go }) {
     const activeRunId = run?.id;
     if (!activeRunId) return;
 
+    const memberId = memberUserId(member);
+    if (!memberId) return;
+
     let nextIds;
     let rollback;
 
     setRun((prev) => {
       if (!prev) return prev;
 
-      const current = Array.isArray(prev.shared_user_ids) ? prev.shared_user_ids : [];
+      const current = parseSharedUserIds(prev.shared_user_ids, prev.shared_users);
       const currentShared = Array.isArray(prev.shared_users) ? prev.shared_users : [];
       rollback = { shared_user_ids: current, shared_users: currentShared };
 
-      const isRemoving = current.some((id) => String(id) === String(member.user_id));
+      const isRemoving = current.some((id) => String(id) === memberId);
       nextIds = isRemoving
-        ? current.filter((id) => String(id) !== String(member.user_id))
-        : [...current, member.user_id];
+        ? current.filter((id) => String(id) !== memberId)
+        : [...current, memberId];
       const nextShared = isRemoving
-        ? currentShared.filter((u) => (u.user_id ?? u.userId) !== member.user_id)
+        ? currentShared.filter((u) => String(u.user_id ?? u.userId) !== memberId)
         : [...currentShared, {
-            user_id: member.user_id,
+            user_id: memberId,
             name: member.name,
             email: member.email,
             avatar_url: member.avatar_url,

@@ -16,6 +16,7 @@ import {
   runScoreRange,
 } from '@/lib/run-display'
 import { matchesTextQuery } from '@/lib/text-search'
+import { memberUserId, parseSharedUserIds, isRunSharedWithViewer } from '@/lib/run-share'
 
 const RUN_TABLE_SORT_KEYS = {
   id: 'id',
@@ -177,6 +178,9 @@ function RunsPage({ go }) {
   };
 
   const toggleShare = (runId, member) => {
+    const memberId = memberUserId(member);
+    if (!memberId) return;
+
     let nextIds;
     let rollback;
 
@@ -184,18 +188,18 @@ function RunsPage({ go }) {
       const run = prev.find((item) => item.id === runId);
       if (!run) return prev;
 
-      const current = Array.isArray(run.shared_user_ids) ? run.shared_user_ids : [];
+      const current = parseSharedUserIds(run.shared_user_ids, run.shared_users);
       const currentShared = Array.isArray(run.shared_users) ? run.shared_users : [];
       rollback = { shared_user_ids: current, shared_users: currentShared };
 
-      const isRemoving = current.some((id) => String(id) === String(member.user_id));
+      const isRemoving = current.some((id) => String(id) === memberId);
       nextIds = isRemoving
-        ? current.filter((id) => String(id) !== String(member.user_id))
-        : [...current, member.user_id];
+        ? current.filter((id) => String(id) !== memberId)
+        : [...current, memberId];
       const nextShared = isRemoving
-        ? currentShared.filter((u) => (u.user_id ?? u.userId) !== member.user_id)
+        ? currentShared.filter((u) => String(u.user_id ?? u.userId) !== memberId)
         : [...currentShared, {
-            user_id: member.user_id,
+            user_id: memberId,
             name: member.name,
             email: member.email,
             avatar_url: member.avatar_url,
@@ -216,9 +220,9 @@ function RunsPage({ go }) {
     });
   };
 
-  const sharedRuns = runs.filter((r) => !r.is_owner);
+  const sharedRuns = runs.filter((r) => isRunSharedWithViewer(r));
   const filtered = runs.filter((r) => {
-    if (filter === 'shared') return !r.is_owner;
+    if (filter === 'shared') return isRunSharedWithViewer(r);
     if (filter === 'all') return true;
     return r.status === filter;
   });
@@ -238,7 +242,13 @@ function RunsPage({ go }) {
       ]),
     );
   }, [filtered, runSearchQuery]);
-  const displayRuns = sortRuns(searchFiltered, sortState);
+  const displayRuns = React.useMemo(() => {
+    const sorted = sortRuns(searchFiltered, sortState);
+    if (sortState || filter !== 'all' || runSearchQuery.trim()) return sorted;
+    const shared = sorted.filter((r) => isRunSharedWithViewer(r));
+    const own = sorted.filter((r) => !isRunSharedWithViewer(r));
+    return [...shared, ...own];
+  }, [searchFiltered, sortState, filter, runSearchQuery]);
 
   const handleSort = (key) => {
     setSortState((prev) => cycleRunTableSort(prev, key));
@@ -282,6 +292,12 @@ function RunsPage({ go }) {
       </div>
 
       <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+        {sharedRuns.length > 0 && !runSearchQuery.trim() && (
+          <div className="callout" style={{ flex: '1 1 100%', marginBottom: 0, fontSize: 13 }}>
+            <strong>{sharedRuns.length}</strong> run{sharedRuns.length === 1 ? '' : 's'} shared with you
+            — use the <strong>Shared with me</strong> filter or look for the badge below.
+          </div>
+        )}
         <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
           <input
             className="inp"
@@ -402,7 +418,7 @@ function RunsPage({ go }) {
                 <td>
                   <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <div style={{ fontWeight: 500 }}>{r.job_profiles?.name ?? r.job_id ?? r.jobId}</div>
-                    {!r.is_owner && (
+                    {isRunSharedWithViewer(r) && (
                       <Badge tone="info" dot>Shared with you</Badge>
                     )}
                   </div>
@@ -411,7 +427,7 @@ function RunsPage({ go }) {
                       {r.job_profiles.dept}
                     </div>
                   )}
-                  {!r.is_owner && r.owner_name && (
+                  {!isRunSharedWithViewer(r) && r.owner_name && (
                     <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
                       By {r.owner_name}
                     </div>

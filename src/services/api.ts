@@ -538,6 +538,8 @@ export interface RunListItem {
   completed_at: string | null;
   created_at: string;
   is_owner: boolean;
+  /** owner = you created the run; shared = someone shared it with you */
+  access?: 'owner' | 'shared';
   owner_name: string | null;
   owner_email: string | null;
   owner_avatar_url: string | null;

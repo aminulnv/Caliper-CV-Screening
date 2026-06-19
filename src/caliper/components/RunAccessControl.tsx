@@ -3,6 +3,7 @@ import React from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '@/caliper/ui'
 import { UserAvatar, RunAccessLabel } from '@/caliper/components/UserAvatar'
+import { memberUserId, parseSharedUserIds } from '@/lib/run-share'
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -24,9 +25,12 @@ function RunSharePopover({
   const popoverRef = React.useRef(null);
   const inputRef = React.useRef(null);
 
-  const sharedUserIds = asArray(run.shared_user_ids ?? run.sharedUserIds);
+  const sharedUserIds = parseSharedUserIds(
+    run.shared_user_ids ?? run.sharedUserIds,
+    asArray(run.shared_users ?? run.sharedUsers),
+  );
   const sharedUsers = asArray(run.shared_users ?? run.sharedUsers);
-  const shared = new Set(sharedUserIds.map((id) => String(id)));
+  const shared = new Set(sharedUserIds);
   const ignoreOutsideRef = React.useRef(false);
 
   const updatePosition = React.useCallback(() => {
@@ -182,10 +186,11 @@ function RunSharePopover({
             </div>
           )}
           {!loading && addPeople.map((m) => {
-            const isShared = shared.has(String(m.user_id));
+            const memberId = memberUserId(m);
+            const isShared = memberId && shared.has(memberId);
             return (
               <button
-                key={m.user_id}
+                key={m.user_id ?? m.userId ?? memberId}
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={isShared}

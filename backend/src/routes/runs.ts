@@ -258,9 +258,18 @@ export async function runsRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Only the run owner can share this run' });
       }
 
-      const requested = [...new Set(req.body?.user_ids ?? [])].filter(
-        (id) => typeof id === 'string' && id !== req.userId,
-      );
+      const rawIds = req.body?.user_ids ?? [];
+      const requested = [...new Set(
+        rawIds
+          .map((id) => (id != null && id !== '' ? String(id).trim() : ''))
+          .filter((id) => id && id !== req.userId),
+      )];
+
+      if (rawIds.length > 0 && requested.length === 0) {
+        return reply.status(400).send({
+          error: 'No valid recipients. Pick someone from the workspace member list to share with.',
+        });
+      }
 
       let memberIds: string[] = [];
       if (requested.length > 0) {
@@ -268,7 +277,7 @@ export async function runsRoutes(app: FastifyInstance) {
           SELECT user_id FROM user_roles
           WHERE workspace_id = ${req.workspaceId} AND user_id = ANY(${requested})
         `;
-        memberIds = members.map((m) => (m.userId ?? m.user_id) as string);
+        memberIds = members.map((m) => String(m.userId ?? m.user_id));
         if (memberIds.length !== requested.length) {
           return reply.status(400).send({ error: 'All recipients must be workspace members' });
         }

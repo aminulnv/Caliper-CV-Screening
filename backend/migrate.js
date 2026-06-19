@@ -67,6 +67,7 @@ const migrations = [
   './migrate-candidate-disposition.sql',
   './migrate-cv-quality.sql',
   './migrate-run-share-user-id.sql',
+  './migrate-repair-failed-shares.sql',
 ];
 
 let failed = false;
