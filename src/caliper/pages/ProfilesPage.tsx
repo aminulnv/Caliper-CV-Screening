@@ -209,6 +209,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const [runError, setRunError] = React.useState(null);
   const [runNote, setRunNote] = React.useState('');
   const [priorScreenings, setPriorScreenings] = React.useState([]);
+  const [priorScreeningsReady, setPriorScreeningsReady] = React.useState(false);
   const [usageEstimate, setUsageEstimate] = React.useState(null);
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
@@ -232,15 +233,23 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   React.useEffect(() => {
     if (isHero || !profile?.id) {
       setPriorScreenings([]);
+      setPriorScreeningsReady(false);
       return;
     }
     let cancelled = false;
+    setPriorScreeningsReady(false);
     api.jobs.priorScreenings(profile.id)
       .then(({ screenings }) => {
-        if (!cancelled) setPriorScreenings(screenings ?? []);
+        if (!cancelled) {
+          setPriorScreenings(screenings ?? []);
+          setPriorScreeningsReady(true);
+        }
       })
       .catch(() => {
-        if (!cancelled) setPriorScreenings([]);
+        if (!cancelled) {
+          setPriorScreenings([]);
+          setPriorScreeningsReady(true);
+        }
       });
     return () => { cancelled = true; };
   }, [profile.id, isHero]);
@@ -332,6 +341,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     if (autoExcludedPriorRef.current) return;
     if (cvMode !== 'recruitee' || recruiteeLoading || isHero) return;
     if (!recruiteeApplicants.length) return;
+    if (!priorScreeningsReady) return;
 
     const index = buildPriorScreeningIndex(priorScreenings);
     autoExcludedPriorRef.current = true;
@@ -356,6 +366,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     recruiteeLoading,
     isHero,
     priorScreenings,
+    priorScreeningsReady,
     recruiteeApplicants,
     rows,
     selectedApplicantIds,
