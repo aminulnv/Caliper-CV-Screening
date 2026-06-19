@@ -34,7 +34,7 @@ import {
 } from '@/lib/jobs-cache'
 import { CvViewer } from '@/caliper/components/CvViewer'
 import { useAuth } from '@/contexts/AuthContext'
-import { jobDateSortKey, runsForDisplay, shapeJobRow, formatJobDate } from '@/lib/job-profile'
+import { runsForDisplay, shapeJobRow, formatJobDate } from '@/lib/job-profile'
 import {
   getBiasWarning,
   getProtectedAttributeError,
@@ -50,126 +50,15 @@ import { RecruiteeEvalBadge } from '@/caliper/components/RecruiteeEvalBadge'
 import type { EvalSortMode } from '@/lib/recruitee-eval-sort'
 import { RerunConflictAlert, formatPriorScreeningMeta } from '@/caliper/components/RerunConflictAlert'
 import type { JobPriorScreening } from '@/services/api'
-
-function shapeJobsList(jobs: unknown[]) {
-  return jobs.map((j) => shapeJobRow(j as Record<string, unknown>));
-}
-
-const JOB_TABLE_SORT_KEYS = {
-  name: 'name',
-  posted: 'posted',
-  source: 'source',
-  dept: 'dept',
-  applicants: 'applicants',
-  criteria: 'criteria',
-  runs: 'runs',
-  lastRun: 'lastRun',
-  status: 'status',
-};
-
-function jobSortValue(profile, key) {
-  switch (key) {
-    case JOB_TABLE_SORT_KEYS.name:
-      return profile.name?.toLowerCase() ?? '';
-    case JOB_TABLE_SORT_KEYS.posted:
-      return jobDateSortKey(profile.postedOnAt);
-    case JOB_TABLE_SORT_KEYS.source:
-      return profile.source ?? '';
-    case JOB_TABLE_SORT_KEYS.dept:
-      return profile.dept?.toLowerCase() ?? '';
-    case JOB_TABLE_SORT_KEYS.applicants:
-      return profile.applicantsCount ?? -1;
-    case JOB_TABLE_SORT_KEYS.criteria:
-      return (profile.mustHave?.length ?? 0)
-        + (profile.niceToHave?.length ?? 0)
-        + (profile.redFlags?.length ?? 0);
-    case JOB_TABLE_SORT_KEYS.runs:
-      return profile.runsCount ?? 0;
-    case JOB_TABLE_SORT_KEYS.lastRun:
-      return jobDateSortKey(profile.screeningRuns?.[0]?.createdAt);
-    case JOB_TABLE_SORT_KEYS.status:
-      return profile.status ?? '';
-    default:
-      return '';
-  }
-}
-
-function compareJobSortValues(a, b) {
-  const aNum = typeof a === 'number';
-  const bNum = typeof b === 'number';
-  if (aNum && bNum) return a - b;
-  return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
-}
-
-function isJobDateSortKey(key) {
-  return key === JOB_TABLE_SORT_KEYS.posted || key === JOB_TABLE_SORT_KEYS.lastRun;
-}
-
-function compareJobDateSortValues(a, b, dir) {
-  const aEmpty = a <= 0;
-  const bEmpty = b <= 0;
-  if (aEmpty && bEmpty) return 0;
-  if (aEmpty) return 1;
-  if (bEmpty) return -1;
-  return dir === 'asc' ? a - b : b - a;
-}
-
-function sortJobProfiles(list, sortState) {
-  if (!sortState) return list;
-  return [...list].sort((a, b) => {
-    const va = jobSortValue(a, sortState.key);
-    const vb = jobSortValue(b, sortState.key);
-    if (isJobDateSortKey(sortState.key)) {
-      return compareJobDateSortValues(va, vb, sortState.dir);
-    }
-    const mult = sortState.dir === 'asc' ? 1 : -1;
-    return mult * compareJobSortValues(va, vb);
-  });
-}
-
-function cycleJobTableSort(prev, key) {
-  if (prev?.key !== key) return { key, dir: 'desc' };
-  if (prev.dir === 'desc') return { key, dir: 'asc' };
-  return null;
-}
-
-function JobsSortableTh({ label, sortKey, sortState, onSort, style, className }) {
-  const active = sortState?.key === sortKey;
-  const dir = active ? sortState.dir : null;
-  return (
-    <th
-      className={[
-        'tbl-sort-th',
-        active ? 'tbl-sort-th--active' : '',
-        className ?? '',
-      ].filter(Boolean).join(' ')}
-      style={style}
-      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
-    >
-      <button type="button" className="tbl-sort-btn" onClick={() => onSort(sortKey)}>
-        <span>{label}</span>
-        {active && (
-          <span className="tbl-sort-indicator" aria-hidden>
-            {dir === 'desc' ? '↓' : '↑'}
-          </span>
-        )}
-      </button>
-    </th>
-  );
-}
-
-const StatCell = ({ label, value, delta, deltaTone, sub }) => (
-  <div className="stats__cell">
-    <div className="stats__lbl">{label}</div>
-    <div className="stats__val">{value}</div>
-    {delta && (
-      <div className={`stats__delta${deltaTone ? ` stats__delta--${deltaTone}` : ''}`}>
-        {deltaTone === 'up' ? '↑' : deltaTone === 'down' ? '↓' : '·'} {delta}
-        {sub && <span className="muted" style={{ marginLeft: 4 }}> {sub}</span>}
-      </div>
-    )}
-  </div>
-);
+import { JobsListView } from '@/caliper/components/jobs/JobsListView'
+import { JobTabNav } from '@/caliper/components/jobs/JobTabNav'
+import { JobsPanel } from '@/caliper/components/jobs/JobsPanel'
+import {
+  shapeJobsList,
+  sortJobProfiles,
+  cycleJobTableSort,
+  getCriteriaListsForProfile,
+} from '@/caliper/components/jobs/jobs-utils'
 import {
   Icon,
   Btn,
@@ -183,16 +72,10 @@ import {
   Segmented,
   Toggle,
   Field,
+  PageEmpty,
 } from '@/caliper/ui'
-
-function getCriteriaListsForProfile(profile) {
-  if (!profile) return { must: [], nice: [], flag: [] };
-  return {
-    must: profile.mustHave || [],
-    nice: profile.niceToHave || [],
-    flag: profile.redFlags || [],
-  };
-}
+import { JobsPageLoading } from '@/caliper/pages/profiles/JobsPageLoading'
+import { matchesTextQuery } from '@/lib/text-search'
 
 function formatFileSizeJob(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -230,8 +113,9 @@ function buildPriorScreeningIndex(screenings: JobPriorScreening[]) {
 function lookupPriorForRow(row, priorIndex) {
   const byId = priorIndex.byRecruiteeId.get(String(row.id));
   if (byId) return byId;
-  if (row.email) {
-    const byEm = priorIndex.byEmail.get(row.email.trim().toLowerCase());
+  const email = row.email?.trim().toLowerCase();
+  if (email) {
+    const byEm = priorIndex.byEmail.get(email);
     if (byEm) return byEm;
   }
   return null;
@@ -242,6 +126,7 @@ function lookupPriorConflict(row, rowIndex, priorIndex) {
   if (!hit?.latest?.run_id) return null;
   return {
     rowIndex,
+    applicantId: String(row.id),
     name: row.name,
     run_id: hit.latest.run_id,
     run_status: hit.latest.run_status,
@@ -249,6 +134,24 @@ function lookupPriorConflict(row, rowIndex, priorIndex) {
     score: hit.latest.score,
     priorRunCount: hit.count,
   };
+}
+
+/** Expand or trim selection to match row count; pad with `fill` when growing. */
+function alignRowSelection(selected, rowCount, fill = false) {
+  if (!rowCount) return [];
+  if (selected.length === rowCount) return selected.slice();
+  const next = Array(rowCount).fill(fill);
+  for (let i = 0; i < Math.min(selected.length, rowCount); i++) {
+    next[i] = selected[i];
+  }
+  return next;
+}
+
+/** UI default: unset selection matches “all applicants selected”. */
+function resolveRowSelection(selected, rowCount) {
+  if (!rowCount) return [];
+  if (selected.length === rowCount) return selected;
+  return Array(rowCount).fill(true);
 }
 
 function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
@@ -379,7 +282,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     };
   });
 
-  const rowSel = recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true);
+  const rowSel = resolveRowSelection(recruiteeRowSelected, rows.length);
   const nSelectedRec = rowSel.filter(Boolean).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
 
@@ -405,13 +308,19 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setRecruiteeRowSelected(rows.map((r) => stage === 'all' || r.stage === stage));
   };
   const toggleRecruiteeRow = (i) => {
-    const next = rowSel.slice();
-    next[i] = !next[i];
-    setRecruiteeRowSelected(next);
+    setRecruiteeRowSelected((prev) => {
+      const current = alignRowSelection(prev, rows.length, false);
+      const next = current.slice();
+      next[i] = !next[i];
+      return next;
+    });
     setStageScope('custom');
   };
   const toggleStageRows = (stage, select) => {
-    setRecruiteeRowSelected(rows.map((r, i) => (r.stage === stage ? select : rowSel[i])));
+    setRecruiteeRowSelected((prev) => {
+      const current = alignRowSelection(prev, rows.length, false);
+      return current.map((sel, idx) => (rows[idx].stage === stage ? select : sel));
+    });
     setStageScope('custom');
   };
 
@@ -432,19 +341,29 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   }, [cvMode, rows, rowSel, priorIndex]);
 
   const deselectConflict = React.useCallback((rowIndex) => {
-    const next = (recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true)).slice();
-    next[rowIndex] = false;
-    setRecruiteeRowSelected(next);
+    const applicantId = String(rows[rowIndex]?.id ?? '');
+    if (!applicantId) return;
+    setRecruiteeRowSelected((prev) => {
+      const current = alignRowSelection(prev, rows.length, false);
+      return current.map((sel, i) => (String(rows[i]?.id) === applicantId ? false : sel));
+    });
     setStageScope('custom');
-  }, [recruiteeRowSelected, rows]);
+  }, [rows]);
 
   const deselectAllConflicts = React.useCallback(() => {
-    const indices = new Set(rerunConflicts.map((c) => c.rowIndex));
-    const next = (recruiteeRowSelected.length === rows.length ? recruiteeRowSelected : rows.map(() => true)).slice();
-    indices.forEach((i) => { next[i] = false; });
-    setRecruiteeRowSelected(next);
+    const conflictIds = new Set(
+      rerunConflicts.map((c) => String(c.applicantId ?? rows[c.rowIndex]?.id ?? '')),
+    );
+    setRecruiteeRowSelected((prev) => {
+      // Match UI: unset/partial arrays mean “all selected” until user toggles.
+      const base =
+        prev.length === rows.length
+          ? prev.slice()
+          : Array(rows.length).fill(true);
+      return base.map((sel, i) => (conflictIds.has(String(rows[i]?.id)) ? false : sel));
+    });
     setStageScope('custom');
-  }, [rerunConflicts, recruiteeRowSelected, rows]);
+  }, [rerunConflicts, rows]);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
@@ -509,7 +428,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const continueBlockedReason = !hasCriteria
     ? 'Add and save at least one criterion on the Criteria tab first'
     : budgetBlocked
-      ? 'AI budget exceeded'
+      ? 'AI credits exhausted'
     : runnable.error
       ? runnable.error
       : cvMode === 'recruitee' && !rowSel.some(Boolean)
@@ -575,41 +494,55 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     }
   }, [canRun, cvMode, uploadedFiles, rowSel, rows, profile.id, profile.screeningModel, runNote, go, onClose]);
 
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div className="detail" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(720px, 94vw)',
-          alignSelf: 'center',
-          background: 'var(--surface)',
-          border: '1px solid var(--line)',
-          borderRadius: 'var(--radius-lg)',
-          margin: 'auto',
-          boxShadow: 'var(--shadow-pop)',
-          maxHeight: '92vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div className="mono muted" style={{ fontSize: 10.5, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Run screening</div>
-            <h2 style={{ margin: '6px 0 0', fontSize: 20, fontWeight: 500 }}>{profile.name}</h2>
-            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              {profile.dept} · {criteriaCount} saved criteria
-              {' · '}
-              {labelForModel(runnable.modelId)}
+    <div className="detail detail--centered" onClick={onClose}>
+      <div className="run-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="run-sheet__head">
+          <div>
+            <p className="run-sheet__eyebrow">Run screening</p>
+            <h2 className="run-sheet__title">{profile.name}</h2>
+            <p className="run-sheet__sub">
+              {profile.dept} · {criteriaCount} saved criteria · {labelForModel(runnable.modelId)}
               {runnable.substituted && profile.screeningModel && runnable.modelId !== profile.screeningModel
-                ? ` (OpenAI used — add Anthropic key for ${labelForModel(profile.screeningModel)})`
+                ? ` (substituted — add key for ${labelForModel(profile.screeningModel)})`
                 : ''}
-              {' · '}Rubric is read from this job (edit under Jobs → Criteria).
-            </div>
+            </p>
           </div>
-          <IconBtn name="x" size={16} onClick={onClose}/>
+          <IconBtn name="x" size={16} onClick={onClose} aria-label="Close run screening" />
         </div>
 
-        <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+        <div className="run-sheet__body">
+        <div className="run-sheet__steps" role="tablist" aria-label="Run screening steps">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={step === 1}
+            className={`run-sheet__step${step === 1 ? ' is-active' : ''}`}
+            onClick={() => setStep(1)}
+          >
+            <span className="run-sheet__step-num">1</span>
+            Select CVs
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={step === 2}
+            className={`run-sheet__step${step === 2 ? ' is-active' : ''}`}
+            onClick={() => setStep(2)}
+          >
+            <span className="run-sheet__step-num">2</span>
+            Review &amp; run
+          </button>
+        </div>
+
           {!hasCriteria && (
             <div className="callout" style={{ marginBottom: 16 }}>
               Add at least one criterion on this job&apos;s <strong>Criteria</strong> tab and click{' '}
@@ -624,43 +557,43 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
             </div>
           )}
 
-          <div className="row" style={{ marginBottom: 12, gap: 8 }}>
-            <button
-              type="button"
-              className={`tab-btn${step === 1 ? '' : ''}`}
-              style={{
-                padding: '8px 14px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: step === 1 ? 'var(--bg-sunk)' : 'transparent',
-                fontSize: 13,
-                cursor: 'default',
-              }}
-              onClick={() => setStep(1)}
-            >1 · CV source</button>
-            <button
-              type="button"
-              style={{
-                padding: '8px 14px',
-                borderRadius: 6,
-                border: '1px solid var(--line)',
-                background: step === 2 ? 'var(--bg-sunk)' : 'transparent',
-                fontSize: 13,
-                cursor: 'default',
-              }}
-              onClick={() => setStep(2)}
-            >2 · Review &amp; run</button>
-          </div>
-
           {step === 1 && (
             <>
-              <div className="wiz__pane-sub" style={{ marginBottom: 14 }}>
-                Pull applicants from Recruitee when this job is linked, or upload PDF / DOCX (prototype — files stay in the browser).
+              <p className="wiz__pane-sub" style={{ marginBottom: 14 }}>
+                Pull applicants from Recruitee when this job is linked, or upload PDF / DOCX files.
+              </p>
+              <div className="run-sheet__source-cards">
+                <button
+                  type="button"
+                  className={`run-sheet__source-card${cvMode === 'recruitee' ? ' is-selected' : ''}`}
+                  onClick={() => setCvMode('recruitee')}
+                >
+                  <div className="run-sheet__source-card__title">
+                    <Icon name="database" size={16} aria-hidden />
+                    Recruitee applicants
+                  </div>
+                  <div className="run-sheet__source-card__sub">
+                    {recruiteeLoading
+                      ? 'Loading…'
+                      : `${rows.length} applicant${rows.length === 1 ? '' : 's'} available`}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className={`run-sheet__source-card${cvMode === 'manual' ? ' is-selected' : ''}`}
+                  onClick={() => setCvMode('manual')}
+                >
+                  <div className="run-sheet__source-card__title">
+                    <Icon name="upload" size={16} aria-hidden />
+                    Upload CVs
+                  </div>
+                  <div className="run-sheet__source-card__sub">
+                    {uploadedFiles.length
+                      ? `${uploadedFiles.length} file${uploadedFiles.length === 1 ? '' : 's'} added`
+                      : 'PDF or DOCX from your computer'}
+                  </div>
+                </button>
               </div>
-              <Segmented value={cvMode} onChange={setCvMode} options={[
-                { value: 'recruitee', label: recruiteeLoading ? 'Recruitee · loading…' : `Recruitee · ${rows.length} applicant${rows.length === 1 ? '' : 's'}` },
-                { value: 'manual', label: `Upload${uploadedFiles.length ? ` · ${uploadedFiles.length} file(s)` : ''}` },
-              ]}/>
 
               {cvMode === 'recruitee' && profile.source !== 'recruitee' && (
                 <div className="callout" style={{ marginTop: 12, marginBottom: 0 }}>
@@ -764,7 +697,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                           onRemoveAll={deselectAllConflicts}
                         />
                       )}
-                      <div className="card" style={{ maxHeight: 320, overflow: 'auto' }}>
+                      <div className="run-sheet__table card">
                         <table className="tbl">
                           <thead>
                             <tr>
@@ -851,23 +784,23 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
               )}
               {budgetBlocked && (
                 <div className="callout" style={{ color: 'var(--bad-ink)' }}>
-                  AI budget exceeded. You cannot start new screenings until your admin increases your cap.{' '}
+                  AI credits exhausted. You cannot start new screenings until your admin adds credits.{' '}
                   <a href="/usage" style={{ color: 'inherit' }}>View usage →</a>
                 </div>
               )}
               {budgetWarn && !budgetBlocked && (
                 <div className="callout" style={{ color: 'var(--warn-ink, #b45309)' }}>
-                  Approaching AI budget limit ({usageEstimate?.pct_used ?? '—'}% used). This run adds ~{formatEstUsd(usageEstimate?.estimated_cost_usd)}.
+                  Low credits ({usageEstimate?.pct_used ?? '—'}% used). This run adds ~{formatEstUsd(usageEstimate?.estimated_cost_usd)}.
                 </div>
               )}
               {usageEstimate && !budgetBlocked && !budgetWarn && usageEstimate.budget_usd != null && (
                 <div className="callout muted" style={{ fontSize: 12.5 }}>
-                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated · {formatEstUsd(usageEstimate.spent_usd)} of {formatEstUsd(usageEstimate.budget_usd)} used ({usageEstimate.pct_used ?? 0}%)
+                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated · {formatEstUsd(usageEstimate.spent_usd)} spent of {formatEstUsd(usageEstimate.budget_usd)} allocated ({usageEstimate.pct_used ?? 0}%)
                 </div>
               )}
               {usageEstimate && usageEstimate.budget_usd == null && (
                 <div className="callout muted" style={{ fontSize: 12.5 }}>
-                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated for this run · no budget cap set
+                  ~{formatEstUsd(usageEstimate.estimated_cost_usd)} estimated for this run · pay as you go (unlimited)
                 </div>
               )}
               {runnable.substituted && !runnable.error && (
@@ -952,9 +885,9 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
           )}
         </div>
 
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="run-sheet__foot">
           {runError && (
-            <div style={{ fontSize: 12, color: 'var(--bad)', padding: '6px 10px', background: 'var(--bad-bg, #fff5f5)', borderRadius: 6 }}>
+            <div className="callout" style={{ color: 'var(--bad)', marginBottom: 8 }}>
               {runError}
             </div>
           )}
@@ -975,7 +908,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                 Continue
               </Btn>
             ) : (
-              <Btn variant="primary" icon="play" disabled={!canRun} onClick={startRealRun} title={budgetBlocked ? 'AI budget exceeded' : undefined}>Run now</Btn>
+              <Btn variant="primary" icon="play" disabled={!canRun} onClick={startRealRun} title={budgetBlocked ? 'AI credits exhausted' : undefined}>Run now</Btn>
             )}
           </div>
         </div>
@@ -1158,29 +1091,6 @@ function buildManualProfile(title, descText) {
   };
 }
 
-function JobsPageLoading({ phase, onRetry }) {
-  return (
-    <div className="page">
-      <div className="card">
-        <div className="jobs-loading">
-          <div className="jobs-loading__spinner" role="status" aria-label="Loading jobs" />
-          <div style={{ marginTop: 16, fontSize: 15, fontWeight: 500, color: 'var(--ink)' }}>
-            Loading jobs
-          </div>
-          <div className="muted" style={{ marginTop: 6, fontSize: 13, maxWidth: 360 }}>
-            {phase}
-          </div>
-        </div>
-      </div>
-      {onRetry && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
-          <Btn variant="default" onClick={onRetry}>Try again</Btn>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ProfilesPage({ go, route }) {
   const { canEdit, user } = useAuth();
   const userId = user?.sub ?? null;
@@ -1254,18 +1164,54 @@ function ProfilesPage({ go, route }) {
   const jobs = liveProfiles ?? [];
   const profile = selectedId && liveProfiles ? liveProfiles.find((p) => p.id === selectedId) : null;
 
-  const openRunJobId = route && route.openRunJobId;
+  const deepLinkJobId = route?.deepLinkJobId ?? route?.openRunJobId ?? null;
+  const screenJobId = route?.screenJobId ?? null;
+  const deepLinkTab = route?.deepLinkTab ?? null;
+
+  const mapDeepLinkTab = (tab) => {
+    if (!tab) return null;
+    const t = String(tab).toLowerCase();
+    if (t === 'applicants' || t === 'candidates') return 'candidates';
+    if (['overview', 'criteria', 'runs', 'related', 'audit'].includes(t)) return t;
+    return null;
+  };
 
   React.useEffect(() => {
-    if (!openRunJobId || !liveProfiles?.some((p) => p.id === openRunJobId)) return;
-    setRunSheetProfileId(openRunJobId);
-    setSelectedId(null);
-    if (typeof history !== 'undefined' && String(location.hash).includes('job=')) {
-      try {
-        history.replaceState(null, '', '#profiles');
-      } catch (_) {}
+    if (!liveProfiles?.length) return;
+
+    const clearParams = () => {
+      if (route?.clearSearchParams) route.clearSearchParams();
+    };
+
+    if (screenJobId && liveProfiles.some((p) => p.id === screenJobId)) {
+      setRunSheetProfileId(screenJobId);
+      setSelectedId(null);
+      clearParams();
+      return;
     }
-  }, [openRunJobId, liveProfiles]);
+
+    if (!deepLinkJobId || !liveProfiles.some((p) => p.id === deepLinkJobId)) return;
+
+    const job = liveProfiles.find((p) => p.id === deepLinkJobId);
+    if (!job) return;
+
+    if (job.source === 'recruitee' && job.sourceRef) {
+      prefetchRecruiteeApplicants(job.sourceRef);
+    }
+
+    setRunSheetProfileId(null);
+    setSelectedId(deepLinkJobId);
+
+    const mappedTab = mapDeepLinkTab(deepLinkTab);
+    if (mappedTab) setEditorInitialTab(mappedTab);
+    else {
+      const lists = getCriteriaListsForProfile(job);
+      const criteriaCount = lists.must.length + lists.nice.length + lists.flag.length;
+      setEditorInitialTab(criteriaCount === 0 ? 'criteria' : null);
+    }
+
+    clearParams();
+  }, [deepLinkJobId, screenJobId, deepLinkTab, liveProfiles, route]);
 
   if (profile) {
     return (
@@ -1316,7 +1262,16 @@ function ProfilesPage({ go, route }) {
 
   const filtered = jobs.filter(p => {
     const q = searchQuery.trim().toLowerCase();
-    if (q && !p.name.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
+    if (q) {
+      const haystack = [
+        p.name,
+        p.id,
+        p.dept,
+        p.source,
+        p.sourceRef,
+      ].map((v) => (v ?? '').toLowerCase());
+      if (!haystack.some((s) => s.includes(q))) return false;
+    }
     if (filter === 'all') return true;
     if (filter === 'open') return p.status === 'open';
     if (filter === 'closed') return p.status === 'closed';
@@ -1331,209 +1286,27 @@ function ProfilesPage({ go, route }) {
     setJobTableSort((prev) => cycleJobTableSort(prev, key));
   };
 
-  const openCount = jobs.filter((p) => p.status === 'open').length;
-  const totalRuns = jobs.reduce((sum, p) => sum + (p.runsCount || 0), 0);
-  const avgRunsPerJob = jobs.length ? Math.round(totalRuns / jobs.length) : 0;
-
   return (
-    <div className="page">
-      {backgroundRefreshing && (
-        <div className="jobs-refresh-banner" role="status">
-          Updating job list…
-        </div>
-      )}
-
-      <div className="stats" style={{ marginTop: 20, marginBottom: 28 }}>
-        <StatCell label="Open jobs" value={openCount} />
-        <StatCell label="Avg. runs per job" value={avgRunsPerJob || '—'} />
-        <StatCell label="Total jobs" value={jobs.length} />
-      </div>
-
-      <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8 }}>
-        <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
-          <input
-            className="inp"
-            placeholder="Search jobs by title…"
-            style={{ paddingLeft: 32 }}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Search jobs"
-          />
-          <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
-        </div>
-        <Segmented value={filter} onChange={setFilter} options={[
-          { value: 'all',       label: `All ${jobs.length}` },
-          { value: 'open',      label: 'Open' },
-          { value: 'closed',    label: 'Closed' },
-          { value: 'recruitee', label: 'From Recruitee' },
-          { value: 'manual',    label: 'Manually added' },
-        ]}/>
-        <div className="spacer"/>
-        {canEdit && (
-          <Btn
-            variant="ghost"
-            icon="history"
-            disabled={backgroundRefreshing}
-            onClick={() => refreshProfiles({ forceSync: true })}
-          >
-            {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
-          </Btn>
-        )}
-        {canEdit && (
-          <Btn variant="default" icon="play" onClick={() => setShowRunPicker(true)}>Run screening</Btn>
-        )}
-        {canEdit && (
-          <Btn variant="primary" icon="plus" onClick={() => setShowNew(true)}>New job</Btn>
-        )}
-      </div>
-
-      <div className="card">
-        <table className="tbl tbl--fixed">
-          <thead>
-            <tr>
-              <JobsSortableTh
-                label="Job announcement"
-                sortKey={JOB_TABLE_SORT_KEYS.name}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-              />
-              <JobsSortableTh
-                label="Posted"
-                sortKey={JOB_TABLE_SORT_KEYS.posted}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 112 }}
-              />
-              <JobsSortableTh
-                label="Source"
-                sortKey={JOB_TABLE_SORT_KEYS.source}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 120 }}
-              />
-              <JobsSortableTh
-                label="Department"
-                sortKey={JOB_TABLE_SORT_KEYS.dept}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 140 }}
-              />
-              <JobsSortableTh
-                label="Applicants"
-                sortKey={JOB_TABLE_SORT_KEYS.applicants}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 88 }}
-                className="col-right"
-              />
-              <JobsSortableTh
-                label="Criteria"
-                sortKey={JOB_TABLE_SORT_KEYS.criteria}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 160 }}
-              />
-              <JobsSortableTh
-                label="Runs"
-                sortKey={JOB_TABLE_SORT_KEYS.runs}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 90 }}
-                className="col-right"
-              />
-              <JobsSortableTh
-                label="Last run"
-                sortKey={JOB_TABLE_SORT_KEYS.lastRun}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 130 }}
-              />
-              <JobsSortableTh
-                label="Status"
-                sortKey={JOB_TABLE_SORT_KEYS.status}
-                sortState={jobTableSort}
-                onSort={cycleJobSort}
-                style={{ width: 100 }}
-              />
-              <th style={{ width: 36 }}/>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleJobs.map((p) => {
-              const mc = (p.mustHave || []).length;
-              const nc = (p.niceToHave || []).length;
-              const fc = (p.redFlags || []).length;
-              const total = mc + nc + fc;
-              return (
-                <tr
-                  key={p.id}
-                  onMouseDown={() => {
-                    if (p.source === 'recruitee' && p.sourceRef) {
-                      prefetchRecruiteeApplicants(p.sourceRef);
-                    }
-                  }}
-                  onClick={() => openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, p)}
-                >
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{p.name}</div>
-                    <div className="muted mono" style={{ fontSize: 11, marginTop: 1 }}>
-                      {p.id}
-                    </div>
-                  </td>
-                  <td className="mono muted" style={{ fontSize: 11.5 }}>{p.postedOn ?? '—'}</td>
-                  <td>
-                    {p.source === 'recruitee'
-                      ? <Badge tone="info"><Icon name="database" size={10}/> Recruitee</Badge>
-                      : <Badge tone="ghost"><Icon name="edit" size={10}/> Manual</Badge>}
-                  </td>
-                  <td className="muted">
-                    <span className="cell-truncate" title={p.dept}>{p.dept}</span>
-                  </td>
-                  <td className="col-num col-right mono" style={{ fontSize: 12.5 }}>
-                    {p.source === 'recruitee' && p.applicantsCount != null
-                      ? p.applicantsCount
-                      : '—'}
-                  </td>
-                  <td>
-                    {total > 0 ? (
-                      <span className="row" style={{ gap: 6, alignItems: 'center' }}>
-                        <CriteriaKindCountBadge count={mc} kind="must"/>
-                        <CriteriaKindCountBadge count={nc} kind="nice"/>
-                        <CriteriaKindCountBadge count={fc} kind="flag"/>
-                        <span className="muted mono" style={{ fontSize: 10.5, marginLeft: 4 }}>
-                          {total} total
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="muted" style={{ fontSize: 12 }}>
-                        <Icon name="plus" size={11}/> Add criteria
-                      </span>
-                    )}
-                  </td>
-                  <td className="col-num col-right">{p.runsCount || 0}</td>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{p.lastRun || '—'}</td>
-                  <td>
-                    <Badge tone={p.status === 'open' ? 'ok' : p.status === 'closed' ? 'ghost' : 'default'} dot={p.status === 'open'}>
-                      {p.status === 'open' ? 'Open' : p.status === 'closed' ? 'Closed' : 'Archived'}
-                    </Badge>
-                  </td>
-                  <td><Icon name="chevron-right" size={14} className="muted"/></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="row" style={{ marginTop: 14, justifyContent: 'space-between' }}>
-        <div className="muted" style={{ fontSize: 11.5 }}>
-          {filtered.length} of {jobs.length} jobs
-        </div>
-        <div className="row" style={{ gap: 4 }}>
-          <Btn variant="ghost" size="sm" icon="chevron-left">Prev</Btn>
-          <Btn variant="ghost" size="sm" iconRight="chevron-right">Next</Btn>
-        </div>
-      </div>
+    <>
+      <JobsListView
+        jobs={jobs}
+        filtered={filtered}
+        visibleJobs={visibleJobs}
+        jobTableSort={jobTableSort}
+        onSort={cycleJobSort}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        filter={filter}
+        onFilterChange={setFilter}
+        canEdit={canEdit}
+        backgroundRefreshing={backgroundRefreshing}
+        onRefresh={refreshProfiles}
+        onNewJob={() => setShowNew(true)}
+        onRunPicker={() => setShowRunPicker(true)}
+        setSelectedId={setSelectedId}
+        setEditorInitialTab={setEditorInitialTab}
+        setRunSheetProfileId={setRunSheetProfileId}
+      />
 
       {canEdit && showNew && (
         <NewProfileDialog
@@ -1551,7 +1324,7 @@ function ProfilesPage({ go, route }) {
             };
             api.jobs.upsert(newProfile.id, body)
               .then(() => refreshProfiles())
-              .catch(() => {});
+              .catch((e) => setProfilesLoadError(e?.message ?? 'Failed to create job.'));
             setShowNew(false);
             setEditorInitialTab('criteria');
             setSelectedId(newProfile.id);
@@ -1584,51 +1357,7 @@ function ProfilesPage({ go, route }) {
           }}
         />
       )}
-    </div>
-  );
-}
-
-const CRITERIA_KIND_BADGE_BG = {
-  must: 'var(--ok)',
-  nice: 'var(--warn)',
-  flag: 'var(--bad)',
-};
-
-const CRITERIA_KIND_BADGE_LABEL = {
-  must: 'must-have',
-  nice: 'nice-to-have',
-  flag: 'red flag',
-};
-
-function CriteriaKindCountBadge({ count, kind }) {
-  if (count <= 0) return null;
-  const bg = CRITERIA_KIND_BADGE_BG[kind] || 'var(--muted)';
-  const kindLabel = CRITERIA_KIND_BADGE_LABEL[kind] || 'criteria';
-  const label = `${count} ${kindLabel}${count === 1 ? '' : 's'}`;
-  return (
-    <span
-      className="mono criteria-kind-count-badge"
-      role="img"
-      aria-label={label}
-      title={label}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: 22,
-        height: 22,
-        padding: '0 6px',
-        borderRadius: 9999,
-        background: bg,
-        color: '#fff',
-        fontSize: 11,
-        fontWeight: 600,
-        lineHeight: 1,
-        boxSizing: 'border-box',
-      }}
-    >
-      {count}
-    </span>
+    </>
   );
 }
 
@@ -1790,17 +1519,6 @@ function mapGeneratedCriteriaItems(items) {
     weight: c.weight,
     biased: getBiasWarning(c.name),
   }));
-}
-
-function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, profile) {
-  if (profile.source === 'recruitee' && profile.sourceRef) {
-    prefetchRecruiteeApplicants(profile.sourceRef);
-  }
-  setRunSheetProfileId(null);
-  const lists = getCriteriaListsForProfile(profile);
-  const criteriaCount = lists.must.length + lists.nice.length + lists.flag.length;
-  setEditorInitialTab(criteriaCount === 0 ? 'criteria' : null);
-  setSelectedId(profile.id);
 }
 
 function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpenRunSheet, canEdit = true }) {
@@ -2094,28 +1812,40 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
     profile.lastUpdated ? `last updated ${profile.lastUpdated}` : null,
   ].filter(Boolean);
 
-  return (
-    <div className="page">
-      <div className="row" style={{ marginBottom: 16, justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" className="linkish" onClick={onBack}>← Jobs</button>
-          {profile.source === 'recruitee'
-            ? <Badge tone="info"><Icon name="database" size={11}/> Recruitee · {profile.sourceRef}</Badge>
-            : <Badge tone="ghost"><Icon name="edit" size={11}/> Manually added</Badge>}
-          <Badge tone={profile.status === 'open' ? 'ok' : 'ghost'} dot={profile.status === 'open'}>
-            {profile.status === 'open' ? 'Open' : profile.status === 'closed' ? 'Closed' : 'Archived'}
-          </Badge>
-        </div>
-        <div className="row" style={{ gap: 8 }}>
-          <Btn variant="ghost" icon="copy">Duplicate</Btn>
-          <Btn variant="ghost" icon="archive">Archive</Btn>
-          {canEdit && (
-            <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
-          )}
-        </div>
-      </div>
+  const jobTitle = profile.name?.trim() || 'Untitled job';
 
-      {/* Tabbed: Job Description · Filtering Criteria · Processed CVs · Applicants · Suggested Profiles · Activity Log */}
+  return (
+    <div className="page job-detail-page">
+      <header className="job-detail-hero">
+        <button type="button" className="job-detail-back" onClick={onBack}>
+          <Icon name="chevron-left" size={16} aria-hidden />
+          Jobs
+        </button>
+
+        <div className="job-detail-hero__main">
+          <div className="job-detail-hero__text">
+            <h1 className="job-detail-hero__title">{jobTitle}</h1>
+            {subtitleParts.length > 0 && (
+              <p className="job-detail-hero__sub">{subtitleParts.join(' · ')}</p>
+            )}
+            <div className="job-detail-hero__badges">
+              {profile.source === 'recruitee'
+                ? <Badge tone="info"><Icon name="database" size={11} aria-hidden /> Recruitee · {profile.sourceRef}</Badge>
+                : <Badge tone="ghost"><Icon name="edit" size={11} aria-hidden /> Manually added</Badge>}
+              <Badge tone={profile.status === 'open' ? 'ok' : 'ghost'} dot={profile.status === 'open'}>
+                {profile.status === 'open' ? 'Open' : profile.status === 'closed' ? 'Closed' : 'Archived'}
+              </Badge>
+              <span className="job-detail-hero__id mono muted" title={profile.id}>{profile.id}</span>
+            </div>
+          </div>
+          <div className="job-detail-hero__actions">
+            {canEdit && (
+              <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
+            )}
+          </div>
+        </div>
+      </header>
+
       <ProfileTabs
         key={profile.id}
         profile={profile}
@@ -2151,6 +1881,12 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
   );
 }
 
+function resolveProfileTab(initialTab) {
+  if (initialTab === 'criteria') return 'criteria';
+  if (['overview', 'runs', 'candidates', 'related', 'audit'].includes(initialTab)) return initialTab;
+  return 'overview';
+}
+
 function ProfileTabs({
   profile, initialTab, desc, setDesc, mh, setMH, nh, setNH, rf, setRF,
   runsToShow, showBias, setShowBias, totalCriteria,
@@ -2160,10 +1896,10 @@ function ProfileTabs({
   onSaveProfile, saveState, isHero,
   go, onOpenRunSheet, criteriaGenState, onGenerateCriteria, canEdit = true,
 }) {
-  const [tab, setTab] = React.useState(() => (initialTab === 'criteria' ? 'criteria' : 'overview'));
+  const [tab, setTab] = React.useState(() => resolveProfileTab(initialTab));
   const [calibration, setCalibration] = React.useState(null);
   React.useLayoutEffect(() => {
-    setTab(initialTab === 'criteria' ? 'criteria' : 'overview');
+    setTab(resolveProfileTab(initialTab));
   }, [profile.id, initialTab]);
 
   React.useEffect(() => {
@@ -2334,14 +2070,17 @@ function ProfileTabs({
 
   return (
     <>
-      <div className="row" style={{ marginBottom: 18, borderBottom: '1px solid var(--line)', gap: 0 }} role="tablist" aria-label="Job sections">
-        <TabBtn label="Job Description" count={null} active={tab === 'overview'} onClick={() => setTab('overview')}/>
-        <TabBtn label="Filtering Criteria" count={totalCriteria} active={tab === 'criteria'} onClick={() => setTab('criteria')}/>
-        <TabBtn label="Processed CVs" count={runsToShow.length} active={tab === 'runs'} onClick={() => setTab('runs')}/>
-        <TabBtn label="Applicants and CVs" count={candidatesTabCount} active={tab === 'candidates'} onClick={() => setTab('candidates')}/>
-        <TabBtn label="Suggested Profiles for This Job" count={relatedCount} active={tab === 'related'} onClick={() => setTab('related')}/>
-        <TabBtn label="Activity Log" count={auditCount}      active={tab === 'audit'}    onClick={() => setTab('audit')}/>
-      </div>
+      <JobTabNav
+        activeTab={tab}
+        onTabChange={setTab}
+        counts={{
+          criteria: totalCriteria > 0 ? totalCriteria : null,
+          runs: runsToShow.length > 0 ? runsToShow.length : null,
+          candidates: candidatesTabCount > 0 ? candidatesTabCount : null,
+          related: relatedCount > 0 ? relatedCount : null,
+          audit: auditCount > 0 ? auditCount : null,
+        }}
+      />
 
       {tab === 'overview' && (
         <OverviewPane
@@ -2408,31 +2147,20 @@ function ProfileTabs({
         />
       )}
       {tab === 'related' && (
-        <RelatedProfilesPane
-          jobId={profile.id}
-          jobName={profile.name}
-          hasDescription={Boolean(desc?.trim())}
-          isHero={isHero}
-          workspaceSettings={workspaceSettings}
-          screeningModel={screeningModel}
-        />
+        <JobsPanel icon="search" title="Suggested talent" sub="Profiles discovered for this role based on the job description and criteria.">
+          <RelatedProfilesPane
+            jobId={profile.id}
+            jobName={profile.name}
+            hasDescription={Boolean(desc?.trim())}
+            isHero={isHero}
+            workspaceSettings={workspaceSettings}
+            screeningModel={screeningModel}
+          />
+        </JobsPanel>
       )}
     </>
   );
 }
-
-const TabBtn = ({ label, count, active, onClick }) => (
-  <button
-    type="button"
-    role="tab"
-    aria-selected={active}
-    className="profile-tab-btn"
-    onClick={onClick}
-  >
-    {label}
-    {count != null && <span className="mono" style={{ fontSize: 10.5, marginLeft: 6, color: 'var(--subtle)' }}>{count}</span>}
-  </button>
-);
 
 function looksLikeHtml(text) {
   return typeof text === 'string' && /<[a-z][\s\S]*>/i.test(text);
@@ -2441,100 +2169,86 @@ function looksLikeHtml(text) {
 /* ----- Overview pane ----- */
 function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runsToShow, go, onGoToCriteria }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 24, alignItems: 'flex-start' }}>
+    <div className="overview-pane-grid">
       <div className="col" style={{ gap: 18 }}>
-        <div className="card">
-          <div className="card__head">
-            <Icon name="doc" size={14} className="muted"/>
-            <span className="card__title">Job description</span>
-            <div className="spacer"/>
-            {profile.source === 'recruitee'
-              ? <span className="muted mono" style={{ fontSize: 11 }}>Synced from Recruitee · {profile.sourceRef}</span>
-              : <Btn size="sm" variant="ghost" icon="edit">Edit</Btn>}
-          </div>
-          <div className="card__body">
-            {profile.source === 'recruitee' ? (
-              looksLikeHtml(desc) ? (
-                <div
-                  className="job-desc-html"
-                  dangerouslySetInnerHTML={{ __html: desc }}
-                />
-              ) : (
-                <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6, color: 'var(--ink-soft)' }}>
-                  {desc || 'No description available from Recruitee.'}
-                </div>
-              )
+        <JobsPanel
+          icon="doc"
+          title="Job description"
+          sub={profile.source === 'recruitee' ? `Synced from Recruitee · ${profile.sourceRef}` : 'Edit the description used for criteria generation.'}
+        >
+          {profile.source === 'recruitee' ? (
+            looksLikeHtml(desc) ? (
+              <div className="job-desc-html" dangerouslySetInnerHTML={{ __html: desc }} />
             ) : (
-              <textarea className="ta" rows={10} value={desc} onChange={(e) => setDesc(e.target.value)}/>
-            )}
-          </div>
-        </div>
+              <div className="job-desc-plain">{desc || 'No description available from Recruitee.'}</div>
+            )
+          ) : (
+            <textarea className="ta job-desc-editor" rows={12} value={desc} onChange={(e) => setDesc(e.target.value)} />
+          )}
+        </JobsPanel>
 
-        <div className="card">
-          <div className="card__head">
-            <Icon name="sliders" size={14} className="muted"/>
-            <span className="card__title">Criteria summary</span>
-            <div className="spacer"/>
-            <Btn size="sm" variant="ghost" icon="edit" onClick={() => onGoToCriteria && onGoToCriteria()}>Edit criteria</Btn>
-          </div>
-          <div className="card__body" style={{ paddingTop: 14 }}>
-            <SummaryGroup kind="must" label="Must-have"     items={mh}/>
-            <SummaryGroup kind="nice" label="Nice-to-have"  items={nh}/>
-            <SummaryGroup kind="flag" label="Red flags"     items={rf}/>
-            {mh.length + nh.length + rf.length === 0 && (
-              <div className="callout">No criteria yet. Add them in the Criteria tab before starting a run.</div>
-            )}
-          </div>
-        </div>
+        <JobsPanel
+          icon="sliders"
+          title="Criteria summary"
+          actions={<Btn size="sm" variant="ghost" icon="edit" onClick={() => onGoToCriteria && onGoToCriteria()}>Edit criteria</Btn>}
+        >
+          <SummaryGroup kind="must" label="Must-have" items={mh} />
+          <SummaryGroup kind="nice" label="Nice-to-have" items={nh} />
+          <SummaryGroup kind="flag" label="Red flags" items={rf} />
+          {mh.length + nh.length + rf.length === 0 && (
+            <div className="callout">No criteria yet. Add them in the Criteria tab before starting a run.</div>
+          )}
+        </JobsPanel>
       </div>
 
       <div className="col" style={{ gap: 14 }}>
-        <div className="card">
-          <div className="card__head">
-            <Icon name="history" size={14} className="muted"/>
-            <span className="card__title">Recent runs</span>
-          </div>
-          <div className="card__body" style={{ padding: 0 }}>
-            {runsToShow.length === 0 && <div className="muted" style={{ padding: 18, fontSize: 12.5 }}>No runs yet. Use <strong>Run screening</strong> above to screen CVs for this job.</div>}
-            {runsToShow.map((r, i) => (
-              <div
-                key={r.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => go && go('results', r.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    go && go('results', r.id);
-                  }
-                }}
-                   style={{ padding: '12px 16px', borderTop: i ? '1px solid var(--line-soft)' : 'none', cursor: 'pointer' }}>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>{r.id}</div>
-                <div className="row" style={{ gap: 8, marginTop: 4 }}>
-                  <span className="mono tnum" style={{ fontSize: 12 }}>{r.date}</span>
-                  <span className="muted" style={{ fontSize: 11.5 }}>· {r.cvs} CVs</span>
-                </div>
-                {r.scoreRange && (
-                  <div className="row" style={{ marginTop: 6, gap: 6 }}>
-                    <span className="mono tnum" style={{ fontSize: 11 }}>{r.scoreRange[0]}</span>
-                    <span style={{
-                      flex: 1, height: 3, borderRadius: 2,
-                      background: `linear-gradient(90deg, var(--bad) 0%, var(--warn) ${r.scoreRange[0]}%, var(--ok) ${r.scoreRange[1]}%, var(--line-soft) ${r.scoreRange[1]}%)`,
-                    }}/>
-                    <span className="mono tnum" style={{ fontSize: 11 }}>{r.scoreRange[1]}</span>
-                  </div>
-                )}
+        <JobsPanel icon="history" title="Recent runs" flush>
+          {runsToShow.length === 0 && (
+            <p className="muted" style={{ fontSize: 13 }}>
+              No runs yet. Use <strong>Run screening</strong> above to screen CVs for this job.
+            </p>
+          )}
+          {runsToShow.map((r, i) => (
+            <div
+              key={r.id}
+              role="button"
+              tabIndex={0}
+              className="overview-run-row"
+              onClick={() => go && go('results', r.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  go && go('results', r.id);
+                }
+              }}
+              style={{ borderTop: i ? '1px solid var(--line-soft)' : 'none' }}
+            >
+              <div className="mono muted overview-run-row__id">{r.id}</div>
+              <div className="row" style={{ gap: 8, marginTop: 4 }}>
+                <span className="mono tnum" style={{ fontSize: 13 }}>{r.date}</span>
+                <span className="muted" style={{ fontSize: 13 }}>· {r.cvs} CVs</span>
               </div>
-            ))}
-          </div>
-        </div>
+              {r.scoreRange && (
+                <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                  <span className="mono tnum" style={{ fontSize: 12 }}>{r.scoreRange[0]}</span>
+                  <span
+                    className="overview-run-row__bar"
+                    style={{
+                      background: `linear-gradient(90deg, var(--bad) 0%, var(--warn) ${r.scoreRange[0]}%, var(--ok) ${r.scoreRange[1]}%, var(--line-soft) ${r.scoreRange[1]}%)`,
+                    }}
+                  />
+                  <span className="mono tnum" style={{ fontSize: 12 }}>{r.scoreRange[1]}</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </JobsPanel>
 
-        <div className="card">
-          <div className="card__head">
-            <Icon name="info" size={14} className="muted"/>
-            <span className="card__title">Quick facts</span>
-          </div>
-          <div className="card__body">
+        <JobsPanel icon="info" title="Quick facts">
+            <div className="row" style={{ gap: 12, marginBottom: 10 }}>
+              <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Job title</span>
+              <span style={{ fontSize: 12.5, fontWeight: 500 }}>{profile.name?.trim() || 'Untitled job'}</span>
+            </div>
             <div className="row" style={{ gap: 12, marginBottom: 10 }}>
               <span className="muted mono" style={{ fontSize: 11, width: 80 }}>Posted</span>
               <span style={{ fontSize: 12.5 }}>{profile.postedOn ?? '—'}</span>
@@ -2565,8 +2279,7 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runs
                 <span className="mono" style={{ fontSize: 12.5 }}>{profile.applicantsCount}</span>
               </div>
             )}
-          </div>
-        </div>
+        </JobsPanel>
       </div>
     </div>
   );
@@ -2699,6 +2412,15 @@ function CriteriaPane({
 
   return (
     <div className="col" style={{ gap: 16 }}>
+      {saveState?.message && saveState.status !== 'idle' && (
+        <div
+          className="jobs-save-banner"
+          role="status"
+          style={{ color: saveState.status === 'error' ? 'var(--bad)' : 'var(--ok-ink, green)' }}
+        >
+          {saveState.message}
+        </div>
+      )}
       {!isHero && (
         <div className="callout" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ flex: '1 1 220px', fontSize: 13 }}>
@@ -2800,17 +2522,20 @@ function CriteriaPane({
         help="Missing or weak evidence applies a heavy score penalty. Quoted CV evidence counts fully; inferred matches count for less."
         items={mh} setItems={setMH} canEdit={canEdit}
         calibrationByCriterionId={calibrationByCriterionId}
-        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'must' }); setShowBias(true); }}/>
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'must' }); setShowBias(true); }}
+        wrapPanelClass="jobs-panel--criteria-must" />
       <CriteriaList kind="nice" label="Nice-to-have"
         help="Boosts when matched with evidence. Doesn't penalise when missing."
         items={nh} setItems={setNH} canEdit={canEdit}
         calibrationByCriterionId={calibrationByCriterionId}
-        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'nice' }); setShowBias(true); }}/>
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'nice' }); setShowBias(true); }}
+        wrapPanelClass="jobs-panel--criteria-nice" />
       <CriteriaList kind="flag" label="Red flags"
         help="If matched, points are deducted (weight ×4 per flag, ×2 if inferred) and the candidate is marked Flagged."
         items={rf} setItems={setRF} canEdit={canEdit}
         calibrationByCriterionId={calibrationByCriterionId}
-        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'flag' }); setShowBias(true); }}/>
+        onBiasWarn={(payload) => { setBiasPending({ ...payload, kind: 'flag' }); setShowBias(true); }}
+        wrapPanelClass="jobs-panel--criteria-flag" />
       {showBias && (
         <div className="bias-banner">
           <Icon name="alert" size={16} className="bias-banner__icon"/>
@@ -2888,25 +2613,59 @@ function CriteriaPane({
 
 /* ----- Runs pane ----- */
 function RunsPane({ runs, go, onOpenRunSheet }) {
+  const [runQuery, setRunQuery] = React.useState('');
+
+  const filteredRuns = React.useMemo(() => {
+    const q = runQuery.trim();
+    if (!q) return runs;
+    return runs.filter((r) =>
+      matchesTextQuery(q, [
+        r.id,
+        r.date,
+        r.owner,
+        r.status,
+        r.cvs != null ? String(r.cvs) : null,
+        r.scoreRange ? `${r.scoreRange[0]}-${r.scoreRange[1]}` : null,
+      ]),
+    );
+  }, [runs, runQuery]);
+
   if (runs.length === 0) {
     return (
-      <div className="card">
-        <div className="empty">
-          <Icon name="list" size={22}/>
-          <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>No screening runs yet</div>
-          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-            Start one to score CVs for this job.
-          </div>
-          <div style={{ marginTop: 16 }}>
-            <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
-          </div>
-        </div>
-      </div>
+      <JobsPanel icon="history" title="Screening runs" sub="Each run scores CVs against this job's criteria.">
+        <PageEmpty
+          icon="list"
+          title="No screening runs yet"
+          description="Start one to score CVs for this job."
+          actionLabel="Run screening"
+          onAction={() => onOpenRunSheet && onOpenRunSheet()}
+        />
+      </JobsPanel>
     );
   }
   return (
-    <div className="card">
-      <table className="tbl">
+    <JobsPanel
+      icon="history"
+      title="Screening runs"
+      sub={`${runs.length} run${runs.length === 1 ? '' : 's'} for this job`}
+      flush
+    >
+      <div className="col" style={{ gap: 12 }}>
+        <div className="jobs-toolbar__search" style={{ maxWidth: 320 }}>
+          <Icon name="search" size={16} className="jobs-toolbar__search-icon" aria-hidden />
+          <input
+            className="inp"
+            placeholder="Search runs by ID, owner, status…"
+            value={runQuery}
+            onChange={(e) => setRunQuery(e.target.value)}
+            aria-label="Search runs"
+          />
+        </div>
+        {runQuery.trim() && filteredRuns.length === 0 && (
+          <p className="muted" style={{ fontSize: 13 }}>No runs match “{runQuery.trim()}”.</p>
+        )}
+        <div className="jobs-table-wrap">
+          <table className="jobs-table">
         <thead>
           <tr>
             <th style={{ width: 140 }}>Run ID</th>
@@ -2920,7 +2679,7 @@ function RunsPane({ runs, go, onOpenRunSheet }) {
           </tr>
         </thead>
         <tbody>
-          {runs.map(r => (
+          {filteredRuns.map(r => (
             <tr key={r.id} className="is-clickable" onClick={() => go('results', r.id)}>
               <td className="col-num muted" style={{ fontSize: 11.5 }}>{r.id}</td>
               <td className="mono" style={{ fontSize: 11.5 }}>{r.date}</td>
@@ -2946,7 +2705,9 @@ function RunsPane({ runs, go, onOpenRunSheet }) {
           ))}
         </tbody>
       </table>
-    </div>
+        </div>
+      </div>
+    </JobsPanel>
   );
 }
 
@@ -3010,6 +2771,7 @@ function JobCandidatesPane({
   const [pipelineView, setPipelineView] = React.useState('qualified');
   const [evalSort, setEvalSort] = React.useState<EvalSortMode>('default');
   const [applicantQuery, setApplicantQuery] = React.useState('');
+  const [scoredQuery, setScoredQuery] = React.useState('');
 
   const recruiteeApps = recruiteeData?.applicants ?? [];
   const pipelineStages = recruiteeData?.pipeline?.stages ?? [];
@@ -3017,14 +2779,23 @@ function JobCandidatesPane({
   const disqualifiedCount = recruiteeData?.disqualified_count ?? recruiteeApps.filter((a) => a.disqualified).length;
 
   const searchedApps = React.useMemo(() => {
-    const q = applicantQuery.trim().toLowerCase();
+    const q = applicantQuery.trim();
     if (!q) return recruiteeApps;
-    return recruiteeApps.filter(
-      (a) =>
-        (a.name || '').toLowerCase().includes(q) ||
-        (a.location || '').toLowerCase().includes(q),
+    return recruiteeApps.filter((a) =>
+      matchesTextQuery(q, [a.name, a.email, a.location, a.stage_name]),
     );
   }, [recruiteeApps, applicantQuery]);
+
+  const otherTabMatchCount = React.useMemo(() => {
+    const q = applicantQuery.trim();
+    if (!q) return 0;
+    const otherQualified = pipelineView !== 'qualified';
+    return recruiteeApps.filter((a) => {
+      const inOtherTab = otherQualified ? !a.disqualified : a.disqualified;
+      if (!inOtherTab) return false;
+      return matchesTextQuery(q, [a.name, a.email, a.location, a.stage_name]);
+    }).length;
+  }, [applicantQuery, pipelineView, recruiteeApps]);
 
   const listColSpan = pipelineView === 'disqualified' ? 5 : 4;
 
@@ -3045,38 +2816,28 @@ function JobCandidatesPane({
 
   if (!showRecruitee && !hasScreened) {
     return (
-      <div className="card">
-        <div className="empty">
-          <Icon name="users" size={22}/>
-          <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>
-            {recruiteeLoading
-              ? 'Loading applicants from Recruitee…'
-              : recruiteeError
-                ? 'Could not load applicants'
-                : 'No applicants yet'}
-          </div>
-          {recruiteeError && (
-            <div className="callout" style={{ marginTop: 12, maxWidth: '52ch', textAlign: 'left' }}>
-              {recruiteeError}
-              {(profile.applicantsCount ?? 0) > 0 && (
-                <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
-                  Recruitee reports {profile.applicantsCount} applicants for this role — fix the connection and refresh.
-                </div>
-              )}
-            </div>
-          )}
-          {!recruiteeLoading && !recruiteeError && (
-            <>
-              <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '48ch' }}>
-                Applicants from Recruitee appear here. After screening, scored candidates show in a separate section.
-              </div>
-              <div style={{ marginTop: 16 }}>
-                <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      <JobsPanel icon="users" title="Applicants" sub="Recruitee pipeline and screened candidates for this job.">
+        {recruiteeLoading ? (
+          <div className="jobs-skeleton" role="status">Loading applicants from Recruitee…</div>
+        ) : recruiteeError ? (
+          <>
+            <PageEmpty icon="users" title="Could not load applicants" description={recruiteeError} />
+            {(profile.applicantsCount ?? 0) > 0 && (
+              <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
+                Recruitee reports {profile.applicantsCount} applicants for this role — fix the connection and refresh.
+              </p>
+            )}
+          </>
+        ) : (
+          <PageEmpty
+            icon="users"
+            title="No applicants yet"
+            description="Applicants from Recruitee appear here. After screening, scored candidates show in a separate section."
+            actionLabel="Run screening"
+            onAction={() => onOpenRunSheet && onOpenRunSheet()}
+          />
+        )}
+      </JobsPanel>
     );
   }
 
@@ -3150,8 +2911,31 @@ function JobCandidatesPane({
           {applicantQuery.trim() && (
             <div className="muted" style={{ fontSize: 12 }}>
               {searchedApps.length === 0
-                ? <>No applicants match “{applicantQuery.trim()}”.</>
-                : <><strong>{searchedApps.length}</strong> applicant{searchedApps.length === 1 ? '' : 's'} match “{applicantQuery.trim()}”.</>}
+                ? (
+                  <>
+                    No applicants match “{applicantQuery.trim()}” on{' '}
+                    {pipelineView === 'qualified' ? 'Qualified' : 'Disqualified'}.
+                    {otherTabMatchCount > 0 && (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          className="linkish"
+                          style={{ font: 'inherit' }}
+                          onClick={() => setPipelineView(pipelineView === 'qualified' ? 'disqualified' : 'qualified')}
+                        >
+                          {otherTabMatchCount} match{otherTabMatchCount === 1 ? '' : 'es'} on{' '}
+                          {pipelineView === 'qualified' ? 'Disqualified' : 'Qualified'} — switch tab
+                        </button>
+                      </>
+                    )}
+                  </>
+                )
+                : (
+                  <>
+                    <strong>{searchedApps.length}</strong> applicant{searchedApps.length === 1 ? '' : 's'} match “{applicantQuery.trim()}”.
+                  </>
+                )}
             </div>
           )}
 
@@ -3165,6 +2949,7 @@ function JobCandidatesPane({
               applicants={searchedApps}
               pipelineView={pipelineView}
               sortMode={evalSort}
+              hideEmptyColumns={Boolean(applicantQuery.trim())}
               canEdit={canEdit}
               dispositionByApplicantId={dispositionByApplicantId}
               onView={(a) => setCvPreview({ id: a.id, name: a.name || 'Applicant' })}
@@ -3281,16 +3066,29 @@ function JobCandidatesPane({
           )}
           {!scoredLoading && rows.length > 0 && (
           <>
-          <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-            <strong>{rows.length}</strong> scored candidate row{rows.length === 1 ? '' : 's'} across{' '}
-            <strong>{completedRuns.length}</strong> completed run{completedRuns.length === 1 ? '' : 's'}
-            {uniquePeople > 0 && (
-              <>
-                {' · '}
-                <span className="mono">{uniquePeople}</span> distinct names
-              </>
-            )}
-            . Click a row to open candidate details.
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, flex: '1 1 300px' }}>
+              <strong>{rows.length}</strong> scored candidate row{rows.length === 1 ? '' : 's'} across{' '}
+              <strong>{completedRuns.length}</strong> completed run{completedRuns.length === 1 ? '' : 's'}
+              {uniquePeople > 0 && (
+                <>
+                  {' · '}
+                  <span className="mono">{uniquePeople}</span> distinct names
+                </>
+              )}
+              . Click a row to open candidate details.
+            </div>
+            <div style={{ position: 'relative', flex: '0 1 260px', minWidth: 160 }}>
+              <input
+                className="inp"
+                placeholder="Search screened candidates…"
+                style={{ paddingLeft: 32, width: '100%' }}
+                value={scoredQuery}
+                onChange={(e) => setScoredQuery(e.target.value)}
+                aria-label="Search screened candidates"
+              />
+              <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
+            </div>
           </div>
 
           <div className="card">
@@ -3308,7 +3106,18 @@ function JobCandidatesPane({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {rows
+                  .filter((row) =>
+                    matchesTextQuery(scoredQuery, [
+                      row.name,
+                      row.title,
+                      row.loc,
+                      row.runId,
+                      row.score != null ? String(row.score) : null,
+                      row.status,
+                    ]),
+                  )
+                  .map((row) => (
                   <tr
                     key={row.key}
                     className="is-clickable"
@@ -3411,30 +3220,22 @@ function AuditPane({ jobId, isHero, active, onCount, go }) {
   }, [active, loadAudit]);
 
   return (
-    <div className="card">
-      <div className="card__head">
-        <Icon name="history" size={14} className="muted"/>
-        <span className="card__title">Activity log</span>
-        <div className="spacer"/>
-        {!loading && entries.length > 0 && (
-          <Btn size="sm" variant="ghost" onClick={loadAudit}>Refresh</Btn>
-        )}
-        <span className="mono muted" style={{ fontSize: 11 }}>
-          {loading ? 'Loading…' : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
-        </span>
-      </div>
-      <div className="card__body" style={{ paddingTop: 4 }}>
+    <JobsPanel
+      icon="list"
+      title="Activity log"
+      sub={loading ? 'Loading…' : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`}
+      actions={!loading && entries.length > 0 ? <Btn size="sm" variant="ghost" onClick={loadAudit}>Refresh</Btn> : null}
+      flush
+    >
         {loading && (
-          <div className="muted" style={{ padding: 18, fontSize: 12.5 }}>Loading activity…</div>
+          <div className="jobs-skeleton" role="status">Loading activity…</div>
         )}
         {!loading && entries.length === 0 && (
-          <div className="empty" style={{ padding: '24px 18px' }}>
-            <Icon name="history" size={22}/>
-            <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>No activity yet</div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '52ch', lineHeight: 1.55 }}>
-              Saving criteria, running screening, and overriding scores on this job are recorded here automatically.
-            </div>
-          </div>
+          <PageEmpty
+            icon="history"
+            title="No activity yet"
+            description="Saving criteria, running screening, and overriding scores on this job are recorded here automatically."
+          />
         )}
         {!loading && entries.length > 0 && (
           <div className="log">
@@ -3474,14 +3275,12 @@ function AuditPane({ jobId, isHero, active, onCount, go }) {
             })}
           </div>
         )}
-      </div>
-    </div>
+    </JobsPanel>
   );
 }
 
-
 /* ----- Criteria list (shared) ----- */
-function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit = true, calibrationByCriterionId }) {
+function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit = true, calibrationByCriterionId, wrapPanelClass = '' }) {
   const [input, setInput] = React.useState('');
   const [weight, setWeight] = React.useState(kind === 'must' ? 5 : 3);
   const [inputError, setInputError] = React.useState('');
@@ -3536,7 +3335,8 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit 
   };
 
   return (
-    <div className="crit-list">
+    <JobsPanel flush className={wrapPanelClass}>
+      <div className="crit-list">
       {canEdit && hasDraft && (
         <div className="callout" style={{ marginBottom: 10, fontSize: 12.5 }}>
           You have unsaved text in the box below. Click <strong>+ Add</strong>, then{' '}
@@ -3615,6 +3415,7 @@ function CriteriaList({ kind, label, help, items, setItems, onBiasWarn, canEdit 
         )}
       </div>
     </div>
+    </JobsPanel>
   );
 }
 

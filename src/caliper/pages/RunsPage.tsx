@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Page — Runs hub (all screening history)
 import React from 'react'
-import { Btn, Icon, Segmented, RunStatusBadge } from '@/caliper/ui'
+import { Btn, Icon, Segmented, RunStatusBadge, PageLoading, PageError, PageEmpty } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunListItem, WorkspaceMember } from '@/services/api'
 import { RunAccessControl } from '@/caliper/components/RunAccessControl'
@@ -15,6 +15,7 @@ import {
   runDurationSortKey,
   runScoreRange,
 } from '@/lib/run-display'
+import { matchesTextQuery } from '@/lib/text-search'
 
 const RUN_TABLE_SORT_KEYS = {
   id: 'id',
@@ -136,6 +137,7 @@ function RunsPage({ go }) {
   const [members, setMembers] = React.useState<WorkspaceMember[] | null>(null);
   const [membersLoading, setMembersLoading] = React.useState(false);
   const [sortState, setSortState] = React.useState(null);
+  const [runSearchQuery, setRunSearchQuery] = React.useState('');
 
   React.useEffect(() => {
     api.runs.list()
@@ -215,7 +217,23 @@ function RunsPage({ go }) {
   };
 
   const filtered = runs.filter((r) => filter === 'all' || r.status === filter);
-  const displayRuns = sortRuns(filtered, sortState);
+  const searchFiltered = React.useMemo(() => {
+    const q = runSearchQuery.trim();
+    if (!q) return filtered;
+    return filtered.filter((r) =>
+      matchesTextQuery(q, [
+        r.id,
+        r.job_profiles?.name,
+        r.job_id,
+        r.owner_name,
+        r.owner_id,
+        r.run_note,
+        r.status,
+        r.model_used,
+      ]),
+    );
+  }, [filtered, runSearchQuery]);
+  const displayRuns = sortRuns(searchFiltered, sortState);
 
   const handleSort = (key) => {
     setSortState((prev) => cycleRunTableSort(prev, key));
@@ -231,8 +249,24 @@ function RunsPage({ go }) {
     ? Math.round(runs.reduce((s, r) => s + runCvCount(r), 0) / runs.length)
     : 0;
 
-  if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading runs…</div></div>;
-  if (error) return <div className="page"><div style={{ color: 'var(--bad)', padding: 32 }}>{error}</div></div>;
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="card">
+          <PageLoading title="Loading runs" message="Fetching processed CV runs…" />
+        </div>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="page">
+        <div className="card">
+          <PageError message={error} onRetry={() => window.location.reload()} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="page">
@@ -242,21 +276,31 @@ function RunsPage({ go }) {
         <StatCell label="Total runs"          value={runs.length} />
       </div>
 
-      <div className="row" style={{ marginBottom: 14 }}>
+      <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
+          <input
+            className="inp"
+            placeholder="Search runs by ID, job, owner…"
+            style={{ paddingLeft: 32, width: '100%' }}
+            value={runSearchQuery}
+            onChange={(e) => setRunSearchQuery(e.target.value)}
+            aria-label="Search runs"
+          />
+          <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
+        </div>
         <Segmented value={filter} onChange={setFilter} options={[
           { value: 'all',         label: `All  ${runs.length}` },
           { value: 'completed',   label: 'Completed' },
           { value: 'in_progress', label: 'In progress' },
+          { value: 'queued',      label: 'Queued' },
           { value: 'failed',      label: 'Failed' },
         ]}/>
         <div className="spacer"/>
-        <Btn icon="search" variant="ghost" size="sm">Search</Btn>
         <Btn icon="briefcase" variant="primary" size="sm" onClick={() => go('profiles')}>Jobs</Btn>
-        <Btn icon="filter" variant="ghost" size="sm">Filter</Btn>
-        <Btn icon="download" variant="ghost" size="sm">Export</Btn>
       </div>
 
       <div className="card">
+        <div className="tbl-wrap">
         <table className="tbl">
           <thead>
             <tr>
@@ -315,7 +359,21 @@ function RunsPage({ go }) {
           </thead>
           <tbody>
             {displayRuns.length === 0 && (
-              <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 32 }}>No runs yet.</td></tr>
+              <tr>
+                <td colSpan={9}>
+                  <PageEmpty
+                    icon="play"
+                    title={runs.length === 0 ? 'No runs yet' : 'No runs match your search'}
+                    description={
+                      runs.length === 0
+                        ? 'Start a screening run from a job to see processed CVs here.'
+                        : 'Try a different search term or status filter.'
+                    }
+                    actionLabel={runs.length === 0 ? 'Go to jobs' : undefined}
+                    onAction={runs.length === 0 ? () => go('profiles') : undefined}
+                  />
+                </td>
+              </tr>
             )}
             {displayRuns.map((r) => {
               const scoreRange = runScoreRange(r);
@@ -394,6 +452,7 @@ function RunsPage({ go }) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="row" style={{ marginTop: 14, justifyContent: 'space-between' }}>

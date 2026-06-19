@@ -19,7 +19,12 @@ export async function searchRoutes(app: FastifyInstance) {
       SELECT id, name, dept, status
       FROM job_profiles
       WHERE workspace_id = ${req.workspaceId}
-        AND (name ILIKE ${pattern} OR dept ILIKE ${pattern})
+        AND (
+          id ILIKE ${pattern}
+          OR name ILIKE ${pattern}
+          OR dept ILIKE ${pattern}
+          OR source_ref ILIKE ${pattern}
+        )
       ORDER BY updated_at DESC
       LIMIT ${RESULT_LIMIT}
     `;

@@ -59,6 +59,7 @@ export default function CaliperShellLayout() {
       <TweaksContext.Provider value={t}>
         <Outlet />
       </TweaksContext.Provider>
+      {import.meta.env.DEV && (
       <TweaksPanel title="Tweaks">
         <TweakSection label="Theme">{null}</TweakSection>
         <TweakColor
@@ -111,6 +112,7 @@ export default function CaliperShellLayout() {
           onChange={(v: string) => setTweak('detailLayout', v)}
         />
       </TweaksPanel>
+      )}
     </>
   )
 }

@@ -1,27 +1,17 @@
 // @ts-nocheck
 import React from 'react'
-import { Badge, Btn, Icon, Segmented } from '@/caliper/ui'
+import { Btn, Icon } from '@/caliper/ui'
+import { ActivityLogList } from '@/caliper/components/ActivityLogList'
 import { api } from '@/services/api'
-import { useCaliperGo } from '@/caliper/CaliperNavContext'
 import { useAuth } from '@/contexts/AuthContext'
 
-const KIND_META = {
-  criteria: { icon: 'sliders', label: 'Criteria' },
-  run: { icon: 'play', label: 'Screening' },
-  override: { icon: 'edit', label: 'Override' },
-  candidate: { icon: 'users', label: 'Candidate' },
-  job: { icon: 'doc', label: 'Job' },
-  sync: { icon: 'database', label: 'Recruitee' },
-  other: { icon: 'history', label: 'Activity' },
-}
-
 const FILTERS = [
-  { value: 'all', label: 'All' },
-  { value: 'screening', label: 'Screening' },
-  { value: 'criteria', label: 'Criteria' },
-  { value: 'candidates', label: 'Candidates' },
-  { value: 'recruitee', label: 'Recruitee' },
-  { value: 'jobs', label: 'Jobs' },
+  { value: 'all', label: 'All', icon: 'list', tone: 'brand' },
+  { value: 'screening', label: 'Screening', icon: 'play', tone: 'brand' },
+  { value: 'criteria', label: 'Criteria', icon: 'sliders', tone: 'violet' },
+  { value: 'candidates', label: 'Candidates', icon: 'users', tone: 'ok' },
+  { value: 'recruitee', label: 'Recruitee', icon: 'database', tone: 'info' },
+  { value: 'jobs', label: 'Jobs', icon: 'doc', tone: 'neutral' },
 ]
 
 function groupForKind(kind) {
@@ -35,17 +25,21 @@ function groupForKind(kind) {
   }
 }
 
-function StatCell({ label, value }) {
+function ActivityStatCard({ label, value, icon, tone }) {
   return (
-    <div className="stats__cell">
-      <div className="stats__lbl">{label}</div>
-      <div className="stats__val">{value}</div>
+    <div className={`activity-stat activity-stat--${tone}`}>
+      <div className="activity-stat__icon" aria-hidden>
+        <Icon name={icon} size={18} />
+      </div>
+      <div className="activity-stat__content">
+        <div className="activity-stat__label">{label}</div>
+        <div className="activity-stat__value">{value}</div>
+      </div>
     </div>
   )
 }
 
 function ActivityPage() {
-  const go = useCaliperGo()
   const { isAdmin } = useAuth()
   const [entries, setEntries] = React.useState([])
   const [loading, setLoading] = React.useState(true)
@@ -78,11 +72,19 @@ function ActivityPage() {
   const stats = React.useMemo(() => {
     const jobs = new Set()
     const people = new Set()
+    const counts = { all: entries.length, screening: 0, criteria: 0, candidates: 0, recruitee: 0, jobs: 0 }
     for (const e of entries) {
       if (e.jobId) jobs.add(e.jobId)
       if (e.who) people.add(e.who)
+      const group = groupForKind(e.kind)
+      counts[group] += 1
     }
-    return { total: entries.length, jobs: jobs.size, people: people.size }
+    return {
+      total: entries.length,
+      jobs: jobs.size,
+      people: people.size,
+      counts,
+    }
   }, [entries])
 
   const shown = React.useMemo(
@@ -91,101 +93,92 @@ function ActivityPage() {
   )
 
   if (loading) {
-    return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading activity…</div></div>
+    return (
+      <div className="page activity-page">
+        <div className="activity-page__loading muted">Loading activity…</div>
+      </div>
+    )
   }
+
   if (error) {
-    return <div className="page"><div style={{ color: 'var(--bad)', padding: 32 }}>{error}</div></div>
+    return (
+      <div className="page activity-page">
+        <div className="activity-page__error" role="alert">{error}</div>
+        <Btn variant="ghost" icon="history" onClick={load} style={{ marginTop: 12 }}>Try again</Btn>
+      </div>
+    )
   }
 
   return (
-    <div className="page">
-      <div className="stats" style={{ marginTop: 20, marginBottom: 24 }}>
-        <StatCell label="Activities" value={stats.total} />
-        <StatCell label="Jobs involved" value={stats.jobs || '—'} />
-        {isAdmin && <StatCell label="People active" value={stats.people || '—'} />}
+    <div className="page activity-page">
+      <header className="activity-page__intro">
+        <div>
+          <p className="page__eyebrow">Audit trail</p>
+          <h1 className="page__title" style={{ marginBottom: 6 }}>
+            {isAdmin ? 'Platform activity' : 'Your activity'}
+          </h1>
+          <p className="page__sub">
+            {isAdmin
+              ? 'Screening runs, criteria changes, candidate decisions, and Recruitee syncs across every job.'
+              : 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs.'}
+          </p>
+        </div>
+        <Btn variant="ghost" icon="history" onClick={load}>Refresh</Btn>
+      </header>
+
+      <div className="activity-stats">
+        <ActivityStatCard label="Activities" value={stats.total} icon="history" tone="brand" />
+        <ActivityStatCard label="Jobs involved" value={stats.jobs || '—'} icon="briefcase" tone="info" />
+        {isAdmin && (
+          <ActivityStatCard label="People active" value={stats.people || '—'} icon="users" tone="ok" />
+        )}
       </div>
 
-      <div className="row" style={{ marginBottom: 14 }}>
-        <Segmented value={filter} onChange={setFilter} options={FILTERS} />
-        <div className="spacer" />
-        <Btn size="sm" variant="ghost" onClick={load}>Refresh</Btn>
+      <div className="activity-filters" role="tablist" aria-label="Filter activity">
+        {FILTERS.map((f) => {
+          const count = stats.counts[f.value]
+          const active = filter === f.value
+          return (
+            <button
+              key={f.value}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={`activity-filter activity-filter--${f.tone}${active ? ' activity-filter--active' : ''}`}
+              onClick={() => setFilter(f.value)}
+            >
+              <Icon name={f.icon} size={13} />
+              <span>{f.label}</span>
+              <span className="activity-filter__count">{count}</span>
+            </button>
+          )
+        })}
       </div>
 
-      <div className="card">
-        <div className="card__head">
-          <Icon name="history" size={14} className="muted" />
-          <span className="card__title">{isAdmin ? 'Platform activity' : 'Your activity'}</span>
+      <section className="activity-panel" aria-labelledby="activity-feed-heading">
+        <div className="activity-panel__head">
+          <Icon name="history" size={15} className="muted" aria-hidden />
+          <h2 id="activity-feed-heading" className="activity-panel__title">
+            Recent events
+          </h2>
           <div className="spacer" />
-          <span className="mono muted" style={{ fontSize: 11 }}>
-            {`${shown.length} ${shown.length === 1 ? 'entry' : 'entries'}`}
+          <span className="activity-panel__meta mono">
+            {shown.length} {shown.length === 1 ? 'entry' : 'entries'}
           </span>
         </div>
-        <div className="card__body" style={{ paddingTop: 4 }}>
-          {shown.length === 0 && (
-            <div className="empty" style={{ padding: '24px 18px' }}>
-              <Icon name="history" size={22} />
-              <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>No activity yet</div>
-              <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '54ch', lineHeight: 1.55 }}>
-                {isAdmin
+        <div className="activity-panel__body">
+          <ActivityLogList
+            entries={shown}
+            emptyMessage={
+              filter === 'all'
+                ? (isAdmin
                   ? 'Screening runs, criteria changes, candidate decisions, and Recruitee syncs across every job are recorded here automatically.'
-                  : 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs are recorded here automatically.'}
-              </div>
-            </div>
-          )}
-          {shown.length > 0 && (
-            <div className="log">
-              {shown.map((a) => {
-                const meta = KIND_META[a.kind] ?? KIND_META.other
-                return (
-                  <div key={a.id} className={`log__row log__row--${a.kind}`}>
-                    <div className="log__ts">{a.ts}</div>
-                    <div className="log__main">
-                      <div className="log__kind">
-                        <Icon name={meta.icon} size={12} className="muted" />
-                        <span>{meta.label}</span>
-                        {a.jobName && (
-                          <>
-                            <span aria-hidden="true" style={{ color: 'var(--line)' }}>·</span>
-                            <button
-                              type="button"
-                              className="linkish"
-                              style={{ font: 'inherit', textTransform: 'none', letterSpacing: 0, color: 'var(--subtle)' }}
-                              onClick={() => a.jobId && go('profiles', { job: a.jobId })}
-                              title={`Open ${a.jobName}`}
-                            >
-                              {a.jobName}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      <div className="log__msg">
-                        <b>{a.who}</b> {a.msg}
-                        {a.warned && (
-                          <Badge tone="warn" style={{ marginLeft: 8, verticalAlign: 'middle' }}>
-                            Bias criteria
-                          </Badge>
-                        )}
-                      </div>
-                      {a.reason !== '—' && (
-                        <div className="log__reason muted">Reason: {a.reason}</div>
-                      )}
-                      {a.runId && (
-                        <button
-                          type="button"
-                          className="linkish log__link"
-                          onClick={() => go('results', a.runId)}
-                        >
-                          View run →
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+                  : 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs are recorded here automatically.')
+                : `No ${FILTERS.find((f) => f.value === filter)?.label ?? 'matching'} activity in this window. Try another filter or refresh.`
+            }
+          />
         </div>
-      </div>
+      </section>
     </div>
   )
 }

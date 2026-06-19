@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Page — Run results for /runs/:runId
 import React from 'react'
-import { Icon, Btn, IconBtn, ScoreBar, Confidence, StatusBadge, Badge } from '@/caliper/ui'
+import { Icon, Btn, IconBtn, ScoreBar, Confidence, StatusBadge, Badge, PageLoading, PageError } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunDetail, CandidateRow, CandidateEvaluationResponse, EvaluationItem, CompareRunResponse } from '@/services/api'
 import { CriteriaChecklistPanel, ChecklistSummary } from '@/caliper/components/CriteriaChecklist'
@@ -24,6 +24,7 @@ import {
 } from '@/lib/candidate-disposition-display'
 import { shapeJobRow } from '@/lib/job-profile'
 import { getCachedApplicants, loadRecruiteeApplicants, invalidateApplicants } from '@/lib/applicants-cache'
+import { matchesTextQuery } from '@/lib/text-search'
 
 const confOrder = (c) => c === 'high' ? 3 : c === 'medium' ? 2 : 1;
 
@@ -251,6 +252,7 @@ function ResultsPage({ tweaks, route, go }) {
   const [sortState, setSortState] = React.useState({ key: 'score', dir: 'desc' });
   const [filterStatus, setFilterStatus] = React.useState('all');
   const [filterDisposition, setFilterDisposition] = React.useState('all');
+  const [candidateSearchQuery, setCandidateSearchQuery] = React.useState('');
   const [pipelineStages, setPipelineStages] = React.useState<RecruiteePipelineStage[]>([]);
   const [pipelineStagesLoading, setPipelineStagesLoading] = React.useState(false);
   const [pipelineStagesError, setPipelineStagesError] = React.useState<string | null>(null);
@@ -734,13 +736,30 @@ function ResultsPage({ tweaks, route, go }) {
   };
 
   if (!runId) return null;
-  if (loading) return <div className="page"><div className="muted" style={{ padding: 32 }}>Loading results…</div></div>;
-  if (error) return <div className="page"><div style={{ color: 'var(--bad)', padding: 32 }}>{error}</div></div>;
+  if (loading) {
+    return (
+      <div className="page">
+        <div className="card">
+          <PageLoading title="Loading results" message="Fetching run and candidate data…" />
+        </div>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="page">
+        <div className="card">
+          <PageError message={error} onRetry={() => window.location.reload()} />
+        </div>
+      </div>
+    )
+  }
   if (!run) return null;
 
   const candidates = run.candidates ?? [];
 
   const filteredRows = candidates
+    .filter((c) => matchesTextQuery(candidateSearchQuery, [c.name, c.title, c.location]))
     .filter((c) => matchesStatusFilter(c, filterStatus))
     .filter((c) => matchesDispositionFilter(c, filterDisposition))
     .filter((c) => {
@@ -894,8 +913,19 @@ function ResultsPage({ tweaks, route, go }) {
         <StatCell label="Mean confidence" value={`${meanConfPct}%`} sub="across all criteria" tone="default"/>
       </div>
 
-      <div className="row" style={{ marginBottom: 16, borderBottom: '1px solid var(--line)', gap: 0, alignItems: 'center', paddingBottom: 6 }}>
+      <div className="row" style={{ marginBottom: 16, borderBottom: '1px solid var(--line)', gap: 8, alignItems: 'center', paddingBottom: 6, flexWrap: 'wrap' }}>
         <span className="mono muted" style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Ranked list</span>
+        <div style={{ position: 'relative', flex: '1 1 200px', maxWidth: 280, minWidth: 160 }}>
+          <input
+            className="inp"
+            placeholder="Search candidates…"
+            style={{ paddingLeft: 32, height: 30, fontSize: 12 }}
+            value={candidateSearchQuery}
+            onChange={(e) => setCandidateSearchQuery(e.target.value)}
+            aria-label="Search candidates"
+          />
+          <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 8, color: 'var(--muted)' }}/>
+        </div>
         <div className="spacer"/>
         <div className="row" style={{ gap: 8 }}>
           <span className="mono muted" style={{ fontSize: 11 }}>Status</span>
@@ -1068,6 +1098,13 @@ function ResultsPage({ tweaks, route, go }) {
 
       <RankedList
         rows={rows}
+        emptyMessage={
+          candidates.length === 0
+            ? 'No candidates yet.'
+            : candidateSearchQuery.trim()
+              ? `No candidates match “${candidateSearchQuery.trim()}”.`
+              : 'No candidates match the current filters.'
+        }
         onOpen={setSelected}
         tweaks={tweaks}
         compareSelection={compareSelection}
@@ -1187,6 +1224,7 @@ const StatCell = ({ label, value, sub, tone, clickable, active, onClick }) => {
 
 function RankedList({
   rows,
+  emptyMessage = 'No candidates yet.',
   onOpen,
   tweaks,
   compareSelection = [],
@@ -1204,7 +1242,7 @@ function RankedList({
   onSort,
 }) {
   if (rows.length === 0) {
-    return <div className="card"><div className="muted" style={{ textAlign: 'center', padding: 32 }}>No candidates yet.</div></div>;
+    return <div className="card"><div className="muted" style={{ textAlign: 'center', padding: 32 }}>{emptyMessage}</div></div>;
   }
   const atMax = compareSelection.length >= maxCompare;
   return (
@@ -1219,14 +1257,15 @@ function RankedList({
             <ResultsSortableTh label="Candidate" sortKey="candidate" sortState={sortState} onSort={onSort}/>
             <ResultsSortableTh label="% met" sortKey="pct_met" sortState={sortState} onSort={onSort} style={{ width: 88 }} className="col-num"/>
             <ResultsSortableTh label="Score" sortKey="score" sortState={sortState} onSort={onSort} style={{ width: 200 }}/>
-            <ResultsSortableTh label="Confidence" sortKey="confidence" sortState={sortState} onSort={onSort} style={{ width: 100 }}/>
-            <ResultsSortableTh label="Status" sortKey="status" sortState={sortState} onSort={onSort} style={{ width: 160 }}/>
+            <ResultsSortableTh label="Confidence" sortKey="confidence" sortState={sortState} onSort={onSort} style={{ width: 100 }} className="tbl-col-hide-sm"/>
+            <ResultsSortableTh label="Status" sortKey="status" sortState={sortState} onSort={onSort} style={{ width: 160 }} className="tbl-col-hide-sm"/>
             <ResultsSortableTh
               label={useRecruiteePipeline ? 'Pipeline' : 'Decision'}
               sortKey="pipeline"
               sortState={sortState}
               onSort={onSort}
               style={{ width: 160 }}
+              className="tbl-col-hide-sm"
             />
             <th style={{ width: 36 }}/>
           </tr>
@@ -1281,9 +1320,9 @@ function RankedList({
                   {m.mustMet} must · {m.niceMet} nice · {m.flagTriggered} flag
                 </div>
               </td>
-              <td><Confidence level={c.confidence}/></td>
-              <td><StatusBadge s={c.status}/></td>
-              <td onClick={(e) => e.stopPropagation()}>
+              <td className="tbl-col-hide-sm"><Confidence level={c.confidence}/></td>
+              <td className="tbl-col-hide-sm"><StatusBadge s={c.status}/></td>
+              <td className="tbl-col-hide-sm" onClick={(e) => e.stopPropagation()}>
                 <div className="decision-cell">
                   {rState ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>

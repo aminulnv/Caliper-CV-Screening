@@ -4,6 +4,7 @@ import { formatJobDate } from '@/lib/job-profile'
 
 export interface RerunConflict {
   rowIndex: number;
+  applicantId: string;
   name: string;
   run_id: string;
   run_status: string;
@@ -80,7 +81,7 @@ export function RerunConflictAlert({
       {conflicts.length > 1 && (
         <div className="rerun-conflict__foot">
           <Btn size="sm" variant="ghost" onClick={onRemoveAll}>
-            Remove all
+            Remove all screened
           </Btn>
         </div>
       )}

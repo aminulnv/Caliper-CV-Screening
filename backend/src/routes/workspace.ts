@@ -10,8 +10,10 @@ import {
 } from '../services/workspace-access.js';
 import type { UserRole } from '../types/index.js';
 import { alertWorkspaceInvite } from '../services/alerting.js';
-import { updateMemberBudget, getMemberUsage } from '../services/ai-usage.js';
+import { updateMemberBudget, getMemberUsage, topUpMemberCredits, setMemberCreditsUnlimited } from '../services/ai-usage.js';
 import type { BudgetStatus } from '../services/ai-usage.js';
+import { fetchWorkspaceActivity } from '../services/activity-feed.js';
+import { writeAuditLog } from '../middleware/audit.js';
 
 const VALID_ROLES: UserRole[] = ['admin', 'recruiter', 'viewer'];
 
@@ -28,6 +30,8 @@ function formatMember(row: Record<string, unknown>, currentUserId: string) {
   const budgetRaw = row.aiBudgetUsd ?? row.ai_budget_usd;
   const budget = budgetRaw == null ? null : Number(budgetRaw);
   const spentUsd = Number(row.spentUsd ?? row.spent_usd ?? 0);
+  const remainingUsd =
+    budget != null ? Math.max(0, Math.round((budget - spentUsd) * 100) / 100) : null;
   let aiStatus: BudgetStatus = 'unlimited';
   if (budget != null && budget > 0) {
     const pct = (spentUsd / budget) * 100;
@@ -46,6 +50,7 @@ function formatMember(row: Record<string, unknown>, currentUserId: string) {
     is_current_user: userId === currentUserId,
     ai_budget_usd: budget,
     ai_spent_usd: spentUsd,
+    ai_remaining_usd: remainingUsd,
     ai_status: aiStatus,
   };
 }
@@ -106,6 +111,92 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
 
   app.register(async (protectedRoutes) => {
     protectedRoutes.addHook('preHandler', authenticate);
+
+    protectedRoutes.get(
+      '/me/profile',
+      { preHandler: requireRole('viewer') },
+      async (req, reply) => {
+        const workspaceId = req.workspaceId;
+        const userId = req.userId;
+
+        const [
+          [memberRow],
+          [statsRow],
+          [activity30dRow],
+          recentActivity,
+          usage,
+        ] = await Promise.all([
+          sql`
+            SELECT ur.created_at AS joined_at,
+                   w.id AS workspace_id,
+                   w.name AS workspace_name,
+                   u.last_seen_at
+            FROM user_roles ur
+            JOIN users u ON u.sub = ur.user_id
+            JOIN workspaces w ON w.id = ur.workspace_id
+            WHERE ur.workspace_id = ${workspaceId} AND ur.user_id = ${userId}
+            LIMIT 1
+          `,
+          sql`
+            SELECT COUNT(*)::int AS screenings,
+                   COALESCE(SUM(cv_count), 0)::int AS cvs_processed,
+                   COUNT(DISTINCT job_id)::int AS jobs_screened
+            FROM screening_runs
+            WHERE workspace_id = ${workspaceId} AND owner_id = ${userId}
+          `,
+          sql`
+            SELECT COUNT(*)::int AS activity_30d
+            FROM audit_log
+            WHERE workspace_id = ${workspaceId}
+              AND user_id = ${userId}
+              AND created_at >= NOW() - INTERVAL '30 days'
+          `,
+          fetchWorkspaceActivity(workspaceId, userId, {
+            limit: 8,
+            scopeToUserId: userId,
+          }),
+          req.userRole !== 'viewer'
+            ? getMemberUsage(workspaceId, userId)
+            : Promise.resolve(null),
+        ]);
+
+        if (!memberRow) {
+          return reply.status(404).send({ error: 'Member not found.' });
+        }
+
+        const joinedAt = (memberRow.joinedAt ?? memberRow.joined_at) as Date | string;
+        const lastSeenAt = (memberRow.lastSeenAt ?? memberRow.last_seen_at) as Date | string;
+
+        return reply.send({
+          joined_at: joinedAt instanceof Date ? joinedAt.toISOString() : String(joinedAt),
+          last_seen_at: lastSeenAt instanceof Date ? lastSeenAt.toISOString() : String(lastSeenAt),
+          workspace: {
+            id: (memberRow.workspaceId ?? memberRow.workspace_id) as string,
+            name: (memberRow.workspaceName ?? memberRow.workspace_name) as string,
+          },
+          stats: {
+            screenings: Number(statsRow?.screenings ?? statsRow?.screenings ?? 0),
+            cvs_processed: Number(statsRow?.cvsProcessed ?? statsRow?.cvs_processed ?? 0),
+            jobs_screened: Number(statsRow?.jobsScreened ?? statsRow?.jobs_screened ?? 0),
+            activity_30d: Number(activity30dRow?.activity30d ?? activity30dRow?.activity_30d ?? 0),
+          },
+          usage: usage
+            ? {
+                user_id: usage.user_id,
+                email: usage.email,
+                name: usage.name,
+                role: usage.role,
+                budget_usd: usage.budget_usd,
+                spent_usd: usage.spent_usd,
+                remaining_usd: usage.remaining_usd,
+                pct_used: usage.pct_used,
+                status: usage.status,
+              }
+            : undefined,
+          recent_activity: recentActivity,
+        });
+      },
+    );
 
     protectedRoutes.get(
       '/workspace/members',
@@ -275,19 +366,16 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
         const body = req.body as { ai_budget_usd?: number | null };
         const workspaceId = req.workspaceId;
 
-        let budgetUsd: number | null = null;
         if (body.ai_budget_usd != null) {
-          const n = Number(body.ai_budget_usd);
-          if (!Number.isFinite(n) || n < 0) {
-            return reply.status(400).send({ error: 'Budget must be a non-negative number or null.' });
-          }
-          budgetUsd = Math.round(n * 100) / 100;
+          return reply.status(400).send({
+            error: 'Use POST /workspace/members/:id/credits/top-up to add credits. Send null only to set unlimited.',
+          });
         }
 
         try {
-          await updateMemberBudget(workspaceId, id, budgetUsd);
+          await updateMemberBudget(workspaceId, id, null);
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Could not update budget.';
+          const message = err instanceof Error ? err.message : 'Could not update credits.';
           return reply.status(400).send({ error: message });
         }
 
@@ -307,8 +395,102 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
           success: true,
           ai_budget_usd: usage.budget_usd,
           ai_spent_usd: usage.spent_usd,
+          ai_remaining_usd: usage.remaining_usd,
           ai_status: usage.status,
         });
+      },
+    );
+
+    protectedRoutes.post(
+      '/workspace/members/:id/credits/top-up',
+      { preHandler: requireRole('admin') },
+      async (req, reply) => {
+        const { id } = req.params as { id: string };
+        const body = req.body as { amount_usd?: number };
+        const workspaceId = req.workspaceId;
+        const amount = Number(body.amount_usd);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return reply.status(400).send({ error: 'amount_usd must be a positive number.' });
+        }
+
+        try {
+          const topUp = await topUpMemberCredits(workspaceId, id, amount);
+          const [member] = await sql`
+            SELECT ur.user_id FROM user_roles ur
+            WHERE ur.id = ${id} AND ur.workspace_id = ${workspaceId}
+            LIMIT 1
+          `;
+          if (!member) return reply.status(404).send({ error: 'Member not found.' });
+
+          const memberUserId = (member.userId ?? member.user_id) as string;
+          const usage = await getMemberUsage(workspaceId, memberUserId);
+
+          await writeAuditLog({
+            req,
+            action: 'member.credits_topup',
+            entityType: 'member',
+            entityId: memberUserId,
+            payload: {
+              amount_usd: amount,
+              previous_budget_usd: topUp.previous_budget_usd,
+              new_budget_usd: topUp.new_budget_usd,
+              member_email: usage.email,
+            },
+          });
+
+          return reply.send({
+            success: true,
+            amount_usd: amount,
+            ai_budget_usd: usage.budget_usd,
+            ai_spent_usd: usage.spent_usd,
+            ai_remaining_usd: usage.remaining_usd,
+            ai_status: usage.status,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not add credits.';
+          return reply.status(400).send({ error: message });
+        }
+      },
+    );
+
+    protectedRoutes.post(
+      '/workspace/members/:id/credits/unlimited',
+      { preHandler: requireRole('admin') },
+      async (req, reply) => {
+        const { id } = req.params as { id: string };
+        const workspaceId = req.workspaceId;
+
+        try {
+          await setMemberCreditsUnlimited(workspaceId, id);
+          const [member] = await sql`
+            SELECT ur.user_id FROM user_roles ur
+            WHERE ur.id = ${id} AND ur.workspace_id = ${workspaceId}
+            LIMIT 1
+          `;
+          if (!member) return reply.status(404).send({ error: 'Member not found.' });
+
+          const memberUserId = (member.userId ?? member.user_id) as string;
+          const usage = await getMemberUsage(workspaceId, memberUserId);
+
+          await writeAuditLog({
+            req,
+            action: 'member.credits_unlimited',
+            entityType: 'member',
+            entityId: memberUserId,
+            payload: { member_email: usage.email },
+          });
+
+          return reply.send({
+            success: true,
+            ai_budget_usd: usage.budget_usd,
+            ai_spent_usd: usage.spent_usd,
+            ai_remaining_usd: usage.remaining_usd,
+            ai_status: usage.status,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not set unlimited credits.';
+          return reply.status(400).send({ error: message });
+        }
       },
     );
 

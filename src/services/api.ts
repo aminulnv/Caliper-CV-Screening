@@ -303,6 +303,7 @@ export const api = {
       }
       return res.json() as Promise<MeResponse>;
     },
+    getProfile: () => request<ProfileResponse>('GET', '/api/v1/me/profile'),
   },
 
   workspace: {
@@ -312,10 +313,22 @@ export const api = {
     updateMemberRole: (memberId: string, role: UserRole) =>
       request<{ success: boolean }>('PATCH', `/api/v1/workspace/members/${memberId}`, { role }),
     updateMemberBudget: (memberId: string, aiBudgetUsd: number | null) =>
-      request<{ success: boolean; ai_budget_usd: number | null; ai_spent_usd: number; ai_status: BudgetStatus }>(
+      request<CreditsUpdateResponse>(
         'PUT',
         `/api/v1/workspace/members/${memberId}/budget`,
         { ai_budget_usd: aiBudgetUsd },
+      ),
+    topUpMemberCredits: (memberId: string, amountUsd: number) =>
+      request<CreditsUpdateResponse & { amount_usd?: number }>(
+        'POST',
+        `/api/v1/workspace/members/${memberId}/credits/top-up`,
+        { amount_usd: amountUsd },
+      ),
+    setMemberCreditsUnlimited: (memberId: string) =>
+      request<CreditsUpdateResponse>(
+        'POST',
+        `/api/v1/workspace/members/${memberId}/credits/unlimited`,
+        {},
       ),
     removeMember: (memberId: string) =>
       request<{ success: boolean }>('DELETE', `/api/v1/workspace/members/${memberId}`),
@@ -376,7 +389,29 @@ export type MeResponse =
       role: UserRole;
     };
 
+export interface ProfileResponse {
+  joined_at: string;
+  last_seen_at: string;
+  workspace: { id: string; name: string };
+  stats: {
+    screenings: number;
+    cvs_processed: number;
+    jobs_screened: number;
+    activity_30d: number;
+  };
+  usage?: MemberUsageSummary;
+  recent_activity: JobAuditEntry[];
+}
+
 export type BudgetStatus = 'ok' | 'warn' | 'blocked' | 'unlimited';
+
+export interface CreditsUpdateResponse {
+  success: boolean;
+  ai_budget_usd: number | null;
+  ai_spent_usd: number;
+  ai_remaining_usd?: number | null;
+  ai_status: BudgetStatus;
+}
 
 export interface WorkspaceMember {
   id: string;
@@ -389,6 +424,7 @@ export interface WorkspaceMember {
   is_current_user: boolean;
   ai_budget_usd?: number | null;
   ai_spent_usd?: number;
+  ai_remaining_usd?: number | null;
   ai_status?: BudgetStatus;
 }
 
@@ -418,6 +454,7 @@ export interface MemberUsageSummary {
   role: UserRole;
   budget_usd: number | null;
   spent_usd: number;
+  remaining_usd: number | null;
   pct_used: number | null;
   status: BudgetStatus;
 }
@@ -475,6 +512,7 @@ export interface UsageEstimateResponse {
   estimated_cost_usd: number;
   spent_usd: number;
   budget_usd: number | null;
+  remaining_usd?: number | null;
   pct_used: number | null;
   status: BudgetStatus;
 }
@@ -711,8 +749,20 @@ export interface JobCalibrationResponse {
   flagged: JobCalibrationCriterion[];
 }
 
+export type ActivityTone =
+  | 'brand'
+  | 'info'
+  | 'ok'
+  | 'warn'
+  | 'bad'
+  | 'neutral'
+  | 'violet';
+
 export interface JobAuditEntry {
   id: string;
+  action: string;
+  actionLabel: string;
+  tone: ActivityTone;
   ts: string;
   who: string;
   msg: string;

@@ -4,12 +4,12 @@
  */
 
 :root {
-  --shell-bg: #f3f2ef;
-  --shell-bg-subtle: #ebeae6;
-  --shell-nav-bg: rgba(255, 255, 255, 0.86);
+  --shell-bg: #f8fafc;
+  --shell-bg-subtle: #e8ecf1;
+  --shell-nav-bg: #ffffff;
   --shell-nav-link: var(--muted);
-  --shell-nav-link-active: var(--accent-ink);
-  --shell-header-bg: rgba(255, 255, 255, 0.72);
+  --shell-nav-link-active: var(--brand-primary);
+  --shell-header-bg: #ffffff;
   --shell-max-width: 1440px;
 }
 
@@ -37,8 +37,6 @@
   padding: 0 1.25rem;
   background: var(--shell-nav-bg);
   border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 .app-shell-nav--mobile {
@@ -640,7 +638,7 @@
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 40;
+  z-index: 200;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -680,7 +678,8 @@
 }
 
 .global-search__item:hover,
-.global-search__item:focus-visible {
+.global-search__item:focus-visible,
+.global-search__item--active {
   background: var(--bg-sunk);
   outline: none;
 }

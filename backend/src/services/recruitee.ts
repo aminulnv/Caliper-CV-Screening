@@ -129,6 +129,7 @@ type OfferRow = {
 };
 
 export type OfferMeta = {
+  title: string | null;
   applicants_count: number;
   department: string | null;
   posted_on: string | null;
@@ -156,6 +157,7 @@ async function fetchOfferMeta(
   const posted =
     offer.created_at ?? offer.published_at ?? offer.opened_at ?? null;
   return {
+    title: offer.title?.trim() || null,
     applicants_count:
       typeof offer.candidates_count === 'number' ? offer.candidates_count : 0,
     department: offer.department ?? offer.department_name ?? null,

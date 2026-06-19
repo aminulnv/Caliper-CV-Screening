@@ -187,7 +187,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     { preHandler: requireRole('recruiter') },
     async (req, reply) => {
       const jobId = req.params.id;
-      const [existing] = await sql`
+        const [existing] = await sql`
         SELECT id, source, source_ref, description
         FROM job_profiles
         WHERE id = ${jobId} AND workspace_id = ${req.workspaceId}
@@ -217,6 +217,7 @@ export async function jobsRoutes(app: FastifyInstance) {
 
         await sql`
           UPDATE job_profiles SET
+            name = COALESCE(${meta.title?.trim() || null}, name),
             dept = COALESCE(${meta.department}, dept),
             posted_on = COALESCE(${meta.posted_on}, posted_on),
             applicants_count = ${meta.applicants_count},

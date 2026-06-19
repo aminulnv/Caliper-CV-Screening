@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 export interface ConfirmModalProps {
   open: boolean
   onClose: () => void
@@ -6,7 +8,6 @@ export interface ConfirmModalProps {
   message?: string
   confirmLabel?: string
   cancelLabel?: string
-  /** 'danger' styles the confirm button red (e.g. for sign out) */
   variant?: 'default' | 'danger'
 }
 
@@ -20,106 +21,79 @@ export function ConfirmModal({
   cancelLabel = 'Cancel',
   variant = 'default',
 }: ConfirmModalProps) {
-  if (!open) return null
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
-  const confirmStyle: React.CSSProperties =
-    variant === 'danger'
-      ? {
-          background: '#DC2626',
-          color: '#fff',
-          border: 'none',
-          padding: '0.5rem 1rem',
-          borderRadius: '0.375rem',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'pointer',
-        }
-      : {
-          background: 'var(--brand-primary)',
-          color: 'var(--brand-primary-contrast)',
-          border: 'none',
-          padding: '0.5rem 1rem',
-          borderRadius: '0.375rem',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'pointer',
-        }
+  useEffect(() => {
+    if (!open) return
+
+    previousFocusRef.current = document.activeElement as HTMLElement | null
+    const dialog = dialogRef.current
+    const focusable = dialog?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    )
+    const first = focusable?.[0]
+    if (first) first.focus()
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !focusable?.length) return
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        if (first) first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      previousFocusRef.current?.focus?.()
+    }
+  }, [open, onClose])
+
+  if (!open) return null
 
   return (
     <>
       <div
         role="presentation"
+        className="confirm-modal__backdrop"
         onClick={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          zIndex: 9998,
-        }}
         aria-hidden
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
         aria-describedby={message ? 'confirm-modal-desc' : undefined}
-        style={{
-          position: 'fixed',
-          left: '50%',
-          top: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: '#fff',
-          borderRadius: '0.5rem',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
-          padding: '1.25rem 1.5rem',
-          minWidth: '18rem',
-          maxWidth: '24rem',
-          zIndex: 9999,
-        }}
+        className="confirm-modal__dialog"
       >
-        <h3
-          id="confirm-modal-title"
-          style={{ margin: 0, fontSize: '1rem', fontWeight: 600, color: '#111827' }}
-        >
+        <h3 id="confirm-modal-title" className="confirm-modal__title">
           {title}
         </h3>
         {message && (
-          <p
-            id="confirm-modal-desc"
-            style={{
-              margin: '0.5rem 0 1.25rem',
-              fontSize: '0.875rem',
-              color: '#6B7280',
-              lineHeight: 1.5,
-            }}
-          >
+          <p id="confirm-modal-desc" className="confirm-modal__message">
             {message}
           </p>
         )}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            gap: '0.5rem',
-          }}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '0.5rem 1rem',
-              borderRadius: '0.375rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              border: '0.0625rem solid #E5E7EB',
-              background: '#fff',
-              color: '#374151',
-              cursor: 'pointer',
-            }}
-          >
+        <div className="confirm-modal__actions">
+          <button type="button" className="confirm-modal__btn confirm-modal__btn--ghost" onClick={onClose}>
             {cancelLabel}
           </button>
-          <button type="button" onClick={onConfirm} style={confirmStyle}>
+          <button
+            type="button"
+            className={`confirm-modal__btn confirm-modal__btn--${variant === 'danger' ? 'danger' : 'primary'}`}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </button>
         </div>

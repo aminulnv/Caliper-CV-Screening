@@ -1,17 +1,17 @@
 /**
- * Derives accent / theme tokens from the app shell background (gradient or solid).
- * Applied to CSS custom properties on :root for buttons, Caliper UI, and TopBar.
- *
- * Pick a single BRAND_BASE color — bright / mid / dark gradient stops are computed:
- *   bright = base
- *   mid    = base + 30% black
- *   dark   = base + 60% black
+ * Flat slate + blue CTA brand tokens (ui-ux-pro-max Caliper design system).
+ * Applied to CSS custom properties on :root for buttons, shell, and Caliper UI.
  */
 
-/** Single brand color (e.g. `#15803d` green, `#510eaa` purple). */
-export const BRAND_BASE = '#510eaa'
+/** Slate primary — nav mark, headings, focus rings */
+export const BRAND_SLATE = '#0f172a'
 
-/** How much black is mixed into mid / dark stops (0–1). */
+/** Blue CTA — primary buttons and links */
+export const BRAND_CTA = '#0369a1'
+
+/** @deprecated Use BRAND_CTA — kept for imports that reference BRAND_BASE */
+export const BRAND_BASE = BRAND_CTA
+
 const MID_BLACK_MIX = 0.3
 const DARK_BLACK_MIX = 0.6
 
@@ -29,7 +29,6 @@ function normalizeHex(hex: string): string {
   return `#${h.toLowerCase()}`
 }
 
-/** Mix color with black; `blackMix` 0.3 → 70% original + 30% black. */
 function mixWithBlack(hex: string, blackMix: number): string {
   const h = normalizeHex(hex).slice(1)
   const r = parseInt(h.slice(0, 2), 16)
@@ -42,7 +41,7 @@ function mixWithBlack(hex: string, blackMix: number): string {
   return `#${toHex(channel(r))}${toHex(channel(g))}${toHex(channel(b))}`
 }
 
-export function buildBrandStops(base: string = BRAND_BASE) {
+export function buildBrandStops(base: string = BRAND_CTA) {
   const bright = normalizeHex(base)
   return {
     bright,
@@ -53,9 +52,9 @@ export function buildBrandStops(base: string = BRAND_BASE) {
 
 export const BRAND_STOPS = buildBrandStops()
 
-export function buildBrandGradient(base: string = BRAND_BASE): string {
-  const { bright, mid, dark } = buildBrandStops(base)
-  return `linear-gradient(315deg, ${bright} 0%, ${mid} 50%, ${dark} 100%)`
+/** Flat shell background — no gradient */
+export function buildBrandGradient(_base?: string): string {
+  return BRAND_SLATE
 }
 
 export const brandShellGradient = buildBrandGradient()
@@ -64,9 +63,7 @@ export const brandShellGradient = buildBrandGradient()
 export const brandPurpleGradient = brandShellGradient
 
 export type BrandTheme = {
-  /** Mid gradient stop — buttons, toggles, and in-content accents. */
   primary: string
-  /** Bright gradient stop — nav bar logo tile, shell highlights. */
   bright: string
   mid: string
   dark: string
@@ -82,26 +79,22 @@ function extractHexColors(background: string): string[] {
   return matches ? [...new Set(matches.map((h) => h.toLowerCase()))] : []
 }
 
-/** Build theme tokens from a CSS background value (gradient, hex, rgb, etc.). */
+/** Build theme tokens from flat slate + blue CTA system */
 export function getBrandTheme(background: string = brandShellGradient): BrandTheme {
   const colors = extractHexColors(background)
-  const stops =
-    colors.length >= 3
-      ? { bright: colors[0], mid: colors[1], dark: colors[colors.length - 1] }
-      : buildBrandStops(colors[0] ?? BRAND_BASE)
-  const { bright, mid, dark } = stops
-  const primary = mid
+  const slate = colors[0] ?? BRAND_SLATE
+  const cta = BRAND_CTA
 
   return {
-    primary,
-    bright,
-    mid,
-    dark,
-    primaryHover: `color-mix(in srgb, ${primary} 88%, black)`,
+    primary: cta,
+    bright: slate,
+    mid: cta,
+    dark: mixWithBlack(slate, DARK_BLACK_MIX),
+    primaryHover: '#075985',
     primaryContrast: '#ffffff',
-    accent: primary,
-    accentSoft: `color-mix(in srgb, ${primary} 16%, white)`,
-    accentInk: primary,
+    accent: cta,
+    accentSoft: `color-mix(in srgb, ${cta} 12%, white)`,
+    accentInk: cta,
   }
 }
 
@@ -118,7 +111,6 @@ const CSS_VAR_KEYS = [
   '--accent-ink',
 ] as const
 
-/** Push brand tokens to documentElement so CSS and Tailwind arbitrary vars stay in sync. */
 export function applyBrandTheme(background: string = brandShellGradient): BrandTheme {
   const theme = getBrandTheme(background)
   const root = document.documentElement.style

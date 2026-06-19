@@ -256,6 +256,44 @@ const Crumbs = ({ items }) => (
   </nav>
 );
 
+/* ----- Page states --------------------------------------------------- */
+const PageLoading = ({ title = 'Loading', message, className = '' }) => (
+  <div className={`page-state ${className}`} role="status" aria-live="polite">
+    <div className="page-state__spinner" aria-hidden />
+    <div className="page-state__title">{title}</div>
+    {message && <div className="page-state__message">{message}</div>}
+  </div>
+);
+
+const PageError = ({ title = 'Something went wrong', message, onRetry, retryLabel = 'Try again' }) => (
+  <div className="page-state" role="alert">
+    <div className="page-state__title">{title}</div>
+    {message && <div className="page-state__message">{message}</div>}
+    {onRetry && (
+      <div className="page-state__actions">
+        <Btn variant="default" onClick={onRetry}>{retryLabel}</Btn>
+      </div>
+    )}
+  </div>
+);
+
+const PageEmpty = ({ icon = 'history', title = 'Nothing here yet', description, actionLabel, onAction }) => (
+  <div className="empty" style={{ padding: '24px 18px' }}>
+    <Icon name={icon} size={22} />
+    <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>{title}</div>
+    {description && (
+      <div className="muted" style={{ fontSize: 12.5, marginTop: 4, maxWidth: '54ch', lineHeight: 1.55 }}>
+        {description}
+      </div>
+    )}
+    {actionLabel && onAction && (
+      <div style={{ marginTop: 14 }}>
+        <Btn variant="primary" size="sm" onClick={onAction}>{actionLabel}</Btn>
+      </div>
+    )}
+  </div>
+);
+
 export {
   Icon,
   Btn,
@@ -270,4 +308,7 @@ export {
   Toggle,
   Field,
   Crumbs,
+  PageLoading,
+  PageError,
+  PageEmpty,
 }

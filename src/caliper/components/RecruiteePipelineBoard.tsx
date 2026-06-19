@@ -95,6 +95,7 @@ export function RecruiteePipelineBoard({
   applicants,
   pipelineView,
   sortMode = 'default',
+  hideEmptyColumns = false,
   canEdit = true,
   dispositionByApplicantId,
   onView,
@@ -104,6 +105,7 @@ export function RecruiteePipelineBoard({
   applicants: RecruiteeApplicant[];
   pipelineView: PipelineView;
   sortMode?: EvalSortMode;
+  hideEmptyColumns?: boolean;
   canEdit?: boolean;
   dispositionByApplicantId?: Map<string, ApplicantDispositionOverlay>;
   onView: (applicant: RecruiteeApplicant) => void;
@@ -129,11 +131,20 @@ export function RecruiteePipelineBoard({
     [stages, visibleApplicants, sortMode],
   );
 
+  const displayColumns = hideEmptyColumns
+    ? columns.filter((col) => col.items.length > 0)
+    : columns;
+
   const showScreen = canEdit && onScreenStage && pipelineView === 'qualified';
 
   return (
     <div className="cand-board" role="list" aria-label="Applicants by pipeline stage">
-      {columns.map(({ stage, items }, ci) => (
+      {displayColumns.length === 0 && hideEmptyColumns ? (
+        <div className="muted" style={{ fontSize: 12.5, padding: '12px 4px' }}>
+          No applicants match your search in this view.
+        </div>
+      ) : null}
+      {displayColumns.map(({ stage, items }, ci) => (
         <section
           className="cand-col"
           role="listitem"

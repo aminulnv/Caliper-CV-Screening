@@ -7,6 +7,8 @@ import UsagePage from '@/caliper/pages/UsagePage'
 import ActivityPage from '@/caliper/pages/ActivityPage'
 import CaliperSettingsPage from '@/caliper/pages/CaliperSettingsPage'
 import TalentSearchPage from '@/caliper/pages/TalentSearchPage'
+import ProfilePage from '@/pages/ProfilePage'
+import { PageLoading } from '@/caliper/ui'
 import { useCaliperGo } from '@/caliper/CaliperNavContext'
 import { useCaliperTweaks } from '@/caliper/CaliperShellLayout'
 import { getRunById } from '@/caliper/data'
@@ -17,12 +19,7 @@ function JobsPageFallback() {
   return (
     <div className="page">
       <div className="card">
-        <div className="jobs-loading">
-          <div className="jobs-loading__spinner" role="status" aria-label="Loading jobs" />
-          <div style={{ marginTop: 16, fontSize: 15, fontWeight: 500, color: 'var(--ink)' }}>
-            Loading jobs
-          </div>
-        </div>
+        <PageLoading title="Loading jobs" message="Fetching your job list…" />
       </div>
     </div>
   )
@@ -35,11 +32,17 @@ export function RunsPageRoute() {
 
 export function JobsPageRoute() {
   const go = useCaliperGo()
-  const [searchParams] = useSearchParams()
-  const openRunJobId = searchParams.get('job')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkJobId = searchParams.get('job')
+  const screenJobId = searchParams.get('screen')
+  const deepLinkTab = searchParams.get('tab')
+  const clearSearchParams = () => setSearchParams({}, { replace: true })
   return (
     <Suspense fallback={<JobsPageFallback />}>
-      <ProfilesPage go={go} route={{ openRunJobId }} />
+      <ProfilesPage
+        go={go}
+        route={{ deepLinkJobId, screenJobId, deepLinkTab, clearSearchParams }}
+      />
     </Suspense>
   )
 }
@@ -77,4 +80,8 @@ export function CaliperSettingsRoute() {
 
 export function TalentSearchPageRoute() {
   return <TalentSearchPage />
+}
+
+export function ProfilePageRoute() {
+  return <ProfilePage />
 }

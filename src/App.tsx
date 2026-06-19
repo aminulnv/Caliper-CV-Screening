@@ -10,6 +10,7 @@ import {
   CaliperSettingsRoute,
   UsagePageRoute,
   ActivityPageRoute,
+  ProfilePageRoute,
 } from '@/caliper/CaliperPageRoutes'
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
               <Route path="usage" element={<UsagePageRoute />} />
               <Route path="activity" element={<ActivityPageRoute />} />
               <Route path="settings" element={<CaliperSettingsRoute />} />
+              <Route path="profile" element={<ProfilePageRoute />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/jobs" replace />} />

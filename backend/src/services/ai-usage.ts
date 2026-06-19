@@ -22,8 +22,10 @@ export interface MemberUsageSummary {
   email: string;
   name: string | null;
   role: string;
+  /** Total credits allocated (sum of admin top-ups); null = unlimited PAYG */
   budget_usd: number | null;
   spent_usd: number;
+  remaining_usd: number | null;
   pct_used: number | null;
   status: BudgetStatus;
 }
@@ -71,7 +73,7 @@ export class BudgetExceededError extends Error {
   readonly budgetUsd: number;
 
   constructor(spentUsd: number, budgetUsd: number) {
-    super('AI budget exceeded. Contact your workspace admin to increase your limit.');
+    super('AI credits exhausted. Contact your workspace admin to add more credits.');
     this.name = 'BudgetExceededError';
     this.spentUsd = spentUsd;
     this.budgetUsd = budgetUsd;
@@ -89,6 +91,32 @@ function deriveStatus(spentUsd: number, budgetUsd: number | null): BudgetStatus 
   if (pct >= 100) return 'blocked';
   if (pct >= 80) return 'warn';
   return 'ok';
+}
+
+function computeRemainingUsd(spentUsd: number, budgetUsd: number | null): number | null {
+  if (budgetUsd == null) return null;
+  return Math.max(0, Math.round((budgetUsd - spentUsd) * 100) / 100);
+}
+
+function buildUsageSummary(
+  row: Record<string, unknown>,
+  spentUsd: number,
+): MemberUsageSummary {
+  const budgetRaw = row.aiBudgetUsd ?? row.ai_budget_usd;
+  const budget = budgetRaw == null ? null : Number(budgetRaw);
+  const pctUsed =
+    budget != null && budget > 0 ? Math.round((spentUsd / budget) * 1000) / 10 : null;
+  return {
+    user_id: (row.userId ?? row.user_id) as string,
+    email: row.email as string,
+    name: (row.name as string | null) ?? null,
+    role: row.role as string,
+    budget_usd: budget,
+    spent_usd: spentUsd,
+    remaining_usd: computeRemainingUsd(spentUsd, budget),
+    pct_used: pctUsed,
+    status: deriveStatus(spentUsd, budget),
+  };
 }
 
 function monthKey(year: number, monthIndex: number): string {
@@ -195,17 +223,9 @@ export async function getMemberUsage(
   const budgetUsd = member.aiBudgetUsd ?? member.ai_budget_usd;
   const budget = budgetUsd == null ? null : Number(budgetUsd);
   const spentUsd = await fetchMemberSpent(workspaceId, userId);
-  const pctUsed = budget != null && budget > 0 ? Math.round((spentUsd / budget) * 1000) / 10 : null;
 
   return {
-    user_id: (member.userId ?? member.user_id) as string,
-    email: member.email as string,
-    name: (member.name as string | null) ?? null,
-    role: member.role as string,
-    budget_usd: budget,
-    spent_usd: spentUsd,
-    pct_used: pctUsed,
-    status: deriveStatus(spentUsd, budget),
+    ...buildUsageSummary(member as Record<string, unknown>, spentUsd),
   };
 }
 
@@ -229,20 +249,8 @@ export async function getWorkspaceUsageSummary(
   `;
 
   return rows.map((row) => {
-    const budgetRaw = row.aiBudgetUsd ?? row.ai_budget_usd;
-    const budget = budgetRaw == null ? null : Number(budgetRaw);
     const spentUsd = toNumber(row.spentUsd ?? row.spent_usd);
-    const pctUsed = budget != null && budget > 0 ? Math.round((spentUsd / budget) * 1000) / 10 : null;
-    return {
-      user_id: (row.userId ?? row.user_id) as string,
-      email: row.email as string,
-      name: (row.name as string | null) ?? null,
-      role: row.role as string,
-      budget_usd: budget,
-      spent_usd: spentUsd,
-      pct_used: pctUsed,
-      status: deriveStatus(spentUsd, budget),
-    };
+    return buildUsageSummary(row as Record<string, unknown>, spentUsd);
   });
 }
 
@@ -434,19 +442,70 @@ export async function updateMemberBudget(
   memberRoleId: string,
   budgetUsd: number | null,
 ): Promise<void> {
+  if (budgetUsd != null) {
+    throw new Error('Use credit top-up to add credits. Only null is allowed to set unlimited.');
+  }
+  await setMemberCreditsUnlimited(workspaceId, memberRoleId);
+}
+
+async function assertCreditsMember(
+  workspaceId: string,
+  memberRoleId: string,
+): Promise<{ id: string; role: string; user_id: string }> {
   const [member] = await sql`
-    SELECT id, role FROM user_roles
+    SELECT id, role, user_id FROM user_roles
     WHERE id = ${memberRoleId} AND workspace_id = ${workspaceId}
     LIMIT 1
   `;
   if (!member) throw new Error('Member not found');
   if (member.role === 'viewer') {
-    throw new Error('Budget caps do not apply to viewers.');
+    throw new Error('Credits do not apply to viewers.');
   }
+  return {
+    id: member.id as string,
+    role: member.role as string,
+    user_id: (member.userId ?? member.user_id) as string,
+  };
+}
 
+export async function topUpMemberCredits(
+  workspaceId: string,
+  memberRoleId: string,
+  amountUsd: number,
+): Promise<{ previous_budget_usd: number | null; new_budget_usd: number }> {
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new Error('Amount must be a positive number.');
+  }
+  const amount = Math.round(amountUsd * 100) / 100;
+  await assertCreditsMember(workspaceId, memberRoleId);
+
+  const [before] = await sql`
+    SELECT ai_budget_usd FROM user_roles
+    WHERE id = ${memberRoleId} AND workspace_id = ${workspaceId}
+    LIMIT 1
+  `;
+  const previousRaw = before?.aiBudgetUsd ?? before?.ai_budget_usd;
+  const previous =
+    previousRaw == null ? null : Number(previousRaw);
+
+  const [updated] = await sql`
+    UPDATE user_roles
+    SET ai_budget_usd = COALESCE(ai_budget_usd, 0) + ${amount}
+    WHERE id = ${memberRoleId} AND workspace_id = ${workspaceId}
+    RETURNING ai_budget_usd
+  `;
+  const newBudget = Number(updated?.aiBudgetUsd ?? updated?.ai_budget_usd ?? 0);
+  return { previous_budget_usd: previous, new_budget_usd: newBudget };
+}
+
+export async function setMemberCreditsUnlimited(
+  workspaceId: string,
+  memberRoleId: string,
+): Promise<void> {
+  await assertCreditsMember(workspaceId, memberRoleId);
   await sql`
     UPDATE user_roles
-    SET ai_budget_usd = ${budgetUsd}
+    SET ai_budget_usd = NULL
     WHERE id = ${memberRoleId} AND workspace_id = ${workspaceId}
   `;
 }
@@ -463,6 +522,7 @@ export function estimateUsage(args: {
   budget_usd: number | null;
   pct_used: number | null;
   status: BudgetStatus;
+  remaining_usd?: number | null;
 } {
   const estimatedCostUsd = estimateScreeningCostUsd(
     args.modelId,
@@ -483,6 +543,7 @@ export function estimateUsage(args: {
     estimated_cost_usd: estimatedCostUsd,
     spent_usd: args.spentUsd,
     budget_usd: args.budgetUsd,
+    remaining_usd: computeRemainingUsd(args.spentUsd, args.budgetUsd),
     pct_used: pctUsed,
     status: statusAfterRun,
   };

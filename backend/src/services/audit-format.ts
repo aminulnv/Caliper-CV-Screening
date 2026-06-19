@@ -14,8 +14,21 @@ type AuditRow = {
 
 export type AuditEntryKind = 'job' | 'criteria' | 'run' | 'override' | 'candidate' | 'sync' | 'other';
 
+/** Visual tone for activity feed color-coding (maps to Caliper CSS tokens). */
+export type ActivityTone =
+  | 'brand'
+  | 'info'
+  | 'ok'
+  | 'warn'
+  | 'bad'
+  | 'neutral'
+  | 'violet';
+
 export type FormattedAuditEntry = {
   id: string;
+  action: string;
+  actionLabel: string;
+  tone: ActivityTone;
   ts: string;
   who: string;
   msg: string;
@@ -104,6 +117,67 @@ function dispositionVerb(disposition: unknown, candidate: string): string {
     default:
       return `Updated disposition for ${candidate}`;
   }
+}
+
+function actionDisplay(
+  action: string,
+  payload: AuditPayload,
+): { actionLabel: string; tone: ActivityTone } {
+  const p = payload ?? {};
+  switch (action) {
+    case 'job.imported':
+      return { actionLabel: 'Imported', tone: 'info' };
+    case 'job.refreshed_recruitee':
+      return { actionLabel: 'Refreshed', tone: 'info' };
+    case 'job.upserted':
+      return p.criteria_count != null
+        ? { actionLabel: 'Criteria saved', tone: 'violet' }
+        : { actionLabel: 'Job updated', tone: 'neutral' };
+    case 'job.criteria_generated':
+      return { actionLabel: 'AI generated', tone: 'violet' };
+    case 'related_profiles.discover':
+      return { actionLabel: 'Discovered', tone: 'violet' };
+    case 'run.created':
+      return { actionLabel: 'Started', tone: 'brand' };
+    case 'run.completed':
+      return { actionLabel: 'Completed', tone: 'ok' };
+    case 'run.failed':
+      return { actionLabel: 'Failed', tone: 'bad' };
+    case 'run.shared':
+      return { actionLabel: 'Shared', tone: 'brand' };
+    case 'evaluation.override':
+      return { actionLabel: 'Override', tone: 'warn' };
+    case 'evaluation.agree':
+      return { actionLabel: 'Agreed', tone: 'ok' };
+    case 'candidate.disposition_set':
+      switch (p.disposition) {
+        case 'shortlist':
+          return { actionLabel: 'Shortlisted', tone: 'ok' };
+        case 'reject':
+          return { actionLabel: 'Rejected', tone: 'bad' };
+        case 'hold':
+          return { actionLabel: 'On hold', tone: 'warn' };
+        case 'advanced':
+          return { actionLabel: 'Advanced', tone: 'info' };
+        default:
+          return { actionLabel: 'Disposition', tone: 'neutral' };
+      }
+    case 'candidate.recruitee_synced':
+      return { actionLabel: 'Synced', tone: 'ok' };
+    case 'candidate.recruitee_sync_failed':
+      return { actionLabel: 'Sync failed', tone: 'bad' };
+    case 'settings.updated':
+      return { actionLabel: 'Settings', tone: 'neutral' };
+    default:
+      return { actionLabel: action.replace(/\./g, ' '), tone: 'neutral' };
+  }
+}
+
+function formatUsdAudit(amount: number): string {
+  if (amount === 0) return '$0.00';
+  if (amount < 0.01) return `$${amount.toFixed(4)}`;
+  if (amount < 1) return `$${amount.toFixed(3)}`;
+  return `$${amount.toFixed(2)}`;
 }
 
 function messageForAction(
@@ -275,6 +349,30 @@ function messageForAction(
         reason: '—',
         warned: false,
       };
+    case 'member.credits_topup': {
+      const email = typeof p.member_email === 'string' ? p.member_email : 'a member';
+      const amount = typeof p.amount_usd === 'number' ? p.amount_usd : null;
+      const newBal = typeof p.new_budget_usd === 'number' ? p.new_budget_usd : null;
+      const amountText = amount != null ? formatUsdAudit(amount) : 'credits';
+      const balText = newBal != null ? ` (pool now ${formatUsdAudit(newBal)})` : '';
+      return {
+        kind: 'other',
+        runId: null,
+        msg: `Added ${amountText} AI credits for ${email}${balText}`,
+        reason: '—',
+        warned: false,
+      };
+    }
+    case 'member.credits_unlimited': {
+      const email = typeof p.member_email === 'string' ? p.member_email : 'a member';
+      return {
+        kind: 'other',
+        runId: null,
+        msg: `Set ${email} to unlimited AI credits (pay as you go)`,
+        reason: '—',
+        warned: false,
+      };
+    }
     default:
       return {
         kind: 'other',
@@ -291,13 +389,18 @@ export function formatAuditEntry(
   viewerUserId: string,
 ): FormattedAuditEntry {
   const payload = parsePayload(row.payload);
-  const { msg, reason, warned, kind, runId } = messageForAction(row.action, payload);
+  const action = row.action;
+  const { msg, reason, warned, kind, runId } = messageForAction(action, payload);
+  const { actionLabel, tone } = actionDisplay(action, payload);
   const created = row.createdAt ?? row.created_at;
   const payloadJobId =
     payload && typeof payload.job_id === 'string' ? payload.job_id : null;
 
   return {
     id: row.id,
+    action,
+    actionLabel,
+    tone,
     ts: formatTimestamp(created instanceof Date ? created : created ? new Date(created) : undefined),
     who: displayName(row, viewerUserId),
     msg,
