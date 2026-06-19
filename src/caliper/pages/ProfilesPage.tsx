@@ -105,7 +105,17 @@ function buildPriorScreeningIndex(screenings: JobPriorScreening[]) {
 
 /** Match prior screenings by Recruitee applicant id only (never email — avoids false positives). */
 function lookupPriorForRow(row, priorIndex) {
-  return priorIndex.byRecruiteeId.get(String(row.id)) ?? null;
+  return priorIndex.byRecruiteeId.get(applicantIdForRow(row)) ?? null;
+}
+
+function isPriorScreenedRow(row, priorIndex) {
+  return priorIndex.byRecruiteeId.has(applicantIdForRow(row));
+}
+
+/** Hide already-screened applicants once they are removed from the run selection. */
+function isRunSheetRowVisible(row, rowIndex, rowSel, priorIndex) {
+  if (!isPriorScreenedRow(row, priorIndex)) return true;
+  return rowSel[rowIndex];
 }
 
 function lookupPriorConflict(row, rowIndex, priorIndex) {
@@ -279,6 +289,27 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const nSelectedRec = rowSel.filter(Boolean).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
 
+  const priorIndex = React.useMemo(
+    () => buildPriorScreeningIndex(priorScreenings),
+    [priorScreenings],
+  );
+
+  const runSheetVisibleRows = React.useMemo(
+    () => rows.map((r, i) => isRunSheetRowVisible(r, i, rowSel, priorIndex)),
+    [rows, rowSel, priorIndex],
+  );
+
+  const runSheetVisibleCount = runSheetVisibleRows.filter(Boolean).length;
+
+  const visibleStageCounts = React.useMemo(() => {
+    const counts = {};
+    rows.forEach((r, i) => {
+      if (!runSheetVisibleRows[i]) return;
+      counts[r.stage] = (counts[r.stage] ?? 0) + 1;
+    });
+    return counts;
+  }, [rows, runSheetVisibleRows]);
+
   // Pipeline stages (segments), preserving the incoming order from Recruitee.
   const stageOrder = [];
   const stageCounts = {};
@@ -288,7 +319,9 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   });
   const sheetGroups = stageOrder.map((stage) => ({
     stage,
-    rows: rows.map((r, i) => ({ r, i })).filter((x) => x.r.stage === stage),
+    rows: rows
+      .map((r, i) => ({ r, i }))
+      .filter((x) => x.r.stage === stage && runSheetVisibleRows[x.i]),
   }));
 
   const visibleSheetGroups =
@@ -334,11 +367,6 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setStageScope('custom');
   };
 
-  const priorIndex = React.useMemo(
-    () => buildPriorScreeningIndex(priorScreenings),
-    [priorScreenings],
-  );
-
   const rerunConflicts = React.useMemo(() => {
     if (cvMode !== 'recruitee') return [];
     const list = [];
@@ -364,37 +392,12 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const deselectAllConflicts = React.useCallback(() => {
     setSelectedApplicantIds((prev) => {
       const next = effectiveApplicantIdSet(prev, rows);
-      let deselectedScreened = 0;
-      let falseUnchecked = 0;
       rows.forEach((row) => {
         const id = applicantIdForRow(row);
         if (row.status === 'ok' && id && id !== 'undefined' && priorIndex.byRecruiteeId.has(id)) {
           next.delete(id);
-          deselectedScreened += 1;
         }
-        if (!priorIndex.byRecruiteeId.has(id) && !next.has(id)) falseUnchecked += 1;
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7580/ingest/0208187f-e321-4831-bd5c-5ab5a2aefdc1', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1440be' },
-        body: JSON.stringify({
-          sessionId: '1440be',
-          hypothesisId: 'H1-materialize',
-          location: 'ProfilesPage.tsx:deselectAllConflicts',
-          message: 'deselectAll summary',
-          data: {
-            prevNull: prev === null,
-            rowCount: rows.length,
-            priorIndexSize: priorIndex.byRecruiteeId.size,
-            deselectedScreened,
-            selectedAfterSetSize: next.size,
-            falseUnchecked,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return next;
     });
     setStageScope('custom');
@@ -699,7 +702,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                           className={`seg-chip${stageScope === 'all' ? ' is-active' : ''}`}
                           onClick={() => applyStageScope('all')}
                         >
-                          All stages <span className="seg-chip__n">{rows.length}</span>
+                          All stages <span className="seg-chip__n">{runSheetVisibleCount}</span>
                         </button>
                         {stageOrder.map((stage) => (
                           <button
@@ -708,7 +711,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                             className={`seg-chip${stageScope === stage ? ' is-active' : ''}`}
                             onClick={() => applyStageScope(stage)}
                           >
-                            {stage} <span className="seg-chip__n">{stageCounts[stage]}</span>
+                            {stage} <span className="seg-chip__n">{visibleStageCounts[stage] ?? 0}</span>
                           </button>
                         ))}
                       </div>
@@ -744,8 +747,9 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
                           </thead>
                           <tbody>
                             {visibleSheetGroups.map((g) => {
+                              if (g.rows.length === 0) return null;
                               const groupSel = g.rows.filter((x) => rowSel[x.i]).length;
-                              const allSel = g.rows.length > 0 && groupSel === g.rows.length;
+                              const allSel = groupSel === g.rows.length;
                               return (
                                 <React.Fragment key={g.stage}>
                                   <tr className="tbl-group">
