@@ -112,10 +112,9 @@ function isPriorScreenedRow(row, priorIndex) {
   return priorIndex.byRecruiteeId.has(applicantIdForRow(row));
 }
 
-/** Hide already-screened applicants once they are removed from the run selection. */
-function isRunSheetRowVisible(row, rowIndex, rowSel, priorIndex) {
-  if (!isPriorScreenedRow(row, priorIndex)) return true;
-  return rowSel[rowIndex];
+/** Already-screened applicants are never shown in the run screening list. */
+function isRunSheetRowVisible(row, _rowIndex, _rowSel, priorIndex) {
+  return !isPriorScreenedRow(row, priorIndex);
 }
 
 function lookupPriorConflict(row, rowIndex, priorIndex) {
@@ -325,18 +324,21 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     };
   });
 
-  const rowSel = React.useMemo(() => {
-    if (selectedApplicantIds === null) return rows.map(() => true);
-    return rows.map((r) => selectedApplicantIds.has(applicantIdForRow(r)));
-  }, [rows, selectedApplicantIds]);
-
-  const nSelectedRec = rowSel.filter(Boolean).length;
-  const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
-
   const priorIndex = React.useMemo(
     () => buildPriorScreeningIndex(priorScreenings),
     [priorScreenings],
   );
+
+  const rowSel = React.useMemo(() => {
+    return rows.map((r) => {
+      if (isPriorScreenedRow(r, priorIndex)) return false;
+      if (selectedApplicantIds === null) return true;
+      return selectedApplicantIds.has(applicantIdForRow(r));
+    });
+  }, [rows, selectedApplicantIds, priorIndex]);
+
+  const nSelectedRec = rowSel.filter(Boolean).length;
+  const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
 
   const runSheetVisibleRows = React.useMemo(
     () => rows.map((r, i) => isRunSheetRowVisible(r, i, rowSel, priorIndex)),
@@ -355,8 +357,8 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   }, [rows, runSheetVisibleRows]);
 
   const nExcludedScreened = React.useMemo(
-    () => rows.filter((r, i) => isPriorScreenedRow(r, priorIndex) && !rowSel[i]).length,
-    [rows, priorIndex, rowSel],
+    () => rows.filter((r) => isPriorScreenedRow(r, priorIndex)).length,
+    [rows, priorIndex],
   );
 
   React.useEffect(() => {
@@ -414,7 +416,9 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setSelectedApplicantIds(buildRunSheetSelection(rows, priorIndex, 'stage', stage));
   };
   const toggleRecruiteeRow = (i) => {
-    const id = applicantIdForRow(rows[i]);
+    const row = rows[i];
+    if (!row || isPriorScreenedRow(row, priorIndex)) return;
+    const id = applicantIdForRow(row);
     if (!id || id === 'undefined') return;
     setSelectedApplicantIds((prev) => {
       const next = effectiveApplicantIdSet(prev, rows);
