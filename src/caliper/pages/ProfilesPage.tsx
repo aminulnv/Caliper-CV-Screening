@@ -164,6 +164,21 @@ function buildRunSheetSelection(rows, priorIndex, mode, stage) {
   return next;
 }
 
+function excludePriorScreenedFromSelection(selectedIds, rows, priorScreenings) {
+  const index = buildPriorScreeningIndex(priorScreenings);
+  if (index.byRecruiteeId.size === 0) return { next: selectedIds, changed: false };
+  const next = effectiveApplicantIdSet(selectedIds, rows);
+  let changed = false;
+  for (const row of rows) {
+    const id = applicantIdForRow(row);
+    if (index.byRecruiteeId.has(id) && next.has(id)) {
+      next.delete(id);
+      changed = true;
+    }
+  }
+  return { next: changed ? next : selectedIds, changed };
+}
+
 function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go, onEditCriteria }) {
   const [profile, setProfile] = React.useState(initialProfile);
   const [workspaceSettings, setWorkspaceSettings] = React.useState(null);
@@ -214,6 +229,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   const runCancelRef = React.useRef(false);
   const fileInputRef = React.useRef(null);
   const autoExcludedPriorRef = React.useRef(false);
+  const applicantSelectionInitializedRef = React.useRef(false);
   const isHero = profile.id === HERO_PROFILE.id;
 
   React.useEffect(() => {
@@ -225,6 +241,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setRunError(null);
     setRunNote('');
     autoExcludedPriorRef.current = false;
+    applicantSelectionInitializedRef.current = false;
     runCancelRef.current = false;
   }, [profile.id]);
 
@@ -261,11 +278,16 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       return;
     }
     const pickInitial = (apps) => pickInitialApplicantSelection(apps, initialStage);
+    const seedApplicantSelection = (apps) => {
+      if (applicantSelectionInitializedRef.current) return;
+      applicantSelectionInitializedRef.current = true;
+      setSelectedApplicantIds(pickInitial(apps));
+    };
     let cancelled = false;
     const cached = getCachedApplicants(profile.sourceRef);
     if (cached?.applicants?.length) {
       setRecruiteeApplicants(cached.applicants);
-      setSelectedApplicantIds(pickInitial(cached.applicants));
+      seedApplicantSelection(cached.applicants);
       setRecruiteeLoading(false);
     } else {
       setRecruiteeLoading(true);
@@ -274,7 +296,7 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
       .then((data) => {
         if (cancelled) return;
         setRecruiteeApplicants(data.applicants);
-        setSelectedApplicantIds(pickInitial(data.applicants));
+        seedApplicantSelection(data.applicants);
       })
       .catch(() => {
         if (!cancelled) setRecruiteeApplicants([]);
@@ -343,20 +365,12 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     if (!recruiteeApplicants.length) return;
     if (!priorScreeningsReady) return;
 
-    const index = buildPriorScreeningIndex(priorScreenings);
     autoExcludedPriorRef.current = true;
-    if (index.byRecruiteeId.size === 0) return;
-
-    const next = effectiveApplicantIdSet(selectedApplicantIds, rows);
-    let changed = false;
-    for (const row of rows) {
-      const id = applicantIdForRow(row);
-      if (!index.byRecruiteeId.has(id)) continue;
-      if (next.has(id)) {
-        next.delete(id);
-        changed = true;
-      }
-    }
+    const { next, changed } = excludePriorScreenedFromSelection(
+      selectedApplicantIds,
+      rows,
+      priorScreenings,
+    );
     if (changed) {
       setSelectedApplicantIds(next);
       setStageScope('custom');
