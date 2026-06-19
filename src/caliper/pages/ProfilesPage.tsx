@@ -134,7 +134,12 @@ function pickInitialApplicantSelection(apps, initialStage) {
   return ids;
 }
 
-function effectiveApplicantIdSet(selectedIds, allIds) {
+function applicantIdForRow(row) {
+  return String(row?.id);
+}
+
+function effectiveApplicantIdSet(selectedIds, rows) {
+  const allIds = rows.map((r) => applicantIdForRow(r));
   return selectedIds === null ? new Set(allIds) : new Set(selectedIds);
 }
 
@@ -266,20 +271,12 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     };
   });
 
-  const allApplicantIds = React.useMemo(
-    () => rows.map((r) => String(r.id)).filter((id) => id && id !== 'undefined'),
-    [rows],
-  );
-
   const rowSel = React.useMemo(() => {
     if (selectedApplicantIds === null) return rows.map(() => true);
-    return rows.map((r) => selectedApplicantIds.has(String(r.id)));
+    return rows.map((r) => selectedApplicantIds.has(applicantIdForRow(r)));
   }, [rows, selectedApplicantIds]);
 
-  const nSelectedRec =
-    selectedApplicantIds === null
-      ? rows.length
-      : allApplicantIds.filter((id) => selectedApplicantIds.has(id)).length;
+  const nSelectedRec = rowSel.filter(Boolean).length;
   const nWarnSelected = rows.filter((c, i) => rowSel[i] && c.status === 'warn').length;
 
   // Pipeline stages (segments), preserving the incoming order from Recruitee.
@@ -312,10 +309,10 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
     setSelectedApplicantIds(ids);
   };
   const toggleRecruiteeRow = (i) => {
-    const id = String(rows[i]?.id ?? '');
+    const id = applicantIdForRow(rows[i]);
     if (!id || id === 'undefined') return;
     setSelectedApplicantIds((prev) => {
-      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      const next = effectiveApplicantIdSet(prev, rows);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
@@ -324,10 +321,10 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   };
   const toggleStageRows = (stage, select) => {
     setSelectedApplicantIds((prev) => {
-      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      const next = effectiveApplicantIdSet(prev, rows);
       for (let idx = 0; idx < rows.length; idx++) {
         if (rows[idx].stage !== stage) continue;
-        const id = String(rows[idx].id);
+        const id = applicantIdForRow(rows[idx]);
         if (!id || id === 'undefined') continue;
         if (select) next.add(id);
         else next.delete(id);
@@ -354,29 +351,54 @@ function RunScreeningSheet({ profile: initialProfile, initialStage, onClose, go,
   }, [cvMode, rows, rowSel, priorIndex]);
 
   const deselectConflict = React.useCallback((rowIndex) => {
-    const applicantId = String(rows[rowIndex]?.id ?? '');
+    const applicantId = applicantIdForRow(rows[rowIndex]);
     if (!applicantId || applicantId === 'undefined') return;
     setSelectedApplicantIds((prev) => {
-      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      const next = effectiveApplicantIdSet(prev, rows);
       next.delete(applicantId);
       return next;
     });
     setStageScope('custom');
-  }, [rows, allApplicantIds]);
+  }, [rows]);
 
   const deselectAllConflicts = React.useCallback(() => {
     setSelectedApplicantIds((prev) => {
-      const next = effectiveApplicantIdSet(prev, allApplicantIds);
+      const next = effectiveApplicantIdSet(prev, rows);
+      let deselectedScreened = 0;
+      let falseUnchecked = 0;
       rows.forEach((row) => {
-        if (row.status !== 'ok') return;
-        const id = String(row.id);
-        if (!id || id === 'undefined') return;
-        if (priorIndex.byRecruiteeId.has(id)) next.delete(id);
+        const id = applicantIdForRow(row);
+        if (row.status === 'ok' && id && id !== 'undefined' && priorIndex.byRecruiteeId.has(id)) {
+          next.delete(id);
+          deselectedScreened += 1;
+        }
+        if (!priorIndex.byRecruiteeId.has(id) && !next.has(id)) falseUnchecked += 1;
       });
+      // #region agent log
+      fetch('http://127.0.0.1:7580/ingest/0208187f-e321-4831-bd5c-5ab5a2aefdc1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1440be' },
+        body: JSON.stringify({
+          sessionId: '1440be',
+          hypothesisId: 'H1-materialize',
+          location: 'ProfilesPage.tsx:deselectAllConflicts',
+          message: 'deselectAll summary',
+          data: {
+            prevNull: prev === null,
+            rowCount: rows.length,
+            priorIndexSize: priorIndex.byRecruiteeId.size,
+            deselectedScreened,
+            selectedAfterSetSize: next.size,
+            falseUnchecked,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return next;
     });
     setStageScope('custom');
-  }, [rows, allApplicantIds, priorIndex]);
+  }, [rows, priorIndex]);
 
   const addUploadedFiles = (fileList) => {
     const maxBytes = 25 * 1024 * 1024;
