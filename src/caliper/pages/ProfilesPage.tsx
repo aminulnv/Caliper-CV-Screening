@@ -1401,12 +1401,12 @@ function ProfilesPage({ go, route }) {
       ].map((v) => (v ?? '').toLowerCase());
       if (!haystack.some((s) => s.includes(q))) return false;
     }
+    if (departmentFilter !== 'all' && p.dept !== departmentFilter) return false;
     if (filter === 'all') return true;
     if (filter === 'open') return p.status === 'open';
     if (filter === 'closed') return p.status === 'closed';
     if (filter === 'recruitee') return p.source === 'recruitee';
     if (filter === 'manual') return p.source === 'manual';
-    if (departmentFilter !== 'all' && p.dept !== departmentFilter) return false;
     return true;
   });
 
@@ -2027,11 +2027,22 @@ function ProfileTabs({
   onSaveProfile, saveState, isHero,
   go, onOpenRunSheet, criteriaGenState, onGenerateCriteria, canEdit = true,
 }) {
-  const [tab, setTab] = React.useState(() => resolveProfileTab(initialTab));
+  const [tab, setTab] = React.useState(() => {
+    const resolved = resolveProfileTab(initialTab);
+    return !canEdit && resolved === 'related' ? 'overview' : resolved;
+  });
   const [calibration, setCalibration] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!canEdit && tab === 'related') {
+      setTab('overview');
+    }
+  }, [canEdit, tab]);
+
   React.useLayoutEffect(() => {
-    setTab(resolveProfileTab(initialTab));
-  }, [profile.id, initialTab]);
+    const resolved = resolveProfileTab(initialTab);
+    setTab(!canEdit && resolved === 'related' ? 'overview' : resolved);
+  }, [profile.id, initialTab, canEdit]);
 
   React.useEffect(() => {
     if (tab !== 'criteria' || isHero) {
@@ -2142,14 +2153,14 @@ function ProfileTabs({
   const [relatedCount, setRelatedCount] = React.useState(0);
 
   React.useEffect(() => {
-    if (!profile?.id || profile.id === HERO_PROFILE.id) {
+    if (!canEdit || !profile?.id || profile.id === HERO_PROFILE.id) {
       setRelatedCount(0);
       return;
     }
     api.jobs.relatedProfiles(profile.id)
       .then((rows) => setRelatedCount(rows.length))
       .catch(() => setRelatedCount(0));
-  }, [profile.id]);
+  }, [profile.id, canEdit]);
 
   React.useEffect(() => {
     if (profile.source !== 'recruitee' || !profile.sourceRef) {
@@ -2204,6 +2215,7 @@ function ProfileTabs({
       <JobTabNav
         activeTab={tab}
         onTabChange={setTab}
+        hiddenTabs={canEdit ? [] : ['related']}
         counts={{
           criteria: totalCriteria > 0 ? totalCriteria : null,
           runs: runsToShow.length > 0 ? runsToShow.length : null,
@@ -2224,6 +2236,7 @@ function ProfileTabs({
           screeningModel={screeningModel}
           runsToShow={runsToShow}
           go={go}
+          canEdit={canEdit}
           onGoToCriteria={() => setTab('criteria')}
         />
       )}
@@ -2277,7 +2290,7 @@ function ProfileTabs({
           go={go}
         />
       )}
-      {tab === 'related' && (
+      {canEdit && tab === 'related' && (
         <JobsPanel icon="search" title="Suggested talent" sub="Profiles discovered for this role based on the job description and criteria.">
           <RelatedProfilesPane
             jobId={profile.id}
@@ -2298,7 +2311,7 @@ function looksLikeHtml(text) {
 }
 
 /* ----- Overview pane ----- */
-function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runsToShow, go, onGoToCriteria }) {
+function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runsToShow, go, onGoToCriteria, canEdit = true }) {
   return (
     <div className="overview-pane-grid">
       <div className="col" style={{ gap: 18 }}>
@@ -2336,7 +2349,9 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runs
         <JobsPanel icon="history" title="Recent runs" sub="Latest screening runs for this job." flush>
           {runsToShow.length === 0 && (
             <p className="muted jobs-panel__inset" style={{ fontSize: 13, paddingTop: 4, paddingBottom: 4 }}>
-              No runs yet. Use <strong>Run screening</strong> above to screen CVs for this job.
+              {canEdit
+                ? <>No runs yet. Use <strong>Run screening</strong> above to screen CVs for this job.</>
+                : 'No runs yet. Editors and admins can start screening runs for this job.'}
             </p>
           )}
           {runsToShow.map((r, i) => (
@@ -2767,7 +2782,9 @@ function RunsPane({ runs, go, onOpenRunSheet, canEdit = true }) {
         <PageEmpty
           icon="list"
           title="No screening runs yet"
-          description="Start one to score CVs for this job."
+          description={canEdit
+            ? 'Start one to score CVs for this job.'
+            : 'You can view completed runs here once an editor or admin starts screening for this job.'}
           actionLabel="Run screening"
           onAction={canEdit ? () => onOpenRunSheet && onOpenRunSheet() : undefined}
           actionDisabled={!canEdit}
@@ -3130,17 +3147,20 @@ function JobCandidatesPane({
                                   Screen stage
                                 </Btn>
                               ) : (
-                                <Btn
-                                  size="sm"
-                                  variant="ghost"
-                                  icon="lock"
-                                  disabled
-                                  style={{ marginLeft: 'auto' }}
-                                  title="View-only access — editors and admins can run screenings"
-                                  aria-label="Screen stage (view-only)"
-                                >
-                                  Screen stage
-                                </Btn>
+                                <span className="run-screening-locked run-screening-locked--inline" title="View-only access — editors and admins can run screenings">
+                                  <Btn
+                                    size="sm"
+                                    variant="ghost"
+                                    icon="lock"
+                                    disabled
+                                    tabIndex={-1}
+                                    aria-disabled="true"
+                                    style={{ marginLeft: 'auto' }}
+                                    aria-label="Screen stage (view-only)"
+                                  >
+                                    Screen stage
+                                  </Btn>
+                                </span>
                               )
                             )}
                           </div>

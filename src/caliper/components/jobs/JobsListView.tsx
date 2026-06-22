@@ -101,7 +101,7 @@ export function JobsListView({
               {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
             </Btn>
           )}
-          <RunScreeningBtn canEdit={canEdit} variant="default" onClick={onRunPicker} />
+          <RunScreeningBtn canEdit={canEdit} variant="default" compact onClick={onRunPicker} />
           {canEdit && (
             <Btn variant="primary" icon="plus" onClick={onNewJob}>New job</Btn>
           )}

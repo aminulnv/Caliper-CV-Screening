@@ -279,22 +279,32 @@ const PageError = ({ title = 'Something went wrong', message, onRetry, retryLabe
 );
 
 const VIEW_ONLY_RUN_TITLE = 'View-only access — editors and admins can run screenings';
+const VIEW_ONLY_RUN_MESSAGE = 'View-only access. Editors and admins can run screenings.';
 
-const RunScreeningBtn = ({ canEdit, onClick, variant = 'primary', size, children = 'Run screening', ...rest }) => (
-  canEdit ? (
-    <Btn variant={variant} size={size} icon="play" onClick={onClick} {...rest}>{children}</Btn>
-  ) : (
+const RunScreeningLocked = ({ variant = 'primary', size, children = 'Run screening', compact = false }) => (
+  <div className={`run-screening-locked${compact ? ' run-screening-locked--compact' : ''}`} title={VIEW_ONLY_RUN_TITLE}>
     <Btn
       variant={variant}
       size={size}
       icon="lock"
       disabled
-      title={VIEW_ONLY_RUN_TITLE}
+      tabIndex={-1}
+      aria-disabled="true"
       aria-label={`${children} (view-only)`}
-      {...rest}
     >
       {children}
     </Btn>
+    <p className="run-screening-locked__hint" role="note">
+      {VIEW_ONLY_RUN_MESSAGE}
+    </p>
+  </div>
+);
+
+const RunScreeningBtn = ({ canEdit, onClick, variant = 'primary', size, children = 'Run screening', compact = false, ...rest }) => (
+  canEdit ? (
+    <Btn variant={variant} size={size} icon="play" onClick={onClick} {...rest}>{children}</Btn>
+  ) : (
+    <RunScreeningLocked variant={variant} size={size} compact={compact}>{children}</RunScreeningLocked>
   )
 );
 
@@ -306,6 +316,7 @@ const PageEmpty = ({
   onAction,
   actionDisabled = false,
   actionTitle,
+  actionDisabledHint,
 }) => (
   <div className="empty" style={{ padding: '24px 18px' }}>
     <Icon name={icon} size={22} />
@@ -318,16 +329,22 @@ const PageEmpty = ({
     {actionLabel && (onAction || actionDisabled) && (
       <div style={{ marginTop: 14 }}>
         {actionDisabled ? (
-          <Btn
-            variant="primary"
-            size="sm"
-            icon="lock"
-            disabled
-            title={actionTitle || VIEW_ONLY_RUN_TITLE}
-            aria-label={`${actionLabel} (view-only)`}
-          >
-            {actionLabel}
-          </Btn>
+          <div className="run-screening-locked run-screening-locked--empty" title={actionTitle || VIEW_ONLY_RUN_TITLE}>
+            <Btn
+              variant="primary"
+              size="sm"
+              icon="lock"
+              disabled
+              tabIndex={-1}
+              aria-disabled="true"
+              aria-label={`${actionLabel} (view-only)`}
+            >
+              {actionLabel}
+            </Btn>
+            <p className="run-screening-locked__hint" role="note">
+              {actionDisabledHint || VIEW_ONLY_RUN_MESSAGE}
+            </p>
+          </div>
         ) : (
           <Btn variant="primary" size="sm" onClick={onAction}>{actionLabel}</Btn>
         )}
@@ -340,6 +357,8 @@ export {
   Icon,
   Btn,
   RunScreeningBtn,
+  VIEW_ONLY_RUN_MESSAGE,
+  VIEW_ONLY_RUN_TITLE,
   IconBtn,
   Badge,
   StatusBadge,

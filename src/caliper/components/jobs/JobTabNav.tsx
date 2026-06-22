@@ -11,11 +11,14 @@ const TABS = [
   { id: 'audit', label: 'Activity', icon: 'list' },
 ]
 
-export function JobTabNav({ activeTab, onTabChange, counts = {} }) {
+export function JobTabNav({ activeTab, onTabChange, counts = {}, hiddenTabs = [] }) {
+  const hidden = new Set(hiddenTabs)
+  const visibleTabs = TABS.filter((tab) => !hidden.has(tab.id))
+
   return (
     <nav className="job-tab-nav" aria-label="Job sections">
       <div className="job-tab-nav__scroll">
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
