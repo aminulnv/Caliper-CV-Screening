@@ -649,6 +649,13 @@ a { color: inherit; text-decoration: none; }
 .cand-col__screen:hover {
   background: color-mix(in srgb, var(--brand-primary) 22%, white);
 }
+.cand-col__screen--locked,
+.cand-col__screen--locked:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--bg-sunk);
+  color: var(--muted);
+}
 .cand-col__body {
   display: flex;
   flex-direction: column;
@@ -6587,6 +6594,13 @@ button.wiz__step {
   flex-shrink: 0;
 }
 
+.jobs-toolbar__dept-filter {
+  min-width: 160px;
+  max-width: 220px;
+  min-height: 40px;
+  font-size: 13px;
+}
+
 .jobs-panel {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -6596,6 +6610,22 @@ button.wiz__step {
 
 .jobs-panel--flush .jobs-panel__body {
   padding: 0;
+}
+
+.jobs-panel--flush .jobs-panel__body > .log {
+  padding: 0 20px;
+}
+
+.jobs-panel--flush .jobs-panel__body > .overview-run-row {
+  padding: 12px 20px;
+}
+
+.jobs-panel--flush .jobs-panel__body > .col {
+  padding: 0 20px;
+}
+
+.jobs-panel--flush .jobs-panel__body > .jobs-panel__inset {
+  padding: 0 20px;
 }
 
 .jobs-panel__head {
@@ -6618,14 +6648,14 @@ button.wiz__step {
 }
 
 .jobs-panel__title {
-  margin: 0 0 4px;
+  margin: 0 0 8px;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .jobs-panel__sub {
-  margin: 0;
+  margin: 2px 0 0;
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
@@ -6786,7 +6816,7 @@ button.wiz__step {
 }
 
 .overview-run-row {
-  padding: 12px 4px;
+  padding: 12px 20px;
   cursor: pointer;
   border-radius: var(--radius);
 }

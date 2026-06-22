@@ -41,7 +41,7 @@ export async function recruiteeRoutes(app: FastifyInstance) {
   // GET /recruitee/jobs/:jobId/applicants
   app.get<{ Params: { jobId: string } }>(
     '/recruitee/jobs/:jobId/applicants',
-    { preHandler: requireRole('recruiter') },
+    { preHandler: requireRole('viewer') },
     async (req, reply) => {
       const creds = await getRecruiteeCredentials(req.workspaceId).catch(() => null);
       if (!creds) return reply.status(400).send({ error: 'Recruitee not configured' });
@@ -53,7 +53,7 @@ export async function recruiteeRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { candidateId: string } }>(
     '/recruitee/candidates/:candidateId/cv',
-    { preHandler: requireRole('recruiter') },
+    { preHandler: requireRole('viewer') },
     async (req, reply) => {
       const creds = await getRecruiteeCredentials(req.workspaceId).catch(() => null);
       if (!creds) return reply.status(400).send({ error: 'Recruitee not configured' });

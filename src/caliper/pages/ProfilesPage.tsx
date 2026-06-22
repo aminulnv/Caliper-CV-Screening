@@ -73,6 +73,7 @@ import {
   Toggle,
   Field,
   PageEmpty,
+  RunScreeningBtn,
 } from '@/caliper/ui'
 import { JobsPageLoading } from '@/caliper/pages/profiles/JobsPageLoading'
 import { matchesTextQuery } from '@/lib/text-search'
@@ -1223,6 +1224,7 @@ function ProfilesPage({ go, route }) {
   const [refreshToken, setRefreshToken] = React.useState({ n: 0, forceSync: false });
   const [showNew, setShowNew] = React.useState(false);
   const [filter, setFilter] = React.useState('all');
+  const [departmentFilter, setDepartmentFilter] = React.useState('all');
   const [searchQuery, setSearchQuery] = React.useState('');
   const [jobTableSort, setJobTableSort] = React.useState(null);
   const [runSheetProfileId, setRunSheetProfileId] = React.useState(null);
@@ -1285,6 +1287,10 @@ function ProfilesPage({ go, route }) {
   }, [refreshToken.n, refreshToken.forceSync, userId]);
 
   const jobs = liveProfiles ?? [];
+  const departmentOptions = React.useMemo(
+    () => [...new Set(jobs.map((p) => p.dept).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [jobs],
+  );
   const profile = selectedId && liveProfiles ? liveProfiles.find((p) => p.id === selectedId) : null;
 
   const deepLinkJobId = route?.deepLinkJobId ?? route?.openRunJobId ?? null;
@@ -1400,6 +1406,7 @@ function ProfilesPage({ go, route }) {
     if (filter === 'closed') return p.status === 'closed';
     if (filter === 'recruitee') return p.source === 'recruitee';
     if (filter === 'manual') return p.source === 'manual';
+    if (departmentFilter !== 'all' && p.dept !== departmentFilter) return false;
     return true;
   });
 
@@ -1421,6 +1428,9 @@ function ProfilesPage({ go, route }) {
         onSearchChange={setSearchQuery}
         filter={filter}
         onFilterChange={setFilter}
+        departmentFilter={departmentFilter}
+        departmentOptions={departmentOptions}
+        onDepartmentFilterChange={setDepartmentFilter}
         canEdit={canEdit}
         backgroundRefreshing={backgroundRefreshing}
         onRefresh={refreshProfiles}
@@ -1962,9 +1972,7 @@ function ProfileEditor({ profile: initialProfile, initialTab, onBack, go, onOpen
             </div>
           </div>
           <div className="job-detail-hero__actions">
-            {canEdit && (
-              <Btn variant="primary" icon="play" onClick={() => onOpenRunSheet && onOpenRunSheet()}>Run screening</Btn>
-            )}
+            <RunScreeningBtn canEdit={canEdit} onClick={() => onOpenRunSheet && onOpenRunSheet()} />
           </div>
         </div>
       </header>
@@ -2243,7 +2251,7 @@ function ProfileTabs({
           markCriteriaDirty={markCriteriaDirty}
         />
       )}
-      {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet}/>}
+      {tab === 'runs'     && <RunsPane runs={runsToShow} go={go} onOpenRunSheet={onOpenRunSheet} canEdit={canEdit}/>}
       {tab === 'candidates' && (
         <JobCandidatesPane
           profile={profile}
@@ -2325,9 +2333,9 @@ function OverviewPane({ profile, desc, setDesc, mh, nh, rf, screeningModel, runs
       </div>
 
       <div className="col" style={{ gap: 14 }}>
-        <JobsPanel icon="history" title="Recent runs" flush>
+        <JobsPanel icon="history" title="Recent runs" sub="Latest screening runs for this job." flush>
           {runsToShow.length === 0 && (
-            <p className="muted" style={{ fontSize: 13 }}>
+            <p className="muted jobs-panel__inset" style={{ fontSize: 13, paddingTop: 4, paddingBottom: 4 }}>
               No runs yet. Use <strong>Run screening</strong> above to screen CVs for this job.
             </p>
           )}
@@ -2735,7 +2743,7 @@ function CriteriaPane({
 }
 
 /* ----- Runs pane ----- */
-function RunsPane({ runs, go, onOpenRunSheet }) {
+function RunsPane({ runs, go, onOpenRunSheet, canEdit = true }) {
   const [runQuery, setRunQuery] = React.useState('');
 
   const filteredRuns = React.useMemo(() => {
@@ -2761,7 +2769,8 @@ function RunsPane({ runs, go, onOpenRunSheet }) {
           title="No screening runs yet"
           description="Start one to score CVs for this job."
           actionLabel="Run screening"
-          onAction={() => onOpenRunSheet && onOpenRunSheet()}
+          onAction={canEdit ? () => onOpenRunSheet && onOpenRunSheet() : undefined}
+          actionDisabled={!canEdit}
         />
       </JobsPanel>
     );
@@ -2947,7 +2956,9 @@ function JobCandidatesPane({
             <PageEmpty icon="users" title="Could not load applicants" description={recruiteeError} />
             {(profile.applicantsCount ?? 0) > 0 && (
               <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
-                Recruitee reports {profile.applicantsCount} applicants for this role — fix the connection and refresh.
+                {recruiteeError === 'Forbidden'
+                  ? `Recruitee reports ${profile.applicantsCount} applicants for this role — you may not have permission to view them.`
+                  : `Recruitee reports ${profile.applicantsCount} applicants for this role — fix the connection and refresh.`}
               </p>
             )}
           </>
@@ -2957,7 +2968,8 @@ function JobCandidatesPane({
             title="No applicants yet"
             description="Applicants from Recruitee appear here. After screening, scored candidates show in a separate section."
             actionLabel="Run screening"
-            onAction={() => onOpenRunSheet && onOpenRunSheet()}
+            onAction={canEdit ? () => onOpenRunSheet && onOpenRunSheet() : undefined}
+            actionDisabled={!canEdit}
           />
         )}
       </JobsPanel>
@@ -3106,16 +3118,30 @@ function JobCandidatesPane({
                             <span className="tbl-group__count">
                               {items.length} {items.length === 1 ? 'candidate' : 'candidates'}
                             </span>
-                            {canEdit && onOpenRunSheet && pipelineView === 'qualified' && items.length > 0 && (
-                              <Btn
-                                size="sm"
-                                variant="ghost"
-                                icon="play"
-                                style={{ marginLeft: 'auto' }}
-                                onClick={() => onOpenRunSheet(stage.name)}
-                              >
-                                Screen stage
-                              </Btn>
+                            {onOpenRunSheet && pipelineView === 'qualified' && items.length > 0 && (
+                              canEdit ? (
+                                <Btn
+                                  size="sm"
+                                  variant="ghost"
+                                  icon="play"
+                                  style={{ marginLeft: 'auto' }}
+                                  onClick={() => onOpenRunSheet(stage.name)}
+                                >
+                                  Screen stage
+                                </Btn>
+                              ) : (
+                                <Btn
+                                  size="sm"
+                                  variant="ghost"
+                                  icon="lock"
+                                  disabled
+                                  style={{ marginLeft: 'auto' }}
+                                  title="View-only access — editors and admins can run screenings"
+                                  aria-label="Screen stage (view-only)"
+                                >
+                                  Screen stage
+                                </Btn>
+                              )
                             )}
                           </div>
                         </td>

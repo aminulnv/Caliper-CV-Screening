@@ -27,6 +27,7 @@ const Icon = ({ name, size = 14, stroke = 1.6, ...rest }) => {
     case 'alert':      return <svg {...p}><path d="M12 3 2 21h20Z"/><path d="M12 10v5M12 18h.01"/></svg>;
     case 'info':       return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>;
     case 'shield':     return <svg {...p}><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6Z"/></svg>;
+    case 'lock':       return <svg {...p}><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>;
     case 'history':    return <svg {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>;
     case 'edit':       return <svg {...p}><path d="M4 20h4l10-10-4-4L4 16z"/></svg>;
     case 'copy':       return <svg {...p}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/></svg>;
@@ -277,7 +278,35 @@ const PageError = ({ title = 'Something went wrong', message, onRetry, retryLabe
   </div>
 );
 
-const PageEmpty = ({ icon = 'history', title = 'Nothing here yet', description, actionLabel, onAction }) => (
+const VIEW_ONLY_RUN_TITLE = 'View-only access — editors and admins can run screenings';
+
+const RunScreeningBtn = ({ canEdit, onClick, variant = 'primary', size, children = 'Run screening', ...rest }) => (
+  canEdit ? (
+    <Btn variant={variant} size={size} icon="play" onClick={onClick} {...rest}>{children}</Btn>
+  ) : (
+    <Btn
+      variant={variant}
+      size={size}
+      icon="lock"
+      disabled
+      title={VIEW_ONLY_RUN_TITLE}
+      aria-label={`${children} (view-only)`}
+      {...rest}
+    >
+      {children}
+    </Btn>
+  )
+);
+
+const PageEmpty = ({
+  icon = 'history',
+  title = 'Nothing here yet',
+  description,
+  actionLabel,
+  onAction,
+  actionDisabled = false,
+  actionTitle,
+}) => (
   <div className="empty" style={{ padding: '24px 18px' }}>
     <Icon name={icon} size={22} />
     <div style={{ marginTop: 8, fontSize: 14, color: 'var(--ink)' }}>{title}</div>
@@ -286,9 +315,22 @@ const PageEmpty = ({ icon = 'history', title = 'Nothing here yet', description, 
         {description}
       </div>
     )}
-    {actionLabel && onAction && (
+    {actionLabel && (onAction || actionDisabled) && (
       <div style={{ marginTop: 14 }}>
-        <Btn variant="primary" size="sm" onClick={onAction}>{actionLabel}</Btn>
+        {actionDisabled ? (
+          <Btn
+            variant="primary"
+            size="sm"
+            icon="lock"
+            disabled
+            title={actionTitle || VIEW_ONLY_RUN_TITLE}
+            aria-label={`${actionLabel} (view-only)`}
+          >
+            {actionLabel}
+          </Btn>
+        ) : (
+          <Btn variant="primary" size="sm" onClick={onAction}>{actionLabel}</Btn>
+        )}
       </div>
     )}
   </div>
@@ -297,6 +339,7 @@ const PageEmpty = ({ icon = 'history', title = 'Nothing here yet', description, 
 export {
   Icon,
   Btn,
+  RunScreeningBtn,
   IconBtn,
   Badge,
   StatusBadge,

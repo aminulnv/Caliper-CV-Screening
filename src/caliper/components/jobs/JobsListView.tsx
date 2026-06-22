@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react'
-import { Badge, Btn, Icon, PageEmpty, Segmented } from '@/caliper/ui'
+import { Badge, Btn, Icon, PageEmpty, RunScreeningBtn, Segmented } from '@/caliper/ui'
 import { prefetchRecruiteeApplicants } from '@/lib/applicants-cache'
 import { JobsKpiStrip } from './JobsKpiStrip'
 import { JobsSortableTh } from './JobsSortableTh'
@@ -21,6 +21,9 @@ export function JobsListView({
   onSearchChange,
   filter,
   onFilterChange,
+  departmentFilter,
+  departmentOptions,
+  onDepartmentFilterChange,
   canEdit,
   backgroundRefreshing,
   onRefresh,
@@ -73,6 +76,19 @@ export function JobsListView({
             { value: 'manual', label: 'Manual' },
           ]}
         />
+        {departmentOptions.length > 0 && (
+          <select
+            className="sel jobs-toolbar__dept-filter"
+            value={departmentFilter}
+            onChange={(e) => onDepartmentFilterChange(e.target.value)}
+            aria-label="Filter by department"
+          >
+            <option value="all">All departments</option>
+            {departmentOptions.map((dept) => (
+              <option key={dept} value={dept}>{dept}</option>
+            ))}
+          </select>
+        )}
         <div className="spacer" />
         <div className="jobs-toolbar__actions">
           {canEdit && (
@@ -85,9 +101,7 @@ export function JobsListView({
               {backgroundRefreshing ? 'Syncing…' : 'Sync Recruitee'}
             </Btn>
           )}
-          {canEdit && (
-            <Btn variant="default" icon="play" onClick={onRunPicker}>Run screening</Btn>
-          )}
+          <RunScreeningBtn canEdit={canEdit} variant="default" onClick={onRunPicker} />
           {canEdit && (
             <Btn variant="primary" icon="plus" onClick={onNewJob}>New job</Btn>
           )}

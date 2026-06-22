@@ -135,7 +135,7 @@ export function RecruiteePipelineBoard({
     ? columns.filter((col) => col.items.length > 0)
     : columns;
 
-  const showScreen = canEdit && onScreenStage && pipelineView === 'qualified';
+  const showScreen = onScreenStage && pipelineView === 'qualified';
 
   return (
     <div className="cand-board" role="list" aria-label="Applicants by pipeline stage">
@@ -163,14 +163,26 @@ export function RecruiteePipelineBoard({
             </span>
             <span className="cand-col__count">{items.length}</span>
             {showScreen && items.length > 0 && (
-              <button
-                type="button"
-                className="cand-col__screen"
-                onClick={() => onScreenStage(stage.name)}
-                title={`Run screening on the ${items.length} applicant${items.length === 1 ? '' : 's'} in “${stage.name}”`}
-              >
-                <Icon name="play" size={11} /> Screen
-              </button>
+              canEdit ? (
+                <button
+                  type="button"
+                  className="cand-col__screen"
+                  onClick={() => onScreenStage(stage.name)}
+                  title={`Run screening on the ${items.length} applicant${items.length === 1 ? '' : 's'} in “${stage.name}”`}
+                >
+                  <Icon name="play" size={11} /> Screen
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="cand-col__screen cand-col__screen--locked"
+                  disabled
+                  title="View-only access — editors and admins can run screenings"
+                  aria-label={`Screen (view-only)`}
+                >
+                  <Icon name="lock" size={11} /> Screen
+                </button>
+              )
             )}
           </header>
           <div className="cand-col__body">
