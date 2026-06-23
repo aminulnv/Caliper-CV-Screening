@@ -25,13 +25,8 @@ export default function AuthenticatedLayout() {
         if (!item.children?.length) return item
         const children = item.children
           .filter((child) => !child.requiresEdit || canEdit)
-          .map((child) => ({
-            ...child,
-            comingSoon: child.path === '/talent-search' && !semanticCvSearchEnabled
-              ? true
-              : child.comingSoon,
-          }))
-        return { ...item, children }
+          .filter((child) => semanticCvSearchEnabled || child.path !== '/talent-search')
+        return children.length ? { ...item, children } : { ...item, children: undefined }
       }),
     [isAdmin, canEdit],
   )
