@@ -79,9 +79,10 @@ const inflightByUser = new Map<string, Promise<JobsCacheEntry>>();
 async function fetchJobsEntry(
   forceSync: boolean,
   userId: string | null | undefined,
+  allowRecruiteeSync = true,
 ): Promise<JobsCacheEntry> {
   const cache = readJobsCache(userId);
-  const runSync = shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, forceSync);
+  const runSync = allowRecruiteeSync && shouldRunRecruiteeSync(cache?.lastSyncAt ?? null, forceSync);
   let syncNote = cache?.syncNote ?? '';
   let lastSyncAt = cache?.lastSyncAt ?? null;
 
@@ -110,9 +111,12 @@ async function fetchJobsEntry(
 export async function loadJobs(options?: {
   forceSync?: boolean;
   userId?: string | null;
+  /** When false, skips POST /recruitee/sync-jobs (viewers cannot sync). */
+  allowRecruiteeSync?: boolean;
 }): Promise<JobsCacheEntry> {
   const forceSync = Boolean(options?.forceSync);
   const userId = options?.userId ?? null;
+  const allowRecruiteeSync = options?.allowRecruiteeSync !== false;
   const inflightKey = userId ?? '__anon__';
 
   if (forceSync) {
@@ -122,7 +126,7 @@ export async function loadJobs(options?: {
     if (pending) return pending;
   }
 
-  const promise = fetchJobsEntry(forceSync, userId).finally(() => {
+  const promise = fetchJobsEntry(forceSync, userId, allowRecruiteeSync).finally(() => {
     inflightByUser.delete(inflightKey);
   });
   inflightByUser.set(inflightKey, promise);

@@ -14,7 +14,14 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
     logoUrl: assets.logoUrl || undefined,
   },
   navItems: [
-    { path: '/jobs', label: 'Jobs', icon: Briefcase, end: true },
+    {
+      path: '/jobs',
+      label: 'Jobs',
+      icon: Briefcase,
+      children: [
+        { path: '/talent-search', label: 'Talent search', requiresEdit: true },
+      ],
+    },
     { path: '/runs', label: 'Processed CVs', icon: List, end: true },
     { path: '/activity', label: 'Activity Log', icon: History, end: true },
     { path: '/usage', label: 'Usage', icon: BarChart3, end: true, requiresEdit: true as const },
@@ -25,7 +32,10 @@ export const layoutConfig: Omit<AppLayoutConfig, 'getPageTitle'> = {
 export function getPageTitle(pathname: string): string {
   if (pathname.startsWith('/runs/')) {
     const id = pathname.slice('/runs/'.length)
-    return id ? `Run ${id}` : 'Runs'
+    return id ? `Run ${id}` : 'Processed CVs'
+  }
+  if (pathname.startsWith('/jobs/') && pathname.length > '/jobs/'.length) {
+    return 'Job'
   }
   const titles: Record<string, string> = {
     '/runs': 'Processed CVs',
@@ -34,6 +44,7 @@ export function getPageTitle(pathname: string): string {
     '/usage': 'Usage',
     '/settings': 'Settings',
     '/profile': 'Profile',
+    '/talent-search': 'Talent search',
   }
   return titles[pathname] ?? 'Caliper'
 }

@@ -1,0 +1,60 @@
+/* Design tokens — imported by caliper.css */
+:root {
+  --bg: #f8fafc;
+  --bg-sunk: #e8ecf1;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --ink: #020617;
+  --ink-2: #0f172a;
+  --ink-soft: #334155;
+  --muted: #64748b;
+  --subtle: #94a3b8;
+  --faint: #cbd5e1;
+  --line: #e2e8f0;
+  --line-soft: #f1f5f9;
+  --brand-primary: #0369a1;
+  --brand-primary-hover: #075985;
+  --brand-primary-mid: #0369a1;
+  --brand-primary-dark: #0f172a;
+  --brand-primary-contrast: #ffffff;
+  --brand-primary-soft: color-mix(in srgb, #0369a1 12%, white);
+  --brand-primary-ink: #0369a1;
+  --accent: var(--brand-primary);
+  --accent-soft: var(--brand-primary-soft);
+  --accent-ink: var(--brand-primary-ink);
+  --ok: oklch(0.58 0.11 150);
+  --ok-soft: oklch(0.95 0.04 150);
+  --ok-ink: oklch(0.34 0.07 150);
+  --warn: oklch(0.72 0.13 70);
+  --warn-soft: oklch(0.96 0.05 75);
+  --warn-ink: oklch(0.42 0.10 60);
+  --bad: #dc2626;
+  --bad-soft: #fef2f2;
+  --bad-ink: #b91c1c;
+  --violet: oklch(0.52 0.16 285);
+  --violet-soft: oklch(0.94 0.04 285);
+  --violet-ink: oklch(0.38 0.12 285);
+  --info: #0369a1;
+  --info-soft: #e0f2fe;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --type-label: 11px;
+  --type-body: 13.5px;
+  --type-emphasis: 15px;
+  --type-section: 20px;
+  --type-page: 26px;
+  --type-mono: 12px;
+  --row-h: 46px;
+  --pad-cell: 14px;
+  --radius-sm: 5px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-2: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-pop: 0 12px 32px -8px rgba(15, 23, 42, 0.12);
+  --motion-fast: 150ms ease;
+  --motion-base: 200ms ease;
+}
+
+[data-density="compact"] { --row-h: 40px; --pad-cell: 10px; }
+[data-density="comfy"]   { --row-h: 56px; --pad-cell: 18px; }

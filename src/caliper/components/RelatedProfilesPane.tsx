@@ -1,6 +1,9 @@
 // @ts-nocheck
 import React from 'react'
 import { Btn, Icon, IconBtn, Badge } from '@/caliper/ui'
+import { ConfirmModal } from '@/components/ConfirmModal'
+import { RelatedProfileDetailSheet } from '@/caliper/components/RelatedProfileDetailSheet'
+import { AppToast, useToast } from '@/caliper/components/AppToast'
 import { api, NeedsCountryError, type RelatedProfileRow } from '@/services/api'
 import { COUNTRY_NAMES, GLOBAL_SEARCH, GLOBAL_SEARCH_LABEL } from '@/lib/countries'
 import {
@@ -16,6 +19,31 @@ import {
   displayLocation,
   displayTitle,
 } from '@/lib/linkedin-profile-display'
+
+const FILTER_DEBOUNCE_MS = 250
+const DISCOVER_HINTS = [
+  'Use broader job titles (e.g. drop "Senior")',
+  'Remove location from the search prompt',
+  'Try adjacent roles in the same domain',
+]
+
+type SortKey = 'fit' | 'name' | 'recent'
+
+type ToastState = {
+  message: string
+  tone: 'ok' | 'bad'
+  actionLabel?: string
+  onAction?: () => void
+}
+
+function useDebouncedValue(value: string, delayMs: number) {
+  const [debounced, setDebounced] = React.useState(value)
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
 
 function displayProfileName(name: string, linkedinUrl: string | null): string {
   if (!/\s[0-9a-f]{6,}$/i.test(name)) return name
@@ -74,7 +102,36 @@ function backgroundText(profile: RelatedProfileRow): string {
   return displayBackground(summary)
 }
 
-function StarRating({ stars, max = 5, size = 12 }) {
+function sortProfiles(profiles: RelatedProfileRow[], sortBy: SortKey, jobName: string) {
+  const next = [...profiles]
+  if (sortBy === 'name') {
+    next.sort((a, b) => {
+      const aName = displayProfileName(a.name, profileField(a, 'linkedin_url', 'linkedinUrl'))
+      const bName = displayProfileName(b.name, profileField(b, 'linkedin_url', 'linkedinUrl'))
+      return aName.localeCompare(bName)
+    })
+    return next
+  }
+  if (sortBy === 'recent') {
+    next.sort((a, b) => {
+      const aTs = Date.parse(a.created_at || a.discovered_at || '') || 0
+      const bTs = Date.parse(b.created_at || b.discovered_at || '') || 0
+      return bTs - aTs
+    })
+    return next
+  }
+  next.sort((a, b) => {
+    const aStars = profileField(a, 'alignment_stars', 'alignmentStars') ?? -1
+    const bStars = profileField(b, 'alignment_stars', 'alignmentStars') ?? -1
+    if (bStars !== aStars) return bStars - aStars
+    const aTs = Date.parse(a.discovered_at || a.created_at || '') || 0
+    const bTs = Date.parse(b.discovered_at || b.created_at || '') || 0
+    return bTs - aTs
+  })
+  return next
+}
+
+function StarRating({ stars, max = 5, size = 12, showValue = false }) {
   if (stars == null) return null
   return (
     <span className="star-rating" aria-label={`${stars} out of ${max} stars JD alignment`}>
@@ -90,9 +147,29 @@ function StarRating({ stars, max = 5, size = 12 }) {
           <path d="M12 2l2.9 6.9 7.4.6-5.6 4.8 1.7 7.2L12 18.8 5.6 21.5l1.7-7.2L1.7 9.5l7.4-.6L12 2z" />
         </svg>
       ))}
+      {showValue && (
+        <span className="mono muted related-profiles-table__stars-val">{stars}/{max}</span>
+      )}
     </span>
   )
 }
+
+function JdFitHeader() {
+  return (
+    <span className="related-profiles-table__jd-fit-head">
+      JD fit
+      <button
+        type="button"
+        className="related-profiles-table__jd-fit-info"
+        title="Estimated fit to this job description (1–5 stars)."
+        aria-label="Estimated fit to this job description, rated 1 to 5 stars"
+      >
+        <Icon name="info" size={12} aria-hidden />
+      </button>
+    </span>
+  )
+}
+
 
 function buildIntroText(count: number, jobName: string, scope: string | null) {
   const isGlobal = scope?.toLowerCase().includes('global')
@@ -243,7 +320,7 @@ function SearchPromptEditor({
 function RelatedProfilesLoading() {
   return (
     <div className="card related-profiles-loading" aria-busy="true" aria-label="Loading related profiles">
-      {[0, 1, 2, 3].map((i) => (
+      {[0, 1, 2, 3, 4].map((i) => (
         <div key={i} className="related-profiles-loading__row">
           <div className="related-profiles-loading__avatar" />
           <div className="related-profiles-loading__lines">
@@ -256,6 +333,111 @@ function RelatedProfilesLoading() {
   )
 }
 
+function ProfileRowActions({
+  displayName,
+  profile,
+  canEdit,
+  onViewDetails,
+  onRequestRemove,
+}) {
+  return (
+    <div className="related-profiles-row-actions">
+      <button
+        type="button"
+        className="related-profiles-row-actions__details"
+        onClick={() => onViewDetails(profile)}
+        aria-label={`View details for ${displayName}`}
+      >
+        Details
+      </button>
+      {canEdit && (
+        <IconBtn
+          className="related-profiles-row-action related-profiles-row-action--danger"
+          name="trash"
+          size={14}
+          aria-label={`Remove ${displayName} from talent list`}
+          onClick={() => onRequestRemove(profile)}
+        />
+      )}
+    </div>
+  )
+}
+
+function RelatedProfileCard({
+  profile,
+  index,
+  jobName,
+  hasScoredProfiles,
+  canEdit,
+  onViewDetails,
+  onRequestRemove,
+}) {
+  const linkedinUrl = profileField(profile, 'linkedin_url', 'linkedinUrl')
+  const displayName = displayProfileName(profile.name, linkedinUrl)
+  const title = currentTitle(profile, jobName)
+  const company = inferredCompany(profile)
+  const location = inferredLocation(profile)
+  const bg = backgroundText(profile)
+  const stars = profileField(profile, 'alignment_stars', 'alignmentStars')
+
+  return (
+    <article className="related-profiles-card">
+      <div className="related-profiles-card__head">
+        <span className={`related-profiles-avatar ${avatarTone(displayName)}`} aria-hidden>
+          {initialsFromName(displayName)}
+        </span>
+        <div className="related-profiles-card__head-text">
+          {linkedinUrl ? (
+            <a
+              href={linkedinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="related-profiles-table__name"
+            >
+              {displayName}
+              <Icon name="external" size={11} className="related-profiles-table__ext" />
+            </a>
+          ) : (
+            <span className="related-profiles-table__name related-profiles-table__name--plain">
+              {displayName}
+            </span>
+          )}
+          {hasScoredProfiles && stars != null && (
+            <div className="related-profiles-card__fit">
+              <StarRating stars={stars} size={11} showValue />
+            </div>
+          )}
+        </div>
+        <span className="related-profiles-card__index muted" aria-hidden>#{index + 1}</span>
+      </div>
+      <dl className="related-profiles-card__meta">
+        <div>
+          <dt>Title</dt>
+          <dd>{title || 'Not listed'}</dd>
+        </div>
+        <div>
+          <dt>Company</dt>
+          <dd>{company || 'Not listed'}</dd>
+        </div>
+        <div>
+          <dt>Location</dt>
+          <dd>{location || 'Not listed'}</dd>
+        </div>
+      </dl>
+      {bg !== '—' && (
+        <p className="related-profiles-card__bg">{bg}</p>
+      )}
+      <ProfileRowActions
+        displayName={displayName}
+        profile={profile}
+        canEdit={canEdit}
+        onViewDetails={onViewDetails}
+        onRequestRemove={onRequestRemove}
+      />
+    </article>
+  )
+}
+
 export function RelatedProfilesPane({
   jobId,
   jobName,
@@ -263,6 +445,9 @@ export function RelatedProfilesPane({
   isHero,
   workspaceSettings,
   screeningModel,
+  canEdit = true,
+  onProfilesChange,
+  onGoToOverview,
 }) {
   const defaultModelId =
     screeningModel || workspaceSettings?.default_model || 'claude-sonnet-4-6'
@@ -285,11 +470,24 @@ export function RelatedProfilesPane({
   const [lastSeniorityLevel, setLastSeniorityLevel] = React.useState<string | null>(null)
   const [needsCountry, setNeedsCountry] = React.useState(false)
   const [selectedCountry, setSelectedCountry] = React.useState(GLOBAL_SEARCH)
+  const [profileQuery, setProfileQuery] = React.useState('')
+  const [sortBy, setSortBy] = React.useState<SortKey>('fit')
+  const [refineOpen, setRefineOpen] = React.useState(false)
+  const [discoverAttempted, setDiscoverAttempted] = React.useState(false)
+  const [pendingRemove, setPendingRemove] = React.useState<RelatedProfileRow | null>(null)
+  const [detailProfile, setDetailProfile] = React.useState<RelatedProfileRow | null>(null)
+  const { toast, showToast, dismissToast } = useToast()
+  const [liveMessage, setLiveMessage] = React.useState('')
   const queryTouchedRef = React.useRef(false)
+  const debouncedProfileQuery = useDebouncedValue(profileQuery, FILTER_DEBOUNCE_MS)
 
   React.useEffect(() => {
     queryTouchedRef.current = queryTouched
   }, [queryTouched])
+
+  React.useEffect(() => {
+    if (queryTouched || needsCountry) setRefineOpen(true)
+  }, [queryTouched, needsCountry])
 
   const load = React.useCallback(() => {
     if (isHero || !jobId) {
@@ -300,10 +498,13 @@ export function RelatedProfilesPane({
     setError(null)
     api.jobs
       .relatedProfiles(jobId)
-      .then(setProfiles)
+      .then((rows) => {
+        setProfiles(rows)
+        onProfilesChange?.(rows.length)
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [jobId, isHero])
+  }, [jobId, isHero, onProfilesChange])
 
   React.useEffect(() => { load() }, [load])
 
@@ -322,6 +523,13 @@ export function RelatedProfilesPane({
     setLastSeniorityLevel(null)
     setNeedsCountry(false)
     setSelectedCountry(GLOBAL_SEARCH)
+    setProfileQuery('')
+    setSortBy('fit')
+    setRefineOpen(false)
+    setDiscoverAttempted(false)
+    setPendingRemove(null)
+    setDetailProfile(null)
+    setToast(null)
   }, [jobId])
 
   const applySuggestion = React.useCallback((res: {
@@ -380,12 +588,12 @@ export function RelatedProfilesPane({
   }, [applySuggestion, hasDescription, isHero, jobId, modelId, selectedCountry])
 
   React.useEffect(() => {
-    if (!hasDescription || isHero) return undefined
+    if (!canEdit || !hasDescription || isHero) return undefined
     const timer = window.setTimeout(() => {
       void fetchSuggestion()
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [hasDescription, isHero, modelId, jobId, fetchSuggestion])
+  }, [canEdit, hasDescription, isHero, modelId, jobId, fetchSuggestion])
 
   const resetQueryToSuggestion = () => {
     void fetchSuggestion(needsCountry ? selectedCountry : undefined, true)
@@ -407,6 +615,7 @@ export function RelatedProfilesPane({
     }
     setDiscovering(true)
     setError(null)
+    setDiscoverAttempted(true)
     try {
       const res = await api.jobs.discoverRelatedProfiles(jobId, {
         limit: 10,
@@ -415,6 +624,7 @@ export function RelatedProfilesPane({
         ...(searchCountryParam ? { search_country: searchCountryParam } : {}),
       })
       setProfiles(res.profiles)
+      onProfilesChange?.(res.profiles.length)
       setDraftQuery(res.search_query)
       setQueryTouched(false)
       setLastSearchQuery(res.search_query)
@@ -426,37 +636,95 @@ export function RelatedProfilesPane({
         locationScope: res.location_scope ?? res.location_query ?? null,
         seniorityLevel: res.seniority_level ?? null,
       })
+      const count = res.profiles.length
+      const msg = count === 0
+        ? 'No profiles matched this search.'
+        : `Found ${count} profile${count === 1 ? '' : 's'} for this job.`
+      setLiveMessage(msg)
+      showToast({ message: msg, tone: count === 0 ? 'bad' : 'ok' })
     } catch (e) {
       if (e instanceof NeedsCountryError) {
         setNeedsCountry(true)
         setError(null)
       } else {
-        setError(e instanceof Error ? e.message : 'Discovery failed')
+        const message = e instanceof Error ? e.message : 'Discovery failed'
+        setError(message)
+        showToast({
+          message,
+          tone: 'bad',
+          actionLabel: 'Retry',
+          onAction: () => {
+            dismissToast()
+            void runDiscover()
+          },
+        })
       }
     } finally {
       setDiscovering(false)
     }
   }
 
-  const removeProfile = async (profileId: string) => {
+  const requestRemove = (profile: RelatedProfileRow) => {
+    setPendingRemove(profile)
+  }
+
+  const confirmRemove = async () => {
+    if (!pendingRemove) return
+    const profileId = pendingRemove.id
+    const linkedinUrl = profileField(pendingRemove, 'linkedin_url', 'linkedinUrl')
+    const displayName = displayProfileName(pendingRemove.name, linkedinUrl)
     try {
       await api.jobs.deleteRelatedProfile(jobId, profileId)
-      setProfiles((prev) => prev.filter((p) => p.id !== profileId))
+      setProfiles((prev) => {
+        const next = prev.filter((p) => p.id !== profileId)
+        onProfilesChange?.(next.length)
+        return next
+      })
+      showToast({ message: `Removed ${displayName}`, tone: 'ok' })
+      setLiveMessage(`Removed ${displayName} from talent list.`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not remove profile')
+      const message = e instanceof Error ? e.message : 'Could not remove profile'
+      setError(message)
+      showToast({ message, tone: 'bad' })
+    } finally {
+      setPendingRemove(null)
     }
   }
 
   const hasScoredProfiles = profiles.some((p) => profileField(p, 'alignment_stars', 'alignmentStars') != null)
-  const displayLocation = lastLocationScope
-  const showSearchMeta = lastSearchQuery && lastSearchQuery !== '(mock mode)'
+  const displayLocationScope = lastLocationScope
+  const showSearchMeta = canEdit && lastSearchQuery && lastSearchQuery !== '(mock mode)'
+
+  const filteredProfiles = React.useMemo(() => {
+    const sorted = sortProfiles(profiles, sortBy, jobName)
+    const q = debouncedProfileQuery.trim().toLowerCase()
+    if (!q) return sorted
+    return sorted.filter((p) => {
+      const linkedinUrl = profileField(p, 'linkedin_url', 'linkedinUrl')
+      const displayName = displayProfileName(p.name, linkedinUrl)
+      const title = currentTitle(p, jobName)
+      const company = inferredCompany(p)
+      const location = inferredLocation(p)
+      const bg = backgroundText(p)
+      return [displayName, title, company, location, bg]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    })
+  }, [profiles, debouncedProfileQuery, jobName, sortBy])
+
+  const pendingRemoveName = pendingRemove
+    ? displayProfileName(
+        pendingRemove.name,
+        profileField(pendingRemove, 'linkedin_url', 'linkedinUrl'),
+      )
+    : ''
 
   if (isHero) {
     return (
       <div className="card related-profiles-hero-empty">
         <div className="empty">
           <div className="related-profiles-hero-empty__icon">
-            <Icon name="users" size={22}/>
+            <Icon name="users" size={22} />
           </div>
           <div className="related-profiles-hero-empty__title">Suggested Profiles for This Job</div>
           <p className="related-profiles-hero-empty__copy muted">
@@ -467,89 +735,168 @@ export function RelatedProfilesPane({
     )
   }
 
+  const paneClass = canEdit
+    ? 'col related-profiles-pane'
+    : 'col related-profiles-pane related-profiles-pane--readonly'
+
   return (
-    <div className="col related-profiles-pane">
-      <div className="card related-profiles-toolbar">
-        <div className="card__head related-profiles-toolbar__head">
-          <div className="related-profiles-toolbar__title-group">
-            <Icon name="users" size={14} className="muted"/>
-            <span className="card__title">Suggested Profiles for This Job</span>
-            {profiles.length > 0 && (
-              <Badge tone="info">{profiles.length} found</Badge>
-            )}
-          </div>
-          <div className="spacer"/>
-          <RelatedProfilesModelSelect
-            modelId={modelId}
-            onChange={setModelId}
-            settings={workspaceSettings}
-            disabled={discovering}
-          />
-          <Btn
-            variant="primary"
-            icon="sparkle"
-            size="sm"
-            disabled={!hasDescription || discovering || suggesting || !draftQuery.trim()}
-            onClick={() => runDiscover()}
-          >
-            {discovering ? 'Finding profiles…' : 'Suggest profiles'}
-          </Btn>
+    <div className={paneClass}>
+      <div className="visually-hidden" aria-live="polite" aria-atomic="true">{liveMessage}</div>
+
+      {!canEdit && (
+        <div className="callout related-profiles-callout related-profiles-callout--readonly">
+          <Icon name="lock" size={14} aria-hidden />
+          <span>
+            View-only access. Review saved LinkedIn suggestions for this job; discovering or removing profiles requires editor or admin access.
+          </span>
         </div>
-        <div className="card__body col related-profiles-toolbar__body">
-          {!hasDescription && (
-            <div className="callout related-profiles-callout">
-              Add a job description on the <strong>Job Description</strong> tab before suggesting profiles.
+      )}
+
+      {canEdit && (
+        <div className="card related-profiles-toolbar">
+          <div className="card__head related-profiles-toolbar__head">
+            <div className="related-profiles-toolbar__title-group">
+              <Icon name="users" size={14} className="muted" />
+              <span className="card__title">Discover profiles</span>
+              {profiles.length > 0 && (
+                <Badge tone="info">{profiles.length} saved</Badge>
+              )}
             </div>
-          )}
-          {hasDescription && (
-            <SearchPromptEditor
-              value={draftQuery}
-              onChange={(value) => {
-                setDraftQuery(value)
-                setQueryTouched(true)
-                queryTouchedRef.current = true
-              }}
-              onReset={resetQueryToSuggestion}
-              suggesting={suggesting}
-              disabled={discovering}
-              showReset={queryTouched}
-              meta={suggestMeta}
-              needsCountry={needsCountry}
-              selectedCountry={selectedCountry}
-              onCountryChange={handleCountryChange}
-            />
-          )}
-          {discovering && (
-            <div className="related-profiles-pane__status related-profiles-pane__status--active" role="status">
-              <span className="related-profiles-pane__pulse" aria-hidden />
-              <Icon name="sparkle" size={13}/>
-              <span>Searching LinkedIn for matching profiles…</span>
-            </div>
-          )}
-          {showSearchMeta && !discovering && (
-            <div className="related-profiles-pane__status related-profiles-pane__status--done" role="status">
-              <Icon name="check" size={13}/>
-              <span>Search complete</span>
-              <div className="related-profiles-meta">
-                {lastSearchProvider && (
-                  <span className="related-profiles-meta__pill">{lastSearchProvider}</span>
-                )}
-                {displayLocation && (
-                  <span className="related-profiles-meta__pill">{displayLocation}</span>
-                )}
-                {lastSeniorityLevel && (
-                  <span className="related-profiles-meta__pill" title="Target seniority band for this search">
-                    {lastSeniorityLevel}
-                  </span>
+            <div className="spacer" />
+            {refineOpen && (
+              <RelatedProfilesModelSelect
+                modelId={modelId}
+                onChange={setModelId}
+                settings={workspaceSettings}
+                disabled={discovering}
+              />
+            )}
+            <Btn
+              variant="primary"
+              icon="sparkle"
+              size="sm"
+              disabled={!hasDescription || discovering || suggesting || !draftQuery.trim()}
+              onClick={() => runDiscover()}
+            >
+              {discovering ? 'Finding profiles…' : 'Suggest profiles'}
+            </Btn>
+          </div>
+          <div className="card__body col related-profiles-toolbar__body">
+            {!hasDescription && (
+              <div className="related-profiles-empty related-profiles-empty--inline">
+                <p className="related-profiles-empty__copy muted">
+                  Add a job description on the Overview tab before suggesting profiles.
+                </p>
+                {onGoToOverview && (
+                  <Btn variant="default" size="sm" icon="doc" onClick={onGoToOverview}>
+                    Go to Overview
+                  </Btn>
                 )}
               </div>
-            </div>
-          )}
-          {error && (
-            <div className="related-profiles-error" role="alert">{error}</div>
-          )}
+            )}
+            {hasDescription && !refineOpen && (
+              <div className="related-profiles-toolbar__compact">
+                <p className="related-profiles-toolbar__compact-lead muted">
+                  {suggesting
+                    ? 'Generating LinkedIn search terms from your job description…'
+                    : 'Search terms are ready. Run Suggest profiles or refine the query first.'}
+                </p>
+                {draftQuery.trim() && !suggesting && (
+                  <p className="related-profiles-toolbar__preview mono">{draftQuery}</p>
+                )}
+                <button
+                  type="button"
+                  className="related-profiles-toolbar__refine-toggle"
+                  onClick={() => setRefineOpen(true)}
+                  disabled={discovering}
+                >
+                  Refine search
+                  <Icon name="chevron-down" size={12} aria-hidden />
+                </button>
+              </div>
+            )}
+            {hasDescription && refineOpen && (
+              <>
+                <div className="related-profiles-toolbar__refine-head">
+                  <span className="related-profiles-toolbar__refine-label">Advanced search</span>
+                  <button
+                    type="button"
+                    className="related-profiles-toolbar__refine-toggle"
+                    onClick={() => setRefineOpen(false)}
+                    disabled={discovering || needsCountry}
+                  >
+                    Collapse
+                    <Icon name="chevron-down" size={12} style={{ transform: 'rotate(180deg)' }} aria-hidden />
+                  </button>
+                </div>
+                <SearchPromptEditor
+                  value={draftQuery}
+                  onChange={(value) => {
+                    setDraftQuery(value)
+                    setQueryTouched(true)
+                    queryTouchedRef.current = true
+                  }}
+                  onReset={resetQueryToSuggestion}
+                  suggesting={suggesting}
+                  disabled={discovering}
+                  showReset={queryTouched}
+                  meta={suggestMeta}
+                  needsCountry={needsCountry}
+                  selectedCountry={selectedCountry}
+                  onCountryChange={handleCountryChange}
+                />
+              </>
+            )}
+            {discovering && (
+              <div className="related-profiles-pane__status related-profiles-pane__status--active" role="status">
+                <span className="related-profiles-pane__pulse" aria-hidden />
+                <Icon name="sparkle" size={13} />
+                <span>Searching LinkedIn for matching profiles…</span>
+              </div>
+            )}
+            {showSearchMeta && !discovering && (
+              <div className="related-profiles-pane__status related-profiles-pane__status--done" role="status">
+                <Icon name="check" size={13} />
+                <span>Search complete</span>
+                <div className="related-profiles-meta">
+                  {lastSearchProvider && (
+                    <span className="related-profiles-meta__pill">{lastSearchProvider}</span>
+                  )}
+                  {displayLocationScope && (
+                    <span className="related-profiles-meta__pill">{displayLocationScope}</span>
+                  )}
+                  {lastSeniorityLevel && (
+                    <span className="related-profiles-meta__pill" title="Target seniority band for this search">
+                      {lastSeniorityLevel}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="related-profiles-error" role="alert">
+                {error}
+                {discoverAttempted && (
+                  <button
+                    type="button"
+                    className="related-profiles-error__retry"
+                    onClick={() => {
+                      setError(null)
+                      void runDiscover()
+                    }}
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {!canEdit && error && !loading && (
+        <div className="related-profiles-error" role="alert">{error}</div>
+      )}
 
       {loading ? (
         <RelatedProfilesLoading />
@@ -557,12 +904,49 @@ export function RelatedProfilesPane({
         <div className="card related-profiles-empty">
           <div className="empty">
             <div className="related-profiles-empty__icon">
-              <Icon name="search" size={22}/>
+              <Icon name="search" size={22} />
             </div>
-            <div className="related-profiles-empty__title">No suggested profiles yet</div>
+            <div className="related-profiles-empty__title">
+              {discoverAttempted ? 'No profiles matched this search' : 'No suggested profiles yet'}
+            </div>
             <p className="related-profiles-empty__copy muted">
-              Run <strong>Suggest profiles</strong> to discover LinkedIn candidates aligned with this job description.
+              {discoverAttempted
+                ? 'Try broader titles or locations, then run Suggest profiles again.'
+                : canEdit
+                  ? <>Run <strong>Suggest profiles</strong> to discover LinkedIn candidates aligned with this job description.</>
+                  : 'Editors and admins can discover LinkedIn candidates for this job from the job description.'}
             </p>
+            {canEdit && discoverAttempted && (
+              <div className="related-profiles-empty__hints">
+                {DISCOVER_HINTS.map((hint) => (
+                  <span key={hint} className="related-profiles-empty__hint-chip">{hint}</span>
+                ))}
+                <Btn
+                  variant="default"
+                  size="sm"
+                  icon="sparkle"
+                  onClick={() => setRefineOpen(true)}
+                >
+                  Edit search & retry
+                </Btn>
+              </div>
+            )}
+            {canEdit && !discoverAttempted && !hasDescription && onGoToOverview && (
+              <Btn variant="default" size="sm" icon="doc" onClick={onGoToOverview}>
+                Add job description
+              </Btn>
+            )}
+            {canEdit && !discoverAttempted && hasDescription && (
+              <Btn
+                variant="primary"
+                size="sm"
+                icon="sparkle"
+                disabled={discovering || suggesting || !draftQuery.trim()}
+                onClick={() => runDiscover()}
+              >
+                Suggest profiles
+              </Btn>
+            )}
           </div>
         </div>
       ) : (
@@ -570,109 +954,215 @@ export function RelatedProfilesPane({
           <div className="related-profiles-results__head">
             <div className="related-profiles-results__copy">
               <p className="related-profiles-results__headline">
-                {buildIntroText(profiles.length, jobName, displayLocation)}
+                {!canEdit && (
+                  <Icon name="lock" size={12} className="related-profiles-results__readonly-icon" aria-hidden />
+                )}
+                {buildIntroText(filteredProfiles.length, jobName, displayLocationScope)}
               </p>
+              {profiles.length > 0 && (
+                <p className="related-profiles-results__count muted">
+                  Showing {filteredProfiles.length} of {profiles.length}
+                </p>
+              )}
             </div>
-            <div className="related-profiles-results__stat" aria-hidden>
-              <span className="related-profiles-results__stat-val">{profiles.length}</span>
-              <span className="related-profiles-results__stat-lbl">Profiles</span>
+            <div className="related-profiles-results__controls">
+              <label className="related-profiles-results__sort">
+                <span className="muted">Sort</span>
+                <select
+                  className="sel related-profiles-results__sort-select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortKey)}
+                  aria-label="Sort suggested profiles"
+                >
+                  <option value="fit">JD fit (high to low)</option>
+                  <option value="name">Name (A–Z)</option>
+                  <option value="recent">Recently added</option>
+                </select>
+              </label>
+              <div className="related-profiles-results__stat" aria-hidden>
+                <span className="related-profiles-results__stat-val">{filteredProfiles.length}</span>
+                <span className="related-profiles-results__stat-lbl">Profiles</span>
+              </div>
             </div>
           </div>
-          <div className="related-profiles-table-wrap">
-            <table className="tbl related-profiles-table">
-              <thead>
-                <tr>
-                  <th className="col-num" style={{ width: 40 }}>#</th>
-                  <th style={{ minWidth: 168 }}>Name</th>
-                  <th style={{ minWidth: 160 }}>Current title</th>
-                  <th style={{ minWidth: 120 }}>Company</th>
-                  <th style={{ minWidth: 108 }}>Location</th>
-                  <th style={{ minWidth: 220 }}>Background</th>
-                  {hasScoredProfiles && <th style={{ width: 88 }}>JD fit</th>}
-                  <th className="related-profiles-table__actions-col" style={{ width: 44 }}/>
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((p, index) => {
-                  const linkedinUrl = profileField(p, 'linkedin_url', 'linkedinUrl')
-                  const displayName = displayProfileName(p.name, linkedinUrl)
-                  const title = currentTitle(p, jobName)
-                  const company = inferredCompany(p)
-                  const location = inferredLocation(p)
-                  const bg = backgroundText(p)
-                  const stars = profileField(p, 'alignment_stars', 'alignmentStars')
 
-                  return (
-                    <tr key={p.id} className="related-profiles-table__row">
-                      <td className="col-num muted">{index + 1}</td>
-                      <td>
-                        <div className="related-profiles-name-cell">
-                          <span
-                            className={`related-profiles-avatar ${avatarTone(displayName)}`}
-                            aria-hidden
-                          >
-                            {initialsFromName(displayName)}
-                          </span>
-                          <div className="related-profiles-name-cell__text">
-                            {linkedinUrl ? (
-                              <a
-                                href={linkedinUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="related-profiles-table__name"
-                              >
-                                {displayName}
-                                <Icon name="external" size={11} className="related-profiles-table__ext"/>
-                              </a>
-                            ) : (
-                              <span className="related-profiles-table__name related-profiles-table__name--plain">
-                                {displayName}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="related-profiles-table__title">
-                        {title ? title : <EmptyCell />}
-                      </td>
-                      <td className="related-profiles-table__company">
-                        {company ? company : <EmptyCell />}
-                      </td>
-                      <td className="related-profiles-table__location">
-                        {location ? location : <EmptyCell />}
-                      </td>
-                      <td className="related-profiles-table__bg">
-                        {bg === '—' ? <EmptyCell label="No summary" /> : bg}
-                      </td>
-                      {hasScoredProfiles && (
-                        <td>
-                          {stars != null ? (
-                            <div className="related-profiles-table__stars">
-                              <StarRating stars={stars}/>
-                              <span className="mono muted related-profiles-table__stars-val">{stars}/5</span>
-                            </div>
-                          ) : (
-                            <EmptyCell />
-                          )}
-                        </td>
-                      )}
-                      <td className="related-profiles-table__actions-col">
-                        <IconBtn
-                          className="related-profiles-row-action"
-                          name="trash"
-                          size={13}
-                          aria-label={`Remove ${displayName}`}
-                          onClick={() => removeProfile(p.id)}
-                        />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="related-profiles-results__filter">
+            <Icon name="search" size={14} className="muted" aria-hidden />
+            <input
+              className="inp"
+              type="search"
+              value={profileQuery}
+              onChange={(e) => setProfileQuery(e.target.value)}
+              placeholder="Filter by name, title, company…"
+              aria-label="Filter suggested profiles"
+            />
+            {profileQuery.trim() && (
+              <button
+                type="button"
+                className="related-profiles-results__filter-clear"
+                onClick={() => setProfileQuery('')}
+              >
+                Clear filter
+              </button>
+            )}
           </div>
+
+          {filteredProfiles.length === 0 ? (
+            <div className="related-profiles-results__filter-empty">
+              <p className="muted">No profiles match “{profileQuery.trim()}”.</p>
+              <Btn variant="ghost" size="sm" onClick={() => setProfileQuery('')}>
+                Clear filter
+              </Btn>
+            </div>
+          ) : (
+            <>
+              <div className="related-profiles-table-wrap related-profiles-table-wrap--desktop">
+                <table className="tbl related-profiles-table">
+                  <thead>
+                    <tr>
+                      <th className="col-num" style={{ width: 40 }}>#</th>
+                      <th style={{ minWidth: 168 }}>Name</th>
+                      <th style={{ minWidth: 160 }}>Current title</th>
+                      <th style={{ minWidth: 120 }}>Company</th>
+                      <th style={{ minWidth: 108 }}>Location</th>
+                      <th style={{ minWidth: 220 }}>Background</th>
+                      {hasScoredProfiles && (
+                        <th style={{ width: 96 }} aria-sort={sortBy === 'fit' ? 'descending' : 'none'}>
+                          <JdFitHeader />
+                        </th>
+                      )}
+                      <th className="related-profiles-table__actions-col" style={{ minWidth: 120 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredProfiles.map((p, index) => {
+                      const linkedinUrl = profileField(p, 'linkedin_url', 'linkedinUrl')
+                      const displayName = displayProfileName(p.name, linkedinUrl)
+                      const title = currentTitle(p, jobName)
+                      const company = inferredCompany(p)
+                      const location = inferredLocation(p)
+                      const bg = backgroundText(p)
+                      const stars = profileField(p, 'alignment_stars', 'alignmentStars')
+
+                      return (
+                        <tr key={p.id} className="related-profiles-table__row">
+                          <td className="col-num muted">{index + 1}</td>
+                          <td>
+                            <div className="related-profiles-name-cell">
+                              <span
+                                className={`related-profiles-avatar ${avatarTone(displayName)}`}
+                                aria-hidden
+                              >
+                                {initialsFromName(displayName)}
+                              </span>
+                              <div className="related-profiles-name-cell__text">
+                                {linkedinUrl ? (
+                                  <a
+                                    href={linkedinUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="related-profiles-table__name"
+                                  >
+                                    {displayName}
+                                    <Icon name="external" size={11} className="related-profiles-table__ext" />
+                                  </a>
+                                ) : (
+                                  <span className="related-profiles-table__name related-profiles-table__name--plain">
+                                    {displayName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="related-profiles-table__title">
+                            {title ? title : <EmptyCell />}
+                          </td>
+                          <td className="related-profiles-table__company">
+                            {company ? company : <EmptyCell />}
+                          </td>
+                          <td className="related-profiles-table__location">
+                            {location ? location : <EmptyCell />}
+                          </td>
+                          <td className="related-profiles-table__bg">
+                            {bg === '—' ? (
+                              <EmptyCell label="No summary" />
+                            ) : (
+                              <button
+                                type="button"
+                                className="related-profiles-table__bg-btn"
+                                onClick={() => setDetailProfile(p)}
+                                aria-label={`View background for ${displayName}`}
+                              >
+                                {bg}
+                              </button>
+                            )}
+                          </td>
+                          {hasScoredProfiles && (
+                            <td>
+                              {stars != null ? (
+                                <div className="related-profiles-table__stars">
+                                  <StarRating stars={stars} showValue />
+                                </div>
+                              ) : (
+                                <EmptyCell />
+                              )}
+                            </td>
+                          )}
+                          <td className="related-profiles-table__actions-col">
+                            <ProfileRowActions
+                              displayName={displayName}
+                              profile={p}
+                              canEdit={canEdit}
+                              onViewDetails={setDetailProfile}
+                              onRequestRemove={requestRemove}
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="related-profiles-cards related-profiles-cards--mobile">
+                {filteredProfiles.map((p, index) => (
+                  <RelatedProfileCard
+                    key={p.id}
+                    profile={p}
+                    index={index}
+                    jobName={jobName}
+                    hasScoredProfiles={hasScoredProfiles}
+                    canEdit={canEdit}
+                    onViewDetails={setDetailProfile}
+                    onRequestRemove={requestRemove}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
+
+      <ConfirmModal
+        open={Boolean(pendingRemove)}
+        onClose={() => setPendingRemove(null)}
+        onConfirm={() => { void confirmRemove() }}
+        title="Remove profile?"
+        message={`Remove ${pendingRemoveName} from this job's talent list? They can be rediscovered later.`}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
+
+      <RelatedProfileDetailSheet
+        profile={detailProfile}
+        jobName={jobName}
+        onClose={() => setDetailProfile(null)}
+        canEdit={canEdit}
+        onRemove={requestRemove}
+      />
+
+      <AppToast toast={toast} onDismiss={dismissToast} />
     </div>
   )
 }

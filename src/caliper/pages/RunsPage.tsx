@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Page — Runs hub (all screening history)
 import React from 'react'
-import { Btn, Icon, Segmented, RunStatusBadge, PageLoading, PageError, PageEmpty, Badge } from '@/caliper/ui'
+import { Btn, Icon, Segmented, RunStatusBadge, PageError, PageEmpty, Badge, PageHeader, KpiStrip, PageToolbar, PageToolbarSearch, DataTable, TableSkeleton, ListCardSkeleton } from '@/caliper/ui'
 import { api } from '@/services/api'
 import type { RunListItem, WorkspaceMember } from '@/services/api'
 import { RunAccessControl } from '@/caliper/components/RunAccessControl'
@@ -115,18 +115,28 @@ function RunsSortableTh({ label, sortKey, sortState, onSort, style, className })
   );
 }
 
-const StatCell = ({ label, value, delta, deltaTone, sub }) => (
-  <div className="stats__cell">
-    <div className="stats__lbl">{label}</div>
-    <div className="stats__val">{value}</div>
-    {delta && (
-      <div className={`stats__delta${deltaTone ? ` stats__delta--${deltaTone}` : ''}`}>
-        {deltaTone === 'up' ? '↑' : deltaTone === 'down' ? '↓' : '·'} {delta}
-        {sub && <span className="muted" style={{ marginLeft: 4 }}> {sub}</span>}
+function RunListCard({ run, onOpen, isOpenable }) {
+  const scoreRange = runScoreRange(run);
+  return (
+    <button
+      type="button"
+      className="runs-list-card"
+      onClick={() => isOpenable && onOpen(run)}
+      disabled={!isOpenable}
+    >
+      <div className="runs-list-card__head">
+        <div className="runs-list-card__title">{run.job_profiles?.name ?? run.job_id ?? run.jobId}</div>
+        <RunStatusBadge s={run.status} />
       </div>
-    )}
-  </div>
-);
+      <div className="runs-list-card__meta muted mono">{run.id}</div>
+      <div className="runs-list-card__stats">
+        <span>{formatRunDate(run)}</span>
+        <span>{runCvCount(run)} CVs</span>
+        {scoreRange && <span>{scoreRange[0]}–{scoreRange[1]}</span>}
+      </div>
+    </button>
+  );
+}
 
 function RunsPage({ go }) {
   const { displayName, avatarUrl, user } = useAuth();
@@ -266,9 +276,27 @@ function RunsPage({ go }) {
 
   if (loading) {
     return (
-      <div className="page">
+      <div className="page" aria-busy="true">
+        <PageHeader
+          eyebrow="Screening"
+          hideTitle
+          subtitle="Fetching processed CV runs…"
+        />
+        <KpiStrip
+          columns={3}
+          items={[
+            { key: 'month', label: 'Runs this month', value: '—' },
+            { key: 'avg', label: 'Avg. CVs per run', value: '—' },
+            { key: 'total', label: 'Total runs', value: '—' },
+          ]}
+        />
         <div className="card">
-          <PageLoading title="Loading runs" message="Fetching processed CV runs…" />
+          <div className="runs-table-wrap runs-table-wrap--desktop">
+            <TableSkeleton rows={8} columns={6} />
+          </div>
+          <div className="runs-list-cards runs-list-cards--mobile">
+            <ListCardSkeleton count={5} />
+          </div>
         </div>
       </div>
     )
@@ -285,30 +313,34 @@ function RunsPage({ go }) {
 
   return (
     <div className="page">
-      <div className="stats" style={{ marginTop: 20, marginBottom: 28 }}>
-        <StatCell label="Runs this month"     value={thisMonth.length} />
-        <StatCell label="Avg. CVs per run"    value={avgCvs || '—'} />
-        <StatCell label="Total runs"          value={runs.length} />
-      </div>
+      <PageHeader
+        eyebrow="Screening"
+        hideTitle
+        subtitle="Review screening history, open results, and share runs with your team."
+      />
 
-      <div className="row jobs-toolbar" style={{ marginBottom: 14, gap: 8, flexWrap: 'wrap' }}>
+      <KpiStrip
+        columns={3}
+        items={[
+          { key: 'month', label: 'Runs this month', value: String(thisMonth.length) },
+          { key: 'avg', label: 'Avg. CVs per run', value: avgCvs ? String(avgCvs) : '—' },
+          { key: 'total', label: 'Total runs', value: String(runs.length) },
+        ]}
+      />
+
+      <PageToolbar className="jobs-toolbar">
         {sharedRuns.length > 0 && !runSearchQuery.trim() && (
           <div className="callout" style={{ flex: '1 1 100%', marginBottom: 0, fontSize: 13 }}>
             <strong>{sharedRuns.length}</strong> run{sharedRuns.length === 1 ? '' : 's'} shared with you
             — use the <strong>Shared with me</strong> filter or look for the badge below.
           </div>
         )}
-        <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 320, minWidth: 160 }}>
-          <input
-            className="inp"
-            placeholder="Search runs by ID, job, owner…"
-            style={{ paddingLeft: 32, width: '100%' }}
-            value={runSearchQuery}
-            onChange={(e) => setRunSearchQuery(e.target.value)}
-            aria-label="Search runs"
-          />
-          <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: 11, color: 'var(--muted)' }}/>
-        </div>
+        <PageToolbarSearch
+          value={runSearchQuery}
+          onChange={setRunSearchQuery}
+          placeholder="Search runs by ID, job, owner…"
+          ariaLabel="Search runs"
+        />
         <Segmented value={filter} onChange={setFilter} options={[
           { value: 'all',         label: `All  ${runs.length}` },
           { value: 'shared',      label: `Shared with me  ${sharedRuns.length}` },
@@ -319,11 +351,11 @@ function RunsPage({ go }) {
         ]}/>
         <div className="spacer"/>
         <Btn icon="briefcase" variant="primary" size="sm" onClick={() => go('profiles')}>Jobs</Btn>
-      </div>
+      </PageToolbar>
 
       <div className="card">
-        <div className="tbl-wrap">
-        <table className="tbl">
+        <div className="runs-table-wrap runs-table-wrap--desktop">
+        <DataTable>
           <thead>
             <tr>
               <RunsSortableTh
@@ -483,7 +515,28 @@ function RunsPage({ go }) {
             );
             })}
           </tbody>
-        </table>
+        </DataTable>
+        </div>
+
+        <div className="runs-list-cards runs-list-cards--mobile">
+          {displayRuns.length === 0 ? (
+            <PageEmpty
+              icon="play"
+              title={runs.length === 0 ? 'No runs yet' : 'No runs match your search'}
+              description="Try a different search term or status filter."
+              actionLabel={runs.length === 0 ? 'Go to jobs' : undefined}
+              onAction={runs.length === 0 ? () => go('profiles') : undefined}
+            />
+          ) : (
+            displayRuns.map((r) => (
+              <RunListCard
+                key={r.id}
+                run={r}
+                isOpenable={isRunOpenable(r)}
+                onOpen={openRun}
+              />
+            ))
+          )}
         </div>
       </div>
 

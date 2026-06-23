@@ -11,6 +11,7 @@ import {
   UsagePageRoute,
   ActivityPageRoute,
   ProfilePageRoute,
+  TalentSearchPageRoute,
 } from '@/caliper/CaliperPageRoutes'
 
 function App() {
@@ -27,7 +28,8 @@ function App() {
               <Route path="runs" element={<RunsPageRoute />} />
               <Route path="runs/:runId" element={<ResultsPageRoute />} />
               <Route path="jobs" element={<JobsPageRoute />} />
-              <Route path="talent-search" element={<Navigate to="/jobs" replace />} />
+              <Route path="jobs/:jobId" element={<JobsPageRoute />} />
+              <Route path="talent-search" element={<TalentSearchPageRoute />} />
               <Route path="usage" element={<UsagePageRoute />} />
               <Route path="activity" element={<ActivityPageRoute />} />
               <Route path="settings" element={<CaliperSettingsRoute />} />

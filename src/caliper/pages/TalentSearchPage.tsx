@@ -3,33 +3,49 @@ import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/services/api'
 import type { CvSearchResult } from '@/services/api'
-import { StatusBadge, Btn } from '@/caliper/ui'
+import { StatusBadge, Btn, Icon, PageLoading, PageEmpty, RoleBlockedPage, PageHeader, PageError } from '@/caliper/ui'
 import { semanticCvSearchEnabled } from '@/config/features'
+import { useAuth } from '@/contexts/AuthContext'
 
 const MIN_QUERY_LENGTH = 3
 const SEARCH_DEBOUNCE_MS = 400
+
+const EXAMPLE_QUERIES = [
+  'Kubernetes and platform engineering',
+  'Fintech compliance background',
+  'Senior product manager B2B SaaS',
+  'Python machine learning PhD',
+]
 
 function formatMatchPct(similarity: number): string {
   return `${Math.round(similarity * 100)}%`
 }
 
+function TalentPageHeader({ subtitle }) {
+  return (
+    <PageHeader
+      eyebrow="Discovery"
+      hideTitle
+      subtitle={subtitle}
+    />
+  )
+}
+
 function TalentSearchComingSoon() {
   return (
     <div className="page talent-search">
-      <div className="talent-search__hero">
-        <h1 className="talent-search__title">Talent Search</h1>
-        <p className="talent-search__sub muted">
-          Natural-language search across screened CVs — skills, industries, tools, and experience.
-        </p>
-      </div>
+      <TalentPageHeader
+        subtitle="Natural-language search across screened CVs — skills, industries, tools, and experience."
+      />
       <div className="callout talent-search__coming-soon">
         <div className="talent-search__soon-badge mono">Coming soon</div>
         <p style={{ margin: '10px 0 0', fontSize: 13.5, lineHeight: 1.55 }}>
-          Semantic CV search needs the PostgreSQL <strong>pgvector</strong> extension on your database.
-          Once your DBA enables it and migrations complete, we will turn this on for your workspace.
+          Workspace-wide semantic CV search needs the PostgreSQL <strong>pgvector</strong> extension.
+          Once it is enabled and migrations complete, this page will search every screened CV in your workspace.
         </p>
         <p className="muted" style={{ margin: '12px 0 0', fontSize: 12.5, lineHeight: 1.5 }}>
-          Until then, use <Link to="/runs">Runs</Link> and the global search bar for jobs, runs, and candidates by name.
+          Until then, open a job and use the <strong>Talent</strong> tab to discover LinkedIn profiles for that role, or browse{' '}
+          <Link to="/runs">Processed CVs</Link> and use the global search bar for candidates by name.
         </p>
       </div>
     </div>
@@ -37,6 +53,23 @@ function TalentSearchComingSoon() {
 }
 
 export default function TalentSearchPage() {
+  const { canEdit } = useAuth()
+
+  if (!canEdit) {
+    return (
+      <div className="page talent-search">
+        <RoleBlockedPage
+          icon="search"
+          title="Talent search unavailable"
+          description="Your role cannot run workspace-wide CV search. Open a job and review saved profiles on its Talent tab, or browse shared screening results."
+        />
+        <p className="talent-search__viewer-link muted">
+          <Link to="/jobs">Browse jobs →</Link>
+        </p>
+      </div>
+    )
+  }
+
   if (!semanticCvSearchEnabled) {
     return <TalentSearchComingSoon />
   }
@@ -97,25 +130,27 @@ export default function TalentSearchPage() {
     runSearch(query)
   }
 
+  const showEmptyHint = submittedQuery.trim().length < MIN_QUERY_LENGTH && query.trim().length === 0
+
   return (
     <div className="page talent-search">
-      <div className="talent-search__hero">
-        <h1 className="talent-search__title">Talent Search</h1>
-        <p className="talent-search__sub muted">
-          Search across all screened CVs in your workspace using natural language — skills, industries, tools, and experience.
-        </p>
-      </div>
+      <TalentPageHeader
+        subtitle="Search across all screened CVs in your workspace using natural language — skills, industries, tools, and experience."
+      />
 
       <form className="talent-search__form" onSubmit={handleSubmit}>
-        <input
-          className="inp talent-search__input"
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="e.g. fintech + Kubernetes experience"
-          aria-label="Semantic CV search query"
-          autoComplete="off"
-        />
+        <div className="talent-search__input-wrap">
+          <Icon name="search" size={16} className="talent-search__input-icon" aria-hidden />
+          <input
+            className="inp talent-search__input"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="e.g. fintech + Kubernetes experience"
+            aria-label="Semantic CV search query"
+            autoComplete="off"
+          />
+        </div>
         <Btn
           type="submit"
           variant="default"
@@ -125,6 +160,25 @@ export default function TalentSearchPage() {
         </Btn>
       </form>
 
+      {showEmptyHint && (
+        <div className="talent-search__examples">
+          <span className="talent-search__examples-label muted">Try:</span>
+          {EXAMPLE_QUERIES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              className="talent-search__example-chip"
+              onClick={() => {
+                setQuery(example)
+                runSearch(example)
+              }}
+            >
+              {example}
+            </button>
+          ))}
+        </div>
+      )}
+
       {needsOpenAiKey && (
         <div className="callout talent-search__callout">
           Semantic CV search requires an OpenAI API key. Add one under{' '}
@@ -133,18 +187,27 @@ export default function TalentSearchPage() {
       )}
 
       {error && !needsOpenAiKey && (
-        <div className="callout talent-search__callout" style={{ color: 'var(--bad-ink)' }}>
-          {error}
+        <PageError
+          message={error}
+          onRetry={() => setSubmittedQuery((q) => q)}
+        />
+      )}
+
+      {loading && (
+        <div className="talent-search__loading">
+          <PageLoading title="Searching CVs" message={`Matching “${submittedQuery.trim()}”…`} className="talent-search__loading-state" />
         </div>
       )}
 
       {!loading && submittedQuery.trim().length >= MIN_QUERY_LENGTH && !error && !needsOpenAiKey && results.length === 0 && (
-        <div className="talent-search__empty muted">
-          No matches for “{submittedQuery.trim()}”. Try broader terms or run new screenings to embed more CVs.
-        </div>
+        <PageEmpty
+          icon="search"
+          title="No matches"
+          description={`No matches for “${submittedQuery.trim()}”. Try broader terms or run new screenings to embed more CVs.`}
+        />
       )}
 
-      {results.length > 0 && (
+      {!loading && results.length > 0 && (
         <div className="talent-search__results card">
           <div className="card__head">
             <span className="card__title">{results.length} match{results.length === 1 ? '' : 'es'}</span>
@@ -188,7 +251,7 @@ export default function TalentSearchPage() {
         </div>
       )}
 
-      {submittedQuery.trim().length < MIN_QUERY_LENGTH && query.trim().length === 0 && (
+      {showEmptyHint && (
         <div className="talent-search__hint muted">
           Only CVs screened after semantic search was enabled are indexed. Re-run screening to add older candidates.
         </div>

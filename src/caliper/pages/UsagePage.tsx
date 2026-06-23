@@ -1,7 +1,8 @@
 // @ts-nocheck
 import React from 'react'
 import { Link } from 'react-router-dom'
-import { Badge, Btn, Icon, Segmented } from '@/caliper/ui'
+import { Badge, Btn, Icon, Segmented, PageLoading, PageError } from '@/caliper/ui'
+import { PageHeader, KpiStrip } from '@/caliper/ui-layout'
 import { api } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { labelForRole } from '@/lib/roles'
@@ -678,7 +679,7 @@ function UsagePage() {
   if (loading) {
     return (
       <div className="page usage-page">
-        <div className="usage-page__loading muted">Loading usage…</div>
+        <PageLoading title="Loading usage" message="Fetching AI spend and credit data…" />
       </div>
     );
   }
@@ -686,8 +687,7 @@ function UsagePage() {
   if (error) {
     return (
       <div className="page usage-page">
-        <div className="usage-page__error" role="alert">{error}</div>
-        <Btn variant="ghost" onClick={() => window.location.reload()} style={{ marginTop: 12 }}>Try again</Btn>
+        <PageError message={error} onRetry={() => window.location.reload()} />
       </div>
     );
   }
@@ -699,18 +699,16 @@ function UsagePage() {
 
   return (
     <div className="page usage-page">
-      <header className="usage-page__header">
-        <div>
-          <p className="page__eyebrow">AI spend</p>
-          <h1 className="page__title" style={{ marginBottom: 6 }}>Usage & credits</h1>
-          <p className="page__sub">
-            Pay-as-you-go AI spend tracked per member. Admins add credit top-ups in Settings; unlimited members use workspace API keys without an internal cap.
-          </p>
-        </div>
-        <Link to="/settings">
-          <Btn variant="ghost" icon="sliders">Manage credits</Btn>
-        </Link>
-      </header>
+      <PageHeader
+        eyebrow="AI spend"
+        title="Usage & credits"
+        subtitle="Pay-as-you-go AI spend tracked per member. Admins add credit top-ups in Settings; unlimited members use workspace API keys without an internal cap."
+        actions={(
+          <Link to="/settings">
+            <Btn variant="ghost" icon="sliders">Manage credits</Btn>
+          </Link>
+        )}
+      />
 
       <div className={`usage-kpi-grid${isAdmin ? ' usage-kpi-grid--4' : ''}`}>
         <UsageKpiCard

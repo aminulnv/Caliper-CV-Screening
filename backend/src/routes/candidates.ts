@@ -10,6 +10,7 @@ import { isWorkspaceStoragePath } from '../lib/storage-path.js';
 import { formatRunCandidateRow } from '../lib/run-candidate-format.js';
 import { computeScore, mapEvaluationToScoringInput } from '../services/scoring.js';
 import { mapCriterionRows } from '../services/screening-model.js';
+import { screeningRunAccessible } from '../lib/run-access.js';
 
 async function recomputeRunScoreRange(runId: string): Promise<number[] | null> {
   const rows = await sql`
@@ -150,7 +151,9 @@ export async function candidatesRoutes(app: FastifyInstance) {
       FROM run_candidates rc
       JOIN screening_runs sr ON rc.run_id = sr.id
       LEFT JOIN job_profiles jp ON sr.job_id = jp.id
-      WHERE rc.id = ${req.params.id} AND sr.workspace_id = ${req.workspaceId}
+      WHERE rc.id = ${req.params.id}
+        AND sr.workspace_id = ${req.workspaceId}
+        AND ${screeningRunAccessible(req.userId)}
     `;
     if (!row) return reply.status(404).send({ error: 'Candidate not found' });
 

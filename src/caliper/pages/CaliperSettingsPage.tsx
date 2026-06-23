@@ -1,8 +1,7 @@
 // @ts-nocheck
 // Page 5 — Settings
 import React from 'react'
-import { Navigate } from 'react-router-dom'
-import { Btn, Icon, PageLoading } from '@/caliper/ui'
+import { Btn, Icon, PageLoading, RoleBlockedPage, PageHeader } from '@/caliper/ui'
 import { api } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { InviteMemberModal } from '@/caliper/components/InviteMemberModal'
@@ -14,6 +13,7 @@ import { SaveBanner } from '@/caliper/components/settings/SaveBanner'
 import { ApiProviderSection } from '@/caliper/components/settings/ApiProviderSection'
 import { TeamAccessPanel } from '@/caliper/components/settings/TeamAccessPanel'
 import { SETTINGS_SECTIONS } from '@/caliper/components/settings/settings-utils'
+import { readTableDensity, writeTableDensity } from '@/lib/table-density'
 
 const CONFIDENCE_OPTIONS = [
   { value: 50, label: 'Lenient · 50%' },
@@ -44,6 +44,7 @@ function SettingsPage() {
   const [confidenceThreshold, setConfidenceThreshold] = React.useState(60)
   const [cvRetentionDays, setCvRetentionDays] = React.useState(90)
   const [evaluationRetentionDays, setEvaluationRetentionDays] = React.useState('never')
+  const [tableDensity, setTableDensity] = React.useState(() => readTableDensity())
 
   const sectionIds = React.useMemo(() => {
     const ids = ['ai-provider', 'screening', 'team']
@@ -103,7 +104,16 @@ function SettingsPage() {
     }
   }
 
-  if (!isAdmin) return <Navigate to="/jobs" replace />
+  if (!isAdmin) {
+    return (
+      <RoleBlockedPage
+        className="settings-page"
+        icon="shield"
+        title="Settings unavailable"
+        description="Your role cannot change workspace configuration. Contact an admin if you need access."
+      />
+    )
+  }
 
   if (loading) {
     return (
@@ -198,13 +208,11 @@ function SettingsPage() {
 
   return (
     <div className="page settings-page">
-      <header className="settings-page__header">
-        <p className="page__eyebrow">Workspace</p>
-        <h1 className="page__title" style={{ marginBottom: 6 }}>Settings</h1>
-        <p className="page__sub">
-          Manage API keys, screening defaults, team access, and AI credit pools for this workspace.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Workspace"
+        title="Settings"
+        subtitle="Manage API keys, screening defaults, team access, and AI credit pools for this workspace."
+      />
 
       <SaveBanner message={saveMsg} />
 
@@ -276,6 +284,25 @@ function SettingsPage() {
                 Current: <strong>{confidenceLabel}</strong>
               </p>
             )}
+            <SettingsFieldRow
+              label="Table density"
+              hint="Comfortable spacing for job and run lists, or compact rows for large workspaces."
+            >
+              <select
+                className="sel"
+                value={tableDensity}
+                onChange={(e) => {
+                  const next = e.target.value === 'compact' ? 'compact' : 'comfy'
+                  setTableDensity(next)
+                  writeTableDensity(next)
+                }}
+                style={{ minWidth: 180 }}
+                aria-label="Table row density"
+              >
+                <option value="comfy">Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </SettingsFieldRow>
           </SettingsPanel>
 
           <SettingsPanel

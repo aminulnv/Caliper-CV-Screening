@@ -11,6 +11,7 @@ import {
 } from '@/caliper/tweaks-panel'
 import { assets } from '@/config/assets'
 import { applyBrandTheme, getDefaultAccentTweaks } from '@/config/brand-theme'
+import { applyTableDensity, readTableDensity, writeTableDensity } from '@/lib/table-density'
 
 export type CaliperTweaksState = {
   accent: string
@@ -41,11 +42,17 @@ export default function CaliperShellLayout() {
   const { user } = useAuth()
 
   useEffect(() => {
+    applyTableDensity(readTableDensity())
+  }, [])
+
+  useEffect(() => {
     applyBrandTheme(assets.layoutBackgroundValue)
     document.documentElement.style.setProperty('--accent', t.accent)
     document.documentElement.style.setProperty('--accent-soft', t.accentSoft)
     document.documentElement.style.setProperty('--accent-ink', t.accentInk)
-    document.documentElement.dataset.density = t.density
+    const density = t.density === 'compact' ? 'compact' : 'comfy'
+    document.documentElement.dataset.density = density
+    writeTableDensity(density)
   }, [t.accent, t.accentSoft, t.accentInk, t.density])
 
   useEffect(() => {

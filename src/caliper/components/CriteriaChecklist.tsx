@@ -141,6 +141,7 @@ export function ChecklistRow({
 
 export function CriteriaChecklistPanel({
   evaluations, candidate, sections, decisions, onAgree, onOverride, onQuoteHover, activeQuote,
+  readOnly = false,
 }) {
   const counts = React.useMemo(() => {
     if (evaluations?.length) return countsFromEvaluations(evaluations);
@@ -173,8 +174,8 @@ export function CriteriaChecklistPanel({
                 quote={it.quote}
                 inferred={it.inferred}
                 decision={decisions?.[it.id]}
-                onAgree={onAgree ? () => onAgree(it.id) : undefined}
-                onOverride={onOverride ? () => onOverride(it.id, it.met) : undefined}
+                onAgree={!readOnly && onAgree ? () => onAgree(it.id) : undefined}
+                onOverride={!readOnly && onOverride ? () => onOverride(it.id, it.met) : undefined}
                 overriddenBy={it.overridden_by}
                 overrideNote={it.override_note}
                 onQuoteHover={onQuoteHover}

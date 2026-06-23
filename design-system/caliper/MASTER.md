@@ -14,22 +14,38 @@
 
 ## Global Rules
 
-### Color Palette
+### Color Palette (runtime — `caliper.css` / `styles/tokens.css`)
 
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Primary | `#0F172A` | `--color-primary` |
-| On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#334155` | `--color-secondary` |
-| Accent/CTA | `#0369A1` | `--color-accent` |
-| Background | `#F8FAFC` | `--color-background` |
-| Foreground | `#020617` | `--color-foreground` |
-| Muted | `#E8ECF1` | `--color-muted` |
-| Border | `#E2E8F0` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| Ring | `#0F172A` | `--color-ring` |
+| Role | CSS Variable |
+|------|--------------|
+| Brand / CTA | `--brand-primary`, `--brand-primary-hover` |
+| Canvas | `--bg`, `--surface`, `--bg-sunk` |
+| Text | `--ink`, `--ink-soft`, `--muted` |
+| Borders | `--line`, `--line-soft` |
+| Semantic | `--ok`, `--warn`, `--bad` (+ `-soft`, `-ink`) |
+| Shadows | `--shadow-1`, `--shadow-2`, `--shadow-pop` |
+| Motion | `--motion-fast` (150ms), `--motion-base` (200ms) |
+| Density | `data-density="comfy"` \| `"compact"` → `--row-h`, `--pad-cell` |
 
-**Color Notes:** Professional navy + blue CTA
+Legacy docs referencing `--color-primary` or `--space-*` are deprecated — use tokens above.
+
+### Overlay primitives (`src/caliper/ui-overlays.tsx`)
+
+| Primitive | Purpose |
+|-----------|---------|
+| `Modal` | Focus trap, Escape, `role="dialog"` |
+| `Sheet` | Slide-in panel |
+| `Alert` | Inline banner (`results-banner` pattern) |
+
+### Feedback
+
+| Primitive | Purpose |
+|-----------|---------|
+| `AppToast` | Transient success/error (`useToast`) |
+| `RunScreeningBtn` | Run CTA with viewer lock hint |
+| `PageError` | Error + retry |
+
+### Color Palette (deprecated reference)
 
 ### Typography
 
@@ -38,7 +54,34 @@
 - **Mood:** friendly, modern, saas, clean, approachable, professional
 - **Google Fonts:** [Plus Jakarta Sans + Plus Jakarta Sans](https://fonts.google.com/share?selection.family=Plus+Jakarta+Sans:wght@300;400;500;600;700)
 
-**CSS Import:**
+#### Type scale (CSS tokens in `caliper.css`)
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--type-label` | `11px` | Eyebrows, table column headers, KPI labels (sentence case) |
+| `--type-body` | `13.5px` | Table body, form text, page subtitles |
+| `--type-emphasis` | `15px` | Emphasized inline text |
+| `--type-section` | `20px` | Section headings |
+| `--type-page` | `26px` | Page titles |
+| `--type-mono` | `12px` | IDs, dates, metadata (`.mono`) |
+
+Uppercase is reserved for eyebrows and table headers only — not KPI labels or filter chips.
+
+### Layout primitives (`src/caliper/ui-layout.tsx`)
+
+Public API via `@/caliper/ui`. Use these on all list/detail pages — do not invent new header/table/KPI markup.
+
+| Primitive | Purpose |
+|-----------|---------|
+| `PageHeader` | Eyebrow + title + subtitle + optional actions (`hideTitle` when shell shows H1) |
+| `PageToolbar` / `PageToolbarSearch` | Search + filters + primary CTA row |
+| `KpiStrip` | Compact stat strip (Jobs, Runs, Results, Activity) |
+| `DataTable` | Sortable table wrapper (`.jobs-table` or `.tbl` variant) |
+| Detail hero | Job detail: `job-detail-hero` in ProfilesPage; run detail: `RunAccessControl` + actions |
+| `PageEmpty` / `PageLoading` / `TableSkeleton` / `ListCardSkeleton` | Empty, loading, skeleton states |
+| `FilterChips` | Active filter chips below KPI/filter rows |
+| `ScoreTrustCard` | Unified score + bar + confidence in Results |
+
 ```css
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 ```

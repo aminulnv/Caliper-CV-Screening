@@ -138,11 +138,13 @@ export async function workspaceRoutes(app: FastifyInstance): Promise<void> {
             LIMIT 1
           `,
           sql`
-            SELECT COUNT(*)::int AS screenings,
-                   COALESCE(SUM(cv_count), 0)::int AS cvs_processed,
-                   COUNT(DISTINCT job_id)::int AS jobs_screened
-            FROM screening_runs
-            WHERE workspace_id = ${workspaceId} AND owner_id = ${userId}
+            SELECT COUNT(DISTINCT sr.id)::int AS screenings,
+                   COALESCE(SUM(sr.cv_count), 0)::int AS cvs_processed,
+                   COUNT(DISTINCT sr.job_id)::int AS jobs_screened
+            FROM screening_runs sr
+            LEFT JOIN run_shares rs ON rs.run_id = sr.id
+            WHERE sr.workspace_id = ${workspaceId}
+              AND (sr.owner_id = ${userId} OR rs.user_id = ${userId})
           `,
           sql`
             SELECT COUNT(*)::int AS activity_30d

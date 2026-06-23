@@ -110,13 +110,13 @@ export function computeJobListKpis(jobs) {
   return { openCount, totalApplicants, totalRuns, needsCriteria }
 }
 
-export function openJobProfile(setSelectedId, setEditorInitialTab, setRunSheetProfileId, profile) {
+export function openJobProfile(navigate, profile, options = {}) {
   if (profile.source === 'recruitee' && profile.sourceRef) {
     prefetchRecruiteeApplicants(profile.sourceRef)
   }
-  setRunSheetProfileId(null)
-  setSelectedId(profile.id)
   const lists = getCriteriaListsForProfile(profile)
   const criteriaCount = lists.must.length + lists.nice.length + lists.flag.length
-  setEditorInitialTab(criteriaCount === 0 ? 'criteria' : null)
+  const tab = options.tab ?? (criteriaCount === 0 ? 'criteria' : null)
+  const search = tab ? `?tab=${encodeURIComponent(tab)}` : ''
+  navigate(`/jobs/${encodeURIComponent(profile.id)}${search}`)
 }

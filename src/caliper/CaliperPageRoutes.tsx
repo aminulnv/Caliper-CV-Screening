@@ -32,16 +32,22 @@ export function RunsPageRoute() {
 
 export function JobsPageRoute() {
   const go = useCaliperGo()
+  const { jobId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
-  const deepLinkJobId = searchParams.get('job')
   const screenJobId = searchParams.get('screen')
   const deepLinkTab = searchParams.get('tab')
+  const legacyJobId = searchParams.get('job')
   const clearSearchParams = () => setSearchParams({}, { replace: true })
   return (
     <Suspense fallback={<JobsPageFallback />}>
       <ProfilesPage
         go={go}
-        route={{ deepLinkJobId, screenJobId, deepLinkTab, clearSearchParams }}
+        route={{
+          jobId: jobId ?? legacyJobId,
+          screenJobId,
+          deepLinkTab,
+          clearSearchParams,
+        }}
       />
     </Suspense>
   )

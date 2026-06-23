@@ -223,7 +223,10 @@ function NavDropdown({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const parentActive = isPathUnder(item.path, pathname)
+  const parentActive = Boolean(
+    isPathUnder(item.path, pathname)
+    || item.children?.some((child) => pathname === child.path || pathname.startsWith(`${child.path}/`)),
+  )
 
   useEffect(() => {
     if (!open) return
@@ -263,6 +266,9 @@ function NavDropdown({
               }
             >
               {child.label}
+              {child.comingSoon && (
+                <span className="shell-nav-badge">Soon</span>
+              )}
             </NavLink>
           ))}
         </div>
@@ -431,6 +437,9 @@ function HorizontalNav({
                   })}
                 >
                   {child.label}
+                  {child.comingSoon && (
+                    <span className="shell-nav-badge">Soon</span>
+                  )}
                 </NavLink>
               ))}
             </div>

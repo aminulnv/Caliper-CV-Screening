@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 export type CaliperGo = (
   page: 'runs' | 'profiles' | 'settings' | 'results',
-  second?: string | { run: string; candidate?: string; job?: string },
+  second?: string | { run: string; candidate?: string; job?: string; tab?: string },
 ) => void
 
 const CaliperNavContext = createContext<CaliperGo>(() => {})
@@ -26,7 +26,8 @@ export function CaliperNavProvider({ children }: { children: ReactNode }) {
       return
     }
     if (page === 'profiles' && second && typeof second === 'object' && 'job' in second && second.job) {
-      navigate(`/jobs?job=${encodeURIComponent(String(second.job))}`)
+      const tab = second.tab ? `?tab=${encodeURIComponent(String(second.tab))}` : ''
+      navigate(`/jobs/${encodeURIComponent(String(second.job))}${tab}`)
       return
     }
     if (page === 'profiles') {

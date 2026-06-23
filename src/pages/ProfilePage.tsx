@@ -348,7 +348,9 @@ export default function ProfilePage() {
               <ActivityLogList
                 entries={profile?.recent_activity ?? []}
                 compact
-                emptyMessage="Your screening runs, criteria changes, candidate decisions, and Recruitee syncs are recorded here automatically."
+                emptyMessage={canEdit
+                  ? 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs are recorded here automatically.'
+                  : 'Activity from shared runs and workspace events appears here when available.'}
               />
             </div>
           </div>

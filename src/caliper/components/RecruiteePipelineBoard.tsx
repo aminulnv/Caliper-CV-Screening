@@ -173,17 +173,19 @@ export function RecruiteePipelineBoard({
                   <Icon name="play" size={11} /> Screen
                 </button>
               ) : (
-                <span className="cand-col__screen-wrap" title="View-only access — editors and admins can run screenings">
+                <span className="cand-col__screen-wrap run-screening-locked run-screening-locked--inline">
                   <button
                     type="button"
                     className="cand-col__screen cand-col__screen--locked"
                     disabled
-                    tabIndex={-1}
                     aria-disabled="true"
                     aria-label="Screen (view-only)"
                   >
                     <Icon name="lock" size={11} /> Screen
                   </button>
+                  <p className="run-screening-locked__hint" role="note">
+                    View-only access. Editors and admins can run screenings.
+                  </p>
                 </span>
               )
             )}

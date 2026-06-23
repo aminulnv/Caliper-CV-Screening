@@ -24,15 +24,17 @@ export function RerunConflictAlert({
   conflicts,
   onRemove,
   onRemoveAll,
+  prominent = false,
 }: {
   conflicts: RerunConflict[];
   onRemove: (rowIndex: number) => void;
   onRemoveAll: () => void;
+  prominent?: boolean;
 }) {
   if (!conflicts.length) return null;
 
   return (
-    <div className="rerun-conflict" role="alert">
+    <div className={`rerun-conflict${prominent ? ' rerun-conflict--prominent' : ''}`} role="alert">
       <div className="rerun-conflict__head">
         <Icon name="alert" size={16} className="rerun-conflict__icon"/>
         <div style={{ flex: 1, minWidth: 0 }}>

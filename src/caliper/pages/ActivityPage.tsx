@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React from 'react'
-import { Btn, Icon } from '@/caliper/ui'
+import { Btn, Icon, PageHeader, TableSkeleton, PageError, PageLoading } from '@/caliper/ui'
+import { KpiStrip } from '@/caliper/ui-layout'
 import { ActivityLogList } from '@/caliper/components/ActivityLogList'
 import { api } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -25,22 +26,8 @@ function groupForKind(kind) {
   }
 }
 
-function ActivityStatCard({ label, value, icon, tone }) {
-  return (
-    <div className={`activity-stat activity-stat--${tone}`}>
-      <div className="activity-stat__icon" aria-hidden>
-        <Icon name={icon} size={18} />
-      </div>
-      <div className="activity-stat__content">
-        <div className="activity-stat__label">{label}</div>
-        <div className="activity-stat__value">{value}</div>
-      </div>
-    </div>
-  )
-}
-
 function ActivityPage() {
-  const { isAdmin } = useAuth()
+  const { isAdmin, canEdit } = useAuth()
   const [entries, setEntries] = React.useState([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState('')
@@ -94,8 +81,20 @@ function ActivityPage() {
 
   if (loading) {
     return (
-      <div className="page activity-page">
-        <div className="activity-page__loading muted">Loading activity…</div>
+      <div className="page activity-page" aria-busy="true">
+        <PageHeader
+          eyebrow="Audit trail"
+          hideTitle
+          subtitle="Loading activity…"
+        />
+        <div className="activity-page-skeleton">
+          <div className="activity-page-skeleton__stats">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="activity-page-skeleton__stat" aria-hidden />
+            ))}
+          </div>
+          <TableSkeleton rows={10} columns={4} />
+        </div>
       </div>
     )
   }
@@ -103,8 +102,7 @@ function ActivityPage() {
   if (error) {
     return (
       <div className="page activity-page">
-        <div className="activity-page__error" role="alert">{error}</div>
-        <Btn variant="ghost" icon="history" onClick={load} style={{ marginTop: 12 }}>Try again</Btn>
+        <PageError message={error} onRetry={load} />
       </div>
     )
   }
@@ -112,27 +110,26 @@ function ActivityPage() {
   return (
     <div className="page activity-page">
       <header className="activity-page__intro">
-        <div>
-          <p className="page__eyebrow">Audit trail</p>
-          <h1 className="page__title" style={{ marginBottom: 6 }}>
-            {isAdmin ? 'Platform activity' : 'Your activity'}
-          </h1>
-          <p className="page__sub">
-            {isAdmin
-              ? 'Screening runs, criteria changes, candidate decisions, and Recruitee syncs across every job.'
-              : 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs.'}
-          </p>
-        </div>
-        <Btn variant="ghost" icon="history" onClick={load}>Refresh</Btn>
+        <PageHeader
+          eyebrow="Audit trail"
+          hideTitle
+          subtitle={isAdmin
+            ? 'Screening runs, criteria changes, candidate decisions, and Recruitee syncs across every job.'
+            : canEdit
+              ? 'Your screening runs, criteria changes, candidate decisions, and Recruitee syncs.'
+              : 'Activity you can access in this workspace, including shared screening runs.'}
+          actions={<Btn variant="ghost" icon="history" onClick={load}>Refresh</Btn>}
+        />
       </header>
 
-      <div className="activity-stats">
-        <ActivityStatCard label="Activities" value={stats.total} icon="history" tone="brand" />
-        <ActivityStatCard label="Jobs involved" value={stats.jobs || '—'} icon="briefcase" tone="info" />
-        {isAdmin && (
-          <ActivityStatCard label="People active" value={stats.people || '—'} icon="users" tone="ok" />
-        )}
-      </div>
+      <KpiStrip
+        columns={isAdmin ? 3 : 2}
+        items={[
+          { key: 'activities', label: 'Activities', value: String(stats.total) },
+          { key: 'jobs', label: 'Jobs involved', value: stats.jobs ? String(stats.jobs) : '—' },
+          ...(isAdmin ? [{ key: 'people', label: 'People active', value: stats.people ? String(stats.people) : '—' }] : []),
+        ]}
+      />
 
       <div className="activity-filters" role="tablist" aria-label="Filter activity">
         {FILTERS.map((f) => {

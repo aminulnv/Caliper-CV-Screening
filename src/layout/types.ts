@@ -3,6 +3,10 @@ import type { LucideIcon } from 'lucide-react'
 export interface NavItemChild {
   path: string
   label: string
+  /** Non-navigable placeholder label suffix (e.g. Soon badge). */
+  comingSoon?: boolean
+  /** Visible only to editor and admin roles. */
+  requiresEdit?: boolean
 }
 
 export interface NavItem {

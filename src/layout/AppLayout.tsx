@@ -6,6 +6,7 @@ import { useBreakpoint } from './useBreakpoint'
 import type { AppLayoutConfig, NavItem } from './types'
 import { applyBrandTheme } from '@/config/brand-theme'
 import { assets } from '@/config/assets'
+import { usePageTitle } from '@/caliper/PageTitleContext'
 
 interface AppLayoutProps extends AppLayoutConfig {
   banner?: React.ReactNode
@@ -47,6 +48,7 @@ export function AppLayout({
 }: AppLayoutProps) {
   const location = useLocation()
   const { isMobile } = useBreakpoint()
+  const { title: pageTitleOverride } = usePageTitle()
 
   useEffect(() => {
     applyBrandTheme(assets.layoutBackgroundValue)
@@ -57,7 +59,8 @@ export function AppLayout({
   )
 
   const pathname = location.pathname
-  const title = getPageTitle(pathname) || pathname || 'App'
+  const hideContentHeader = /^\/jobs\/[^/]+/.test(pathname)
+  const title = pageTitleOverride || getPageTitle(pathname) || pathname || 'App'
   const currentNavItem = navItems
     .filter((item) => {
       const end = item.end ?? item.path === '/'
@@ -96,12 +99,14 @@ export function AppLayout({
         isMobile={isMobile}
       />
       <div className="app-shell-body">
-        <ContentHeader
-          title={title}
-          titleIcon={titleIcon}
-          centerSlot={topBarCenterSlot}
-          searchPlaceholder={searchPlaceholder}
-        />
+        {!hideContentHeader && (
+          <ContentHeader
+            title={title}
+            titleIcon={titleIcon}
+            centerSlot={topBarCenterSlot}
+            searchPlaceholder={searchPlaceholder}
+          />
+        )}
         <main className={`app-shell-main${isMobile ? ' app-shell-main--mobile' : ''}`}>
           <Outlet />
         </main>
