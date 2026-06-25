@@ -12,6 +12,7 @@ import { DispositionBadge } from '@/caliper/components/DispositionBadge'
 import { candidateMetrics } from '../results-utils'
 import { Modal } from '@/caliper/ui-overlays'
 import { RecruiteeStatusBadge } from './RecruiteeStatusBadge'
+import { ScoreDeductionBreakdown } from './ScoreDeductionBreakdown'
 
 function OverrideDialog({ currentMet, onConfirm, onCancel, saving }) {
   const [met, setMet] = React.useState(!currentMet);
