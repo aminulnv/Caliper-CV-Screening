@@ -529,7 +529,7 @@ export function RelatedProfilesPane({
     setDiscoverAttempted(false)
     setPendingRemove(null)
     setDetailProfile(null)
-    setToast(null)
+    dismissToast()
   }, [jobId])
 
   const applySuggestion = React.useCallback((res: {

@@ -54,26 +54,6 @@ function TalentSearchComingSoon() {
 
 export default function TalentSearchPage() {
   const { canEdit } = useAuth()
-
-  if (!canEdit) {
-    return (
-      <div className="page talent-search">
-        <RoleBlockedPage
-          icon="search"
-          title="Talent search unavailable"
-          description="Your role cannot run workspace-wide CV search. Open a job and review saved profiles on its Talent tab, or browse shared screening results."
-        />
-        <p className="talent-search__viewer-link muted">
-          <Link to="/jobs">Browse jobs →</Link>
-        </p>
-      </div>
-    )
-  }
-
-  if (!semanticCvSearchEnabled) {
-    return <TalentSearchComingSoon />
-  }
-
   const navigate = useNavigate()
   const [query, setQuery] = React.useState('')
   const [submittedQuery, setSubmittedQuery] = React.useState('')
@@ -124,6 +104,25 @@ export default function TalentSearchPage() {
     const timer = window.setTimeout(() => runSearch(trimmed), SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [query, runSearch])
+
+  if (!canEdit) {
+    return (
+      <div className="page talent-search">
+        <RoleBlockedPage
+          icon="search"
+          title="Talent search unavailable"
+          description="Your role cannot run workspace-wide CV search. Open a job and review saved profiles on its Talent tab, or browse shared screening results."
+        />
+        <p className="talent-search__viewer-link muted">
+          <Link to="/jobs">Browse jobs →</Link>
+        </p>
+      </div>
+    )
+  }
+
+  if (!semanticCvSearchEnabled) {
+    return <TalentSearchComingSoon />
+  }
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
