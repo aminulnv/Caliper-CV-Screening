@@ -34,6 +34,7 @@ import { CandidateDetailSheet } from './components/CandidateDetailSheet'
 import { ResultsStatsStrip } from './components/ResultsStatsStrip'
 import { ResultsStatusBanners } from './components/ResultsStatusBanners'
 import { ResultsFilterBar } from './components/ResultsFilterBar'
+import { ScreeningLoadingScreen } from './components/ScreeningLoadingScreen'
 
 function ResultsPage({ tweaks, route, go }) {
   const { displayName, avatarUrl, user, canEdit } = useAuth();
@@ -705,6 +706,37 @@ function ResultsPage({ tweaks, route, go }) {
     if (!runId) return;
     api.runs.get(runId).then((data) => { setRun(data); setPollError(null); }).catch(() => {});
   };
+
+  const isProcessing = run.status === 'in_progress' || run.status === 'queued';
+  if (isProcessing) {
+    return (
+      <div className="page results-page">
+        <PageHeader
+          eyebrow="Results"
+          hideTitle
+          subtitle={jobName && runId ? `${jobName} · Run ${runId}` : runId ? `Run ${runId}` : 'Screening results'}
+        />
+
+        <div className="row results-page__actions">
+          <Btn variant="ghost" icon="chevron-left" size="sm" onClick={() => go && go('runs')}>All runs</Btn>
+        </div>
+
+        {(pollError || jobMetaError) && (
+          <ResultsStatusBanners
+            pollError={pollError}
+            jobMetaError={jobMetaError}
+            run={run}
+            candidates={candidates}
+            onRetryPoll={handleRetryPoll}
+          />
+        )}
+
+        <ScreeningLoadingScreen jobName={jobName} queued={run.status === 'queued'} />
+
+        <AppToast toast={toast} onDismiss={dismissToast} />
+      </div>
+    );
+  }
 
   return (
     <div className="page results-page">

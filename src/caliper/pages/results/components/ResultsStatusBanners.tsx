@@ -26,20 +26,6 @@ export function ResultsStatusBanners({
         </div>
       )}
 
-      {(run.status === 'in_progress' || run.status === 'queued') && (
-        <div className="results-banner results-banner--progress">
-          <Icon name="sparkle" size={18} className="results-banner--progress__icon" aria-hidden />
-          <div className="results-banner--progress__body">
-            <div className="results-banner--progress__title">
-              Screening in progress
-            </div>
-            <div className="results-banner--progress__sub muted">
-              {candidates.length} of {run.cv_count ?? candidates.length} CV{candidates.length === 1 ? '' : 's'} scored so far — results update automatically.
-            </div>
-          </div>
-        </div>
-      )}
-
       {run.status === 'failed' && run.error_message && (
         <div className="results-banner results-banner--failed">
           <div className="results-banner--failed__title">Run failed</div>
