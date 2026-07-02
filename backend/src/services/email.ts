@@ -39,7 +39,11 @@ export function isEmailConfigured(): boolean {
 }
 
 export function appBaseUrl(): string {
-  return (process.env.APP_URL ?? process.env.CORS_ORIGIN ?? 'http://localhost:5173').replace(/\/$/, '');
+  const raw = (process.env.APP_URL ?? process.env.CORS_ORIGIN ?? 'http://localhost:5173')
+    .trim()
+    .replace(/\/$/, '');
+  // Only the apex resolves in DNS; the www. host is NXDOMAIN. Strip it so email links never 404.
+  return raw.replace(/^(https?:\/\/)www\./i, '$1');
 }
 
 export async function sendEmail(options: {
